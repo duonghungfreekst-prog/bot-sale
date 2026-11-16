@@ -7,7 +7,7 @@ use teloxide::{
 };
 use tracing::{error, warn};
 
-use super::keyboards::{deal_action_keyboard, deals_filter_keyboard, main_menu_keyboard};
+use super::keyboards::{deal_action_keyboard, deals_filter_keyboard, main_menu_keyboard, persistent_reply_keyboard};
 use crate::config::Config;
 use crate::db::models::ClickRecord;
 use crate::db::repository::Repository;
@@ -56,6 +56,21 @@ pub async fn handle_message(
         .as_ref()
         .map(|u| u.full_name())
         .unwrap_or_else(|| "Thành viên".to_string());
+
+    // Xử lý các nút bấm từ Reply Keyboard thường trực ở đáy màn hình
+    let mapped_cmd = match text {
+        "🚀 Bắt Đầu" | "Bắt Đầu" | "start" => Some(Command::Start(String::new())),
+        "💰 Ví Hoàn Tiền" | "Ví Hoàn Tiền" => Some(Command::Wallet),
+        "🎟️ Mã Giảm Giá" | "Mã Giảm Giá" => Some(Command::Deals(String::new())),
+        "🤝 Giới Thiệu Bạn Bè" | "Giới Thiệu" => Some(Command::Share),
+        "📖 Hướng Dẫn" | "Hướng Dẫn" => Some(Command::Help),
+        "💳 Rút Tiền" | "Rút Tiền" => Some(Command::Withdraw(String::new())),
+        _ => None,
+    };
+
+    if let Some(cmd) = mapped_cmd {
+        return handle_command(bot, msg, cmd, db, config).await;
+    }
 
     // Nếu tin nhắn bắt đầu bằng lệnh '/'
     if text.starts_with('/') {
@@ -250,6 +265,12 @@ pub async fn handle_command(
                 config.bot_username,
                 user.referral_code
             );
+
+            // Bật bàn phím chức năng thường trực dưới khung chat
+            let _ = bot.send_message(msg.chat.id, "🔘 <i>Menu phím tắt nhanh đã được ghim cố định ở đáy khung chat!</i>")
+                .parse_mode(ParseMode::Html)
+                .reply_markup(persistent_reply_keyboard())
+                .await;
 
             bot.send_message(msg.chat.id, welcome)
                 .parse_mode(ParseMode::Html)

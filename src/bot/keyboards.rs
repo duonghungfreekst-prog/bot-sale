@@ -1,5 +1,25 @@
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, KeyboardMarkup};
 use url::Url;
+
+/// Bàn phím Reply Keyboard thường trực ở dưới khung chat
+pub fn persistent_reply_keyboard() -> KeyboardMarkup {
+    KeyboardMarkup::new(vec![
+        vec![
+            KeyboardButton::new("🚀 Bắt Đầu"),
+            KeyboardButton::new("💰 Ví Hoàn Tiền"),
+        ],
+        vec![
+            KeyboardButton::new("🎟️ Mã Giảm Giá"),
+            KeyboardButton::new("🤝 Giới Thiệu Bạn Bè"),
+        ],
+        vec![
+            KeyboardButton::new("📖 Hướng Dẫn"),
+            KeyboardButton::new("💳 Rút Tiền"),
+        ],
+    ])
+    .resize_keyboard()
+    .persistent()
+}
 
 /// Bàn phím Inline cho Menu chính
 pub fn main_menu_keyboard(bot_username: &str, ref_code: &str) -> InlineKeyboardMarkup {
