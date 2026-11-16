@@ -7,24 +7,21 @@ use teloxide::{
 };
 use tracing::{error, warn};
 
-use super::keyboards::{deal_action_keyboard, deals_filter_keyboard, main_menu_keyboard, persistent_reply_keyboard};
+use super::keyboards::{deal_action_keyboard, main_menu_keyboard, persistent_reply_keyboard};
 use crate::config::Config;
 use crate::db::models::ClickRecord;
 use crate::db::repository::Repository;
 use crate::db::AppDb;
 use crate::services::deal_parser::DealParser;
-use crate::utils::format_vnd;
 
 #[derive(BotCommands, Clone, Debug)]
 #[command(rename_rule = "lowercase", description = "Danh sách lệnh hỗ trợ:")]
 pub enum Command {
-    #[command(description = "Bắt đầu sử dụng bot săn mã giảm giá")]
+    #[command(description = "Bắt đầu / Hướng dẫn dán link săn sale")]
     Start,
     #[command(description = "Xem hướng dẫn chi tiết cách áp mã giảm giá")]
     Help,
-    #[command(description = "Xem mã giảm giá & deals hot (Shopee, Lazada, Tiki)")]
-    Deals(String),
-    #[command(description = "Chia sẻ bot săn sale cho bạn bè")]
+    #[command(description = "Chia sẻ DealX cho bạn bè cùng săn sale")]
     Share,
     #[command(description = "Xem thống kê hoạt động bot (Dành cho Admin)")]
     Stats,
@@ -54,9 +51,6 @@ pub async fn handle_message(
     // Xử lý các nút bấm từ Reply Keyboard thường trực ở đáy màn hình
     let mapped_cmd = match text {
         "🚀 Bắt Đầu" | "Bắt Đầu" | "start" => Some(Command::Start),
-        "🎟️ Mã Giảm Giá Hôm Nay" | "Mã Giảm Giá" | "deals" => Some(Command::Deals(String::new())),
-        "🟠 Săn Sale Shopee" => Some(Command::Deals("Shopee".to_string())),
-        "🔵 Săn Sale Lazada" => Some(Command::Deals("Lazada".to_string())),
         "📖 Hướng Dẫn Săn Sale" | "Hướng Dẫn" | "help" => Some(Command::Help),
         "🚀 Chia Sẻ Cho Bạn Bè" | "Chia Sẻ" | "share" => Some(Command::Share),
         _ => None,
@@ -282,54 +276,6 @@ pub async fn handle_command(
                 .await?;
         }
 
-        Command::Deals(arg) => {
-            let filter = if arg.trim().is_empty() {
-                None
-            } else {
-                Some(arg.trim())
-            };
-
-            let deals = Repository::get_active_deals(&conn, filter)
-                .await
-                .unwrap_or_default();
-
-            if deals.is_empty() {
-                bot.send_message(
-                    msg.chat.id,
-                    "Hiện tại chưa có mã giảm giá mới cho sàn này. Vui lòng quay lại sau!",
-                )
-                .await?;
-            } else {
-                let mut text = "🔥 <b>DANH SÁCH MÃ GIẢM GIÁ & DEALS HOT HÔM NAY</b> 🔥\n\n".to_string();
-                for (i, d) in deals.iter().take(6).enumerate() {
-                    let code_str = d
-                        .coupon_code
-                        .as_deref()
-                        .map(|c| format!("Mã: <code>{}</code>", c))
-                        .unwrap_or_else(|| "Tự động áp dụng".to_string());
-
-                    text.push_str(&format!(
-                        "<b>{}. [{}] {}</b>\n\
-                         🏷️ {}\n\
-                         🎁 <i>{}</i> (Đơn từ {})\n\
-                         👉 <a href=\"{}\">Lưu mã ngay</a>\n\n",
-                        i + 1,
-                        d.platform,
-                        d.title,
-                        code_str,
-                        d.discount_desc,
-                        format_vnd(d.min_spend),
-                        d.deal_url
-                    ));
-                }
-
-                bot.send_message(msg.chat.id, text)
-                    .parse_mode(ParseMode::Html)
-                    .reply_markup(deals_filter_keyboard())
-                    .await?;
-            }
-        }
-
         Command::Share => {
             let share_link = format!("https://t.me/{}", config.bot_username);
 
@@ -398,7 +344,7 @@ pub async fn handle_callback(
         None => return Ok(()),
     };
 
-    let conn = match db.conn() {
+    let _conn = match db.conn() {
         Ok(c) => c,
         Err(_) => return Ok(()),
     };
@@ -406,93 +352,6 @@ pub async fn handle_callback(
     let _ = bot.answer_callback_query(q.id).await;
 
     match data {
-        "menu_deals" | "deals_all" => {
-            if let Ok(deals) = Repository::get_active_deals(&conn, None).await {
-                let mut text = "🔥 <b>MÃ GIẢM GIÁ TẤT CẢ CÁC SÀN</b> 🔥\n\n".to_string();
-                for (i, d) in deals.iter().take(6).enumerate() {
-                    let code_str = d
-                        .coupon_code
-                        .as_deref()
-                        .map(|c| format!("Mã: <code>{}</code>", c))
-                        .unwrap_or_else(|| "Tự động áp dụng".to_string());
-
-                    text.push_str(&format!(
-                        "<b>{}. [{}] {}</b>\n🏷️ {}\n🎁 {}\n👉 <a href=\"{}\">Dùng ngay</a>\n\n",
-                        i + 1,
-                        d.platform,
-                        d.title,
-                        code_str,
-                        d.discount_desc,
-                        d.deal_url
-                    ));
-                }
-                bot.send_message(chat_id, text)
-                    .parse_mode(ParseMode::Html)
-                    .reply_markup(deals_filter_keyboard())
-                    .await?;
-            }
-        }
-
-        "deals_shopee" => {
-            if let Ok(deals) = Repository::get_active_deals(&conn, Some("Shopee")).await {
-                let mut text = "🟠 <b>MÃ GIẢM GIÁ SHOPEE HÔM NAY</b> 🟠\n\n".to_string();
-                for (i, d) in deals.iter().enumerate() {
-                    text.push_str(&format!(
-                        "<b>{}. {}</b>\n🏷️ Mã: <code>{}</code>\n🎁 {}\n👉 <a href=\"{}\">Lưu mã</a>\n\n",
-                        i + 1,
-                        d.title,
-                        d.coupon_code.as_deref().unwrap_or("FREE"),
-                        d.discount_desc,
-                        d.deal_url
-                    ));
-                }
-                bot.send_message(chat_id, text)
-                    .parse_mode(ParseMode::Html)
-                    .reply_markup(deals_filter_keyboard())
-                    .await?;
-            }
-        }
-
-        "deals_lazada" => {
-            if let Ok(deals) = Repository::get_active_deals(&conn, Some("Lazada")).await {
-                let mut text = "🔵 <b>VOUCHER LAZADA HOT HÔM NAY</b> 🔵\n\n".to_string();
-                for (i, d) in deals.iter().enumerate() {
-                    text.push_str(&format!(
-                        "<b>{}. {}</b>\n🏷️ Mã: <code>{}</code>\n🎁 {}\n👉 <a href=\"{}\">Lưu mã</a>\n\n",
-                        i + 1,
-                        d.title,
-                        d.coupon_code.as_deref().unwrap_or("Tự động áp"),
-                        d.discount_desc,
-                        d.deal_url
-                    ));
-                }
-                bot.send_message(chat_id, text)
-                    .parse_mode(ParseMode::Html)
-                    .reply_markup(deals_filter_keyboard())
-                    .await?;
-            }
-        }
-
-        "deals_tiki" => {
-            if let Ok(deals) = Repository::get_active_deals(&conn, Some("Tiki")).await {
-                let mut text = "🔵 <b>MÃ GIẢM GIÁ TIKI HOT</b> 🔵\n\n".to_string();
-                for (i, d) in deals.iter().enumerate() {
-                    text.push_str(&format!(
-                        "<b>{}. {}</b>\n🏷️ Mã: <code>{}</code>\n🎁 {}\n👉 <a href=\"{}\">Lưu mã</a>\n\n",
-                        i + 1,
-                        d.title,
-                        d.coupon_code.as_deref().unwrap_or("TIKI"),
-                        d.discount_desc,
-                        d.deal_url
-                    ));
-                }
-                bot.send_message(chat_id, text)
-                    .parse_mode(ParseMode::Html)
-                    .reply_markup(deals_filter_keyboard())
-                    .await?;
-            }
-        }
-
         "menu_guide" => {
             let guide = "📖 <b>HƯỚNG DẪN 3 BƯỚC NHẬN MÃ GIẢM GIÁ:</b>\n\n\
                          1️⃣ Copy link sản phẩm trên app Shopee, Lazada hoặc Tiki.\n\
@@ -503,14 +362,12 @@ pub async fn handle_callback(
                 .parse_mode(ParseMode::Html)
                 .await?;
         }
-
         "menu_main" => {
-            bot.send_message(chat_id, "🏠 <b>MENU CHÍNH BOT SĂN MÃ GIẢM GIÁ</b>")
+            bot.send_message(chat_id, "🏠 <b>MENU CHÍNH DEALX</b>")
                 .parse_mode(ParseMode::Html)
                 .reply_markup(main_menu_keyboard(&config.bot_username))
                 .await?;
         }
-
         _ => {}
     }
 

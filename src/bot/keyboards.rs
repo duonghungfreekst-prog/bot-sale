@@ -5,14 +5,7 @@ use url::Url;
 pub fn persistent_reply_keyboard() -> KeyboardMarkup {
     KeyboardMarkup::new(vec![
         vec![
-            KeyboardButton::new("🎟️ Mã Giảm Giá Hôm Nay"),
             KeyboardButton::new("📖 Hướng Dẫn Săn Sale"),
-        ],
-        vec![
-            KeyboardButton::new("🟠 Săn Sale Shopee"),
-            KeyboardButton::new("🔵 Săn Sale Lazada"),
-        ],
-        vec![
             KeyboardButton::new("🚀 Chia Sẻ Cho Bạn Bè"),
         ],
     ])
@@ -36,35 +29,24 @@ pub fn main_menu_keyboard(bot_username: &str) -> InlineKeyboardMarkup {
 
     InlineKeyboardMarkup::new(vec![
         vec![
-            InlineKeyboardButton::callback("🎟️ Xem Mã Giảm Giá Hôm Nay", "menu_deals"),
+            InlineKeyboardButton::callback("📖 Hướng Dẫn Áp Mã Thành Công 100%", "menu_guide"),
         ],
         vec![
-            InlineKeyboardButton::url("🚀 Chia Sẻ Cho Bạn Bè", share_url),
-            InlineKeyboardButton::callback("📖 Hướng Dẫn Áp Mã", "menu_guide"),
+            InlineKeyboardButton::url("🚀 Chia Sẻ DealX Cho Bạn Bè", share_url),
         ],
     ])
 }
 
 /// Bàn phím hành động khi người dùng gửi link sản phẩm
 pub fn deal_action_keyboard(affiliate_url: &str, platform: &str) -> InlineKeyboardMarkup {
-    let deals_callback = match platform.to_lowercase().as_str() {
-        "shopee" => "deals_shopee",
-        "lazada" => "deals_lazada",
-        "tiki" => "deals_tiki",
-        _ => "menu_deals",
-    };
-
     let target_url = Url::parse(affiliate_url)
         .unwrap_or_else(|_| Url::parse("https://shopee.vn").unwrap());
 
     InlineKeyboardMarkup::new(vec![
         vec![InlineKeyboardButton::url(
-            format!("🛍️ Mở {} & Áp Mã Sale Ngay 🛍️", platform),
+            format!("🛍️ Mở {} & Mua Giá Giảm Ngay 🛍️", platform),
             target_url,
         )],
-        vec![
-            InlineKeyboardButton::callback("🎟️ Xem Thêm Mã Sàn Này", deals_callback),
-        ],
     ])
 }
 
