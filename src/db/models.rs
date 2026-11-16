@@ -76,3 +76,14 @@ pub struct WalletSummary {
     pub total_referrals: i64,
     pub total_ref_bonus: f64,
 }
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AdminStats {
+    pub total_users: i64,
+    pub total_clicks: i64,
+    pub total_deals: i64,
+    pub shopee_clicks: i64,
+    pub lazada_clicks: i64,
+    pub tiki_clicks: i64,
+    pub tiktok_clicks: i64,
+}

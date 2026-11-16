@@ -1,12 +1,19 @@
-# 🚀 Bot Săn Sale & Hoàn Tiền Đa Sàn (Rust + LibSQL)
+# 🚀 DealX - Bot Săn Mã Giảm Giá & Web Quản Trị Đa Sàn (Rust + LibSQL)
 
-Hệ thống Bot Telegram săn sale, phân tích link sản phẩm đa sàn (Shopee, Lazada, Tiki, TikTok Shop) và tự động gắn mã **Hoàn tiền mặt + Hoa hồng giới thiệu đa tầng (Referral Cashback)** theo mô hình tương tự **Shopback**, được phát triển 100% bằng **ngôn ngữ Rust** kết hợp cơ sở dữ liệu phân tán/nhúng thế hệ mới **LibSQL** (Turso).
+Hệ thống Bot Telegram săn sale đa sàn (**DealX - Trợ Lý Săn Mã & Ép Giá**) tích hợp **Web Admin Dashboard Quản Trị Tối Mật**, phân tích link sản phẩm đa sàn (Shopee, Lazada, Tiki, TikTok Shop) và tự động gắn mã giảm giá sâu 20% - 50%, voucher Video, Freeship, được phát triển 100% bằng **ngôn ngữ Rust** kết hợp cơ sở dữ liệu **LibSQL** (Turso) và framework web **Axum**.
 
 ---
 
 ## 🌟 Tính Năng Nổi Bật
 
-### 1. Phân Tích & Làm Sạch Link Sản Phẩm Tự Động
+### 1. Web Admin Dashboard Quản Trị Độc Quyền (Bảo Mật Tối Cao)
+- **Chỉ DUY NHẤT 1 tài khoản Admin:** Không cho phép bất kỳ ai đăng ký mới, chặn 100% truy cập trái phép.
+- **Bảo mật chuẩn:** Xác thực Cookie HTTP-only, chống Timing Attack với `subtle::ConstantTimeEq`.
+- **Thống kê thời gian thực:** Xem tổng số người dùng bot, tổng số link đã chuyển đổi, số lượt click theo từng sàn (Shopee, Lazada, TikTok, Tiki).
+- **Quản lý kho Deals & Voucher:** Thêm deal mới trực tiếp trên web, bật/tắt hoặc xoá mã nhanh chóng; tự động đồng bộ ngay lập tức với lệnh `/deals` trên Telegram.
+- **Xem nhật ký dán link:** Theo dõi 50 link khách hàng vừa gửi vào bot gần nhất kèm link affiliate tương ứng.
+
+### 2. Phân Tích & Làm Sạch Link Sản Phẩm Tự Động
 - **Đa sàn TMĐT:** Hỗ trợ Shopee (`shopee.vn`, `shope.ee`), Lazada (`lazada.vn`, `s.lazada.vn`), Tiki (`tiki.vn`), TikTok Shop.
 - **Giải mã shortlink:** Tự động resolve các đường link rút gọn dạng `shope.ee/...` hay `s.lazada.vn/...` để lấy URL sản phẩm gốc.
 - **Xóa tracking rác (Clean URL):** Loại bỏ toàn bộ tham số rác như `utm_source`, `utm_medium`, `spm`, `ex_tracking`,... để đưa về link chuẩn nhất (`/product/{shopid}/{itemid}`).

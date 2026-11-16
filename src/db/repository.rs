@@ -4,7 +4,7 @@ use libsql::{params, Connection};
 use tracing::info;
 use uuid::Uuid;
 
-use super::models::{CashbackOrder, ClickRecord, DealItem, User, WalletSummary, Withdrawal};
+use super::models::{AdminStats, CashbackOrder, ClickRecord, DealItem, User, WalletSummary, Withdrawal};
 use crate::utils::generate_referral_code;
 
 pub struct Repository;
@@ -499,6 +499,167 @@ impl Repository {
                 status: row.get(9)?,
                 created_at: row.get(10)?,
                 updated_at: row.get(11)?,
+            });
+        }
+        Ok(list)
+    }
+
+    /// Lấy thống kê tổng quan cho Web Admin Dashboard
+    pub async fn get_admin_dashboard_stats(conn: &Connection) -> Result<AdminStats> {
+        let mut total_users = 0i64;
+        let mut total_clicks = 0i64;
+        let mut total_deals = 0i64;
+        let mut shopee_clicks = 0i64;
+        let mut lazada_clicks = 0i64;
+        let mut tiki_clicks = 0i64;
+        let mut tiktok_clicks = 0i64;
+
+        if let Ok(mut rows) = conn.query("SELECT COUNT(*) FROM users", ()).await {
+            if let Ok(Some(row)) = rows.next().await {
+                total_users = row.get(0).unwrap_or(0);
+            }
+        }
+
+        if let Ok(mut rows) = conn.query("SELECT COUNT(*) FROM clicks", ()).await {
+            if let Ok(Some(row)) = rows.next().await {
+                total_clicks = row.get(0).unwrap_or(0);
+            }
+        }
+
+        if let Ok(mut rows) = conn.query("SELECT COUNT(*) FROM deals", ()).await {
+            if let Ok(Some(row)) = rows.next().await {
+                total_deals = row.get(0).unwrap_or(0);
+            }
+        }
+
+        if let Ok(mut rows) = conn.query("SELECT COUNT(*) FROM clicks WHERE LOWER(platform) = 'shopee'", ()).await {
+            if let Ok(Some(row)) = rows.next().await {
+                shopee_clicks = row.get(0).unwrap_or(0);
+            }
+        }
+
+        if let Ok(mut rows) = conn.query("SELECT COUNT(*) FROM clicks WHERE LOWER(platform) = 'lazada'", ()).await {
+            if let Ok(Some(row)) = rows.next().await {
+                lazada_clicks = row.get(0).unwrap_or(0);
+            }
+        }
+
+        if let Ok(mut rows) = conn.query("SELECT COUNT(*) FROM clicks WHERE LOWER(platform) = 'tiki'", ()).await {
+            if let Ok(Some(row)) = rows.next().await {
+                tiki_clicks = row.get(0).unwrap_or(0);
+            }
+        }
+
+        if let Ok(mut rows) = conn.query("SELECT COUNT(*) FROM clicks WHERE LOWER(platform) LIKE '%tiktok%'", ()).await {
+            if let Ok(Some(row)) = rows.next().await {
+                tiktok_clicks = row.get(0).unwrap_or(0);
+            }
+        }
+
+        Ok(AdminStats {
+            total_users,
+            total_clicks,
+            total_deals,
+            shopee_clicks,
+            lazada_clicks,
+            tiki_clicks,
+            tiktok_clicks,
+        })
+    }
+
+    /// Lấy toàn bộ danh sách deal cho admin (bao gồm cả deal đang tắt)
+    pub async fn get_all_deals_for_admin(conn: &Connection) -> Result<Vec<DealItem>> {
+        let mut rows = conn
+            .query(
+                "SELECT id, platform, title, coupon_code, discount_desc, min_spend, deal_url, expire_at, is_active
+                 FROM deals ORDER BY id DESC",
+                (),
+            )
+            .await?;
+
+        let mut list = Vec::new();
+        while let Some(row) = rows.next().await? {
+            list.push(DealItem {
+                id: row.get(0)?,
+                platform: row.get(1)?,
+                title: row.get(2)?,
+                coupon_code: row.get(3)?,
+                discount_desc: row.get(4)?,
+                min_spend: row.get(5)?,
+                deal_url: row.get(6)?,
+                expire_at: row.get(7)?,
+                is_active: row.get::<i64>(8)? == 1,
+            });
+        }
+        Ok(list)
+    }
+
+    /// Thêm mã giảm giá mới từ Web Admin
+    pub async fn add_deal(
+        conn: &Connection,
+        platform: &str,
+        title: &str,
+        coupon_code: Option<&str>,
+        discount_desc: &str,
+        min_spend: f64,
+        deal_url: &str,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO deals (platform, title, coupon_code, discount_desc, min_spend, deal_url, is_active, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)",
+            params![
+                platform.to_string(),
+                title.to_string(),
+                coupon_code.map(|s| s.to_string()),
+                discount_desc.to_string(),
+                min_spend,
+                deal_url.to_string(),
+                now
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Bật/Tắt trạng thái hoạt động của Deal
+    pub async fn toggle_deal(conn: &Connection, deal_id: i64) -> Result<()> {
+        conn.execute(
+            "UPDATE deals SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END WHERE id = ?1",
+            params![deal_id],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Xoá Deal khỏi kho
+    pub async fn delete_deal(conn: &Connection, deal_id: i64) -> Result<()> {
+        conn.execute("DELETE FROM deals WHERE id = ?1", params![deal_id])
+            .await?;
+        Ok(())
+    }
+
+    /// Lấy danh sách link khách hàng vừa dán gần đây cho admin xem
+    pub async fn get_recent_clicks_for_admin(conn: &Connection, limit: i64) -> Result<Vec<ClickRecord>> {
+        let mut rows = conn
+            .query(
+                "SELECT id, user_id, platform, original_url, clean_url, affiliate_url, sub_id, created_at
+                 FROM clicks ORDER BY created_at DESC LIMIT ?1",
+                params![limit],
+            )
+            .await?;
+
+        let mut list = Vec::new();
+        while let Some(row) = rows.next().await? {
+            list.push(ClickRecord {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                platform: row.get(2)?,
+                original_url: row.get(3)?,
+                clean_url: row.get(4)?,
+                affiliate_url: row.get(5)?,
+                sub_id: row.get(6)?,
+                created_at: row.get(7)?,
             });
         }
         Ok(list)

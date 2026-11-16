@@ -17,6 +17,11 @@ pub struct Config {
     
     // Cấu hình Affiliate Deeplink template (AccessTrade / Custom)
     pub accesstrade_deeplink_template: String,
+    
+    // Cấu hình tài khoản Quản trị viên (Chỉ 1 tài khoản Admin duy nhất)
+    pub admin_username: String,
+    pub admin_password: String,
+    pub port: u16,
 }
 
 impl Config {
@@ -27,7 +32,7 @@ impl Config {
             .unwrap_or_else(|_| "DEMO_TOKEN_PLEASE_REPLACE_IN_ENV".to_string());
             
         let bot_username = env::var("BOT_USERNAME")
-            .unwrap_or_else(|_| "SaleHunterCashback_bot".to_string());
+            .unwrap_or_else(|_| "vvipass_vip_bot".to_string());
             
         let database_path = env::var("DATABASE_PATH")
             .unwrap_or_else(|_| "salehunter.db".to_string());
@@ -53,6 +58,17 @@ impl Config {
         let accesstrade_deeplink_template = env::var("ACCESSTRADE_DEEPLINK_TEMPLATE")
             .unwrap_or_else(|_| "https://fast.accesstrade.com.vn/deep_link/630000000000?url={CLEAN_URL}&sub_id1={USER_ID}&sub_id2={REF_ID}&sub_id3={CLICK_ID}".to_string());
 
+        let admin_username = env::var("ADMIN_USERNAME")
+            .unwrap_or_else(|_| "admin".to_string());
+
+        let admin_password = env::var("ADMIN_PASSWORD")
+            .unwrap_or_else(|_| "DealX@Admin2026".to_string());
+
+        let port = env::var("PORT")
+            .ok()
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(10000);
+
         Ok(Self {
             telegram_token,
             bot_username,
@@ -63,6 +79,9 @@ impl Config {
             default_referral_bonus_rate,
             min_withdrawal_vnd,
             accesstrade_deeplink_template,
+            admin_username,
+            admin_password,
+            port,
         })
     }
 }

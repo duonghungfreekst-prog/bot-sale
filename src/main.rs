@@ -3,6 +3,7 @@ mod config;
 mod db;
 mod services;
 mod utils;
+mod web;
 
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -54,45 +55,21 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Nếu có biến môi trường PORT (khi deploy lên Render Web Service), mở cổng HTTP để Render health check
-    if let Ok(port_str) = std::env::var("PORT") {
-        if let Ok(port) = port_str.parse::<u16>() {
-            tokio::spawn(async move {
-                start_health_check_server(port).await;
-            });
+    // Khởi chạy Web Admin Dashboard & Health Check Server
+    let web_db = db.clone();
+    let web_config = config.clone();
+    tokio::spawn(async move {
+        if let Err(err) = web::start_web_server(web_config.port, web_db, web_config).await {
+            error!("Lỗi khi khởi chạy Web Admin Server: {}", err);
         }
-    }
+    });
 
-    // Khởi chạy bot
+    // Khởi chạy Telegram bot
     if let Err(err) = bot::run_bot(config, db).await {
         error!("Lỗi khi chạy Telegram bot: {}", err);
     }
 
     Ok(())
-}
-
-/// Mini HTTP Health Check Server cho Render Web Service (Free Tier)
-async fn start_health_check_server(port: u16) {
-    let addr = format!("0.0.0.0:{}", port);
-    match tokio::net::TcpListener::bind(&addr).await {
-        Ok(listener) => {
-            info!("🌐 Render Health Check Server đang lắng nghe tại http://{}", addr);
-            loop {
-                if let Ok((mut stream, _)) = listener.accept().await {
-                    tokio::spawn(async move {
-                        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                        let mut buf = [0u8; 512];
-                        let _ = stream.read(&mut buf).await;
-                        let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\n\r\nSaleHunter Bot Online";
-                        let _ = stream.write_all(response.as_bytes()).await;
-                    });
-                }
-            }
-        }
-        Err(err) => {
-            error!("Không thể khởi tạo Health Check Server tại cổng {}: {}", port, err);
-        }
-    }
 }
 
 /// Chạy tự kiểm tra toàn bộ luồng nghiệp vụ khi chưa cắm token Telegram

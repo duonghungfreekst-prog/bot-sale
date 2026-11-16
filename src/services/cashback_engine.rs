@@ -116,6 +116,9 @@ mod tests {
             default_referral_bonus_rate: 10.0,
             min_withdrawal_vnd: 50000.0,
             accesstrade_deeplink_template: "template".to_string(),
+            admin_username: "admin".to_string(),
+            admin_password: "password".to_string(),
+            port: 10000,
         };
 
         // Giả sử hoa hồng sàn trả là 100,000₫

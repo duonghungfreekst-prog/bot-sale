@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: salehunter-cashback-bot
+    name: bot-sale
     runtime: docker
     dockerfilePath: Dockerfile
     plan: free
@@ -10,6 +10,12 @@ services:
         sync: false
       - key: BOT_USERNAME
         value: vvipass_vip_bot
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: PORT
+        value: "10000"
       - key: TURSO_DATABASE_URL
         sync: false
       - key: TURSO_AUTH_TOKEN
