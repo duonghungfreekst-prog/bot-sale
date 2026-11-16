@@ -15,13 +15,11 @@ pub async fn run_bot(config: Config, db: AppDb) -> anyhow::Result<()> {
     let bot = Bot::new(&config.telegram_token);
     let parser = Arc::new(DealParser::new());
 
-    // Tự động đăng ký danh sách commands để Telegram hiện nút [Menu] cạnh ô nhập tin nhắn
+    // Tự động đăng ký danh sách commands để Telegram hiện nút [Menu] cạnh ô nhập tin nhắn (chỉ 3 lệnh thiết yếu cho khách)
     let commands = vec![
         BotCommand::new("start", "🚀 Bắt đầu / Hướng dẫn dán link"),
-        BotCommand::new("deals", "🎟️ Xem kho mã giảm giá hot hôm nay"),
-        BotCommand::new("help", "📖 Mẹo áp mã giảm 20% - 50% thành công"),
-        BotCommand::new("share", "🤝 Chia sẻ bot cho bạn bè cùng săn sale"),
-        BotCommand::new("stats", "📊 Thống kê lượt click (Dành cho Admin)"),
+        BotCommand::new("deals", "🎟️ Xem kho mã giảm giá hot"),
+        BotCommand::new("help", "📖 Mẹo áp mã giảm 20% - 50%"),
     ];
 
     if let Err(e) = bot.set_my_commands(commands).await {
