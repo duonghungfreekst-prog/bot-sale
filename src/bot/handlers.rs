@@ -139,14 +139,30 @@ pub async fn handle_message(
                     warn!("Không thể ghi log click vào LibSQL: {}", err);
                 }
 
+                let mut tips_text = String::new();
+                for tip in &parsed.tips {
+                    tips_text.push_str(&format!("- {}\n", tip));
+                }
+
                 let reply_html = format!(
-                    "🎉 <b>PHÁT HIỆN DEAL SÀN {}!</b>\n\n\
-                     🛒 <b>Link sạch:</b> <code>{}</code>\n\
-                     💰 <b>Mức hoàn dự kiến:</b> <b>{}</b>\n\
-                     👤 <b>Mã định danh hoàn tiền:</b> <code>{}</code>\n\n\
-                     💡 <i>Mẹo: Bấm nút bên dưới để mở App sàn mua hàng. Tiền hoàn sẽ tự động ghi nhận vào ví của bạn trong vòng 24h - 48h sau khi đặt hàng thành công!</i>",
-                    parsed.platform.as_str(),
-                    parsed.clean_url,
+                    "📦 <b>{}</b>\n\
+                     🔗 <i>Link gốc:</i> {}\n\n\
+                     👉 <b>{} ({}) · 🟢 {}% :</b>\n\
+                     {} (<code>{}</code>)\n\n\
+                     ⏰ <b>BACK MÃ LÚC:</b> {}\n\n\
+                     ⚠️ <b>Lưu ý để áp mã thành công:</b>\n\
+                     {}\n\n\
+                     💰 <b>Hoàn tiền mặt thêm:</b> <b>{}</b> <i>(như Shopback)</i>\n\
+                     👤 <b>Mã định danh hoàn tiền:</b> <code>{}</code>",
+                    parsed.product_title,
+                    parsed.original_url,
+                    parsed.primary_voucher.name,
+                    parsed.primary_voucher.discount_desc,
+                    parsed.primary_voucher.remaining_percent,
+                    parsed.affiliate_url,
+                    parsed.primary_voucher.min_spend_desc,
+                    parsed.primary_voucher.back_hours,
+                    tips_text.trim_end(),
                     parsed.estimated_cashback_text,
                     user.referral_code
                 );
