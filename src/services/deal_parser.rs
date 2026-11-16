@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 use anyhow::{anyhow, Result};
 use regex::Regex;
@@ -5,6 +6,8 @@ use reqwest::Client;
 use tracing::{info, warn};
 use url::Url;
 use uuid::Uuid;
+
+use super::accesstrade::AccessTradeClient;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Platform {
@@ -27,6 +30,16 @@ impl Platform {
     }
 }
 
+/// Cấu hình đầu vào để tạo link Affiliate
+pub struct AffiliateSettings<'a> {
+    pub deeplink_template: &'a str,
+    pub accesstrade_token: Option<&'a str>,
+    pub campaign_shopee: Option<&'a str>,
+    pub campaign_lazada: Option<&'a str>,
+    pub campaign_tiki: Option<&'a str>,
+    pub campaign_tiktok: Option<&'a str>,
+}
+
 /// Thông tin voucher/mã sale nhặt được tự động
 #[derive(Debug, Clone)]
 pub struct SaleVoucher {
@@ -46,6 +59,8 @@ pub struct ParsedDeal {
     pub resolved_url: String,
     pub clean_url: String,
     pub affiliate_url: String,
+    pub is_affiliate: bool,
+    pub affiliate_note: Option<String>,
     pub click_id: String,
     pub sub_id: String,
     pub primary_voucher: SaleVoucher,
@@ -56,6 +71,7 @@ pub struct ParsedDeal {
 
 pub struct DealParser {
     http_client: Client,
+    accesstrade: Arc<AccessTradeClient>,
     url_regex: Regex,
     shopee_item_regex: Regex,
     lazada_item_regex: Regex,
@@ -63,7 +79,12 @@ pub struct DealParser {
 }
 
 impl DealParser {
+    #[allow(dead_code)]
     pub fn new() -> Self {
+        Self::with_accesstrade(Arc::new(AccessTradeClient::new()))
+    }
+
+    pub fn with_accesstrade(accesstrade: Arc<AccessTradeClient>) -> Self {
         let http_client = Client::builder()
             .timeout(Duration::from_secs(6))
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -77,6 +98,7 @@ impl DealParser {
 
         Self {
             http_client,
+            accesstrade,
             url_regex,
             shopee_item_regex,
             lazada_item_regex,
@@ -241,7 +263,7 @@ impl DealParser {
         }
     }
 
-    /// Xây dựng link Affiliate gắn SubID hoàn tiền (Shopback model)
+    /// Xây dựng link Affiliate gắn SubID từ template (trả về cờ is_affiliate thực tế)
     pub fn build_affiliate_url(
         &self,
         clean_url: &str,
@@ -249,14 +271,14 @@ impl DealParser {
         user_id: i64,
         referrer_id: Option<i64>,
         click_id: &str,
-    ) -> (String, String) {
+    ) -> (String, String, bool) {
         let ref_str = referrer_id.map(|id| id.to_string()).unwrap_or_else(|| "0".to_string());
         let sub_id = format!("u{}_r{}_{}", user_id, ref_str, &click_id[..8]);
 
         // Nếu template đang là mã mẫu chưa cấu hình (chứa 630000000000 hoặc rỗng)
         // thì trả về chính link sản phẩm sạch để khách mở thẳng Shopee/Lazada không bị lỗi 404
         if template.contains("630000000000") || template.trim().is_empty() {
-            return (clean_url.to_string(), sub_id);
+            return (clean_url.to_string(), sub_id, false);
         }
 
         let encoded_clean = urlencoding::encode(clean_url);
@@ -266,75 +288,89 @@ impl DealParser {
             .replace("{REF_ID}", &ref_str)
             .replace("{CLICK_ID}", click_id);
 
-        (aff_url, sub_id)
+        (aff_url, sub_id, true)
     }
 
-    /// Tự động "nhặt" mã sale tốt nhất cho từng sàn TMĐT
-    pub fn pick_best_voucher(&self, platform: &Platform) -> (SaleVoucher, Vec<String>) {
-        match platform {
-            Platform::Shopee => (
+    /// Trả về thông tin hướng dẫn voucher trung thực theo trạng thái kết nối Affiliate thực tế
+    pub fn pick_best_voucher(&self, platform: &Platform, is_affiliate: bool) -> (SaleVoucher, Vec<String>) {
+        match (platform, is_affiliate) {
+            (Platform::Shopee, true) => (
                 SaleVoucher {
-                    name: "Mã Facebook 20%".to_string(),
-                    discount_desc: "Giảm 20% tối đa 50k - 100k".to_string(),
+                    name: "Mã Facebook / Affiliate 20%".to_string(),
+                    discount_desc: "Link đã gắn luồng Facebook (áp dụng tùy tài khoản & shop)".to_string(),
                     min_spend_desc: "Đơn từ 50k".to_string(),
                     remaining_percent: 83,
                     back_hours: "0H · 9H · 15H · 20H".to_string(),
                 },
                 vec![
-                    "Nếu không thấy mã -> cập nhật Shopee hoặc đổi tài khoản khác. (Chọn sản phẩm tương tự nhưng shop khác)".to_string(),
-                    "Xoá sản phẩm trong giỏ hàng trước khi bấm mua để tránh lỗi xung đột mã".to_string(),
+                    "Nếu không thấy mã Facebook -> bấm nút Lấy Mã Shopee / Shopee Video bên dưới trước rồi quay lại giỏ hàng".to_string(),
+                    "Xoá sản phẩm cũ trong giỏ hàng trước khi bấm mua để tránh lỗi xung đột mã".to_string(),
                     "Áp dụng được đồng thời với mã Miễn Phí Vận Chuyển Freeship Xtra".to_string(),
                 ],
             ),
-            Platform::Lazada => (
+            (Platform::Shopee, false) => (
                 SaleVoucher {
-                    name: "Voucher Tích Lũy 100K + Hoàn Tiền MAX 12%".to_string(),
-                    discount_desc: "Giảm 10k mỗi 150k + Hoàn xu 12%".to_string(),
+                    name: "Link Sạch Sản Phẩm + Cổng Săn Mã Shopee".to_string(),
+                    discount_desc: "Bấm lưu mã tại Cổng Voucher / Shopee Video bên dưới trước khi mua".to_string(),
+                    min_spend_desc: "Đơn từ 0đ - 50k".to_string(),
+                    remaining_percent: 83,
+                    back_hours: "0H · 9H · 15H · 20H".to_string(),
+                },
+                vec![
+                    "Bấm nút [Lưu Mã Shopee] hoặc [Săn Mã Shopee Video] bên dưới để lưu voucher vào ví trước".to_string(),
+                    "Sau đó bấm nút [Mở Shopee Xem Sản Phẩm] và chọn Shopee Voucher lúc thanh toán".to_string(),
+                    "Xoá sản phẩm cũ trong giỏ hàng trước khi mua để áp được mã mới nhất".to_string(),
+                ],
+            ),
+            (Platform::Lazada, _) => (
+                SaleVoucher {
+                    name: "Voucher Tích Lũy 100K + Hoàn Tiền MAX".to_string(),
+                    discount_desc: "Thu thập voucher tại cổng Lazada trước khi thanh toán".to_string(),
                     min_spend_desc: "Đơn từ 150k".to_string(),
                     remaining_percent: 88,
                     back_hours: "0H · 9H · 12H · 20H".to_string(),
                 },
                 vec![
-                    "Thu thập Voucher Tích Lũy trước khi bấm thanh toán".to_string(),
+                    "Bấm nút [Thu Thập Voucher Lazada] bên dưới để lưu toàn bộ mã tích lũy trước".to_string(),
                     "Tự động cộng dồn với mã freeship và mã thanh toán ví điện tử".to_string(),
                 ],
             ),
-            Platform::Tiki => (
+            (Platform::Tiki, _) => (
                 SaleVoucher {
-                    name: "Mã Giảm Toàn Sàn 15% + TikiNOW".to_string(),
-                    discount_desc: "Giảm 15% + Miễn phí giao siêu tốc 2H".to_string(),
+                    name: "Mã Giảm Toàn Sàn + TikiNOW".to_string(),
+                    discount_desc: "Lưu mã tại Cổng Khuyến Mãi Tiki hoặc trang thanh toán".to_string(),
                     min_spend_desc: "Đơn từ 100k".to_string(),
                     remaining_percent: 78,
                     back_hours: "8H · 12H · 16H · 20H".to_string(),
                 },
                 vec![
                     "Áp dụng tốt nhất cho các sản phẩm Tiki Trading và Official Store".to_string(),
-                    "Bấm lưu mã tại trang thanh toán để được trừ tiền tự động".to_string(),
+                    "Bấm lưu mã tại cổng Tiki bên dưới rồi quay lại sản phẩm".to_string(),
                 ],
             ),
-            Platform::TikTokShop | Platform::Unknown => (
+            (Platform::TikTokShop, _) | (Platform::Unknown, _) => (
                 SaleVoucher {
-                    name: "Voucher Livestream Trợ Giá 25%".to_string(),
-                    discount_desc: "Giảm 25k - 70k trên giỏ hàng live".to_string(),
+                    name: "Voucher Livestream / Giỏ Hàng TikTok Shop".to_string(),
+                    discount_desc: "Áp mã trợ giá trực tiếp tại giỏ hàng TikTok Shop".to_string(),
                     min_spend_desc: "Đơn từ 80k".to_string(),
                     remaining_percent: 85,
                     back_hours: "Cập nhật liên tục 24/7".to_string(),
                 },
                 vec![
-                    "Vào giỏ hàng từ đường link của bot để kích hoạt trợ giá".to_string(),
-                    "Chọn voucher freeship extra để được giảm thêm 70,000₫ phí ship".to_string(),
+                    "Mở sản phẩm bằng đường link của bot để kiểm tra voucher trợ giá trong giỏ hàng".to_string(),
+                    "Chọn voucher freeship extra để được giảm thêm phí vận chuyển".to_string(),
                 ],
             ),
         }
     }
 
-    /// Xử lý toàn bộ chu trình phân tích deal từ tin nhắn người dùng
+    /// Xử lý toàn bộ chu trình phân tích deal và tạo link ACCESSTRADE thật
     pub async fn process_link(
         &self,
         input_text: &str,
         user_id: i64,
         referrer_id: Option<i64>,
-        template: &str,
+        settings: AffiliateSettings<'_>,
     ) -> Result<ParsedDeal> {
         let raw_url = self
             .extract_first_url(input_text)
@@ -350,7 +386,7 @@ impl DealParser {
         };
 
         if platform == Platform::Unknown {
-            return Err(anyhow!("Hiện tại bot hỗ trợ hoàn tiền & nhặt mã sale cho: Shopee, Lazada, Tiki, TikTok Shop. Vui lòng gửi link thuộc các sàn này."));
+            return Err(anyhow!("Hiện tại bot hỗ trợ xử lý link cho: Shopee, Lazada, Tiki, TikTok Shop. Vui lòng gửi link thuộc các sàn này."));
         }
 
         // Ưu tiên: Tiêu đề gửi kèm từ tin nhắn -> Tiêu đề bóc từ HTML -> Tiêu đề bóc từ Slug URL
@@ -364,16 +400,58 @@ impl DealParser {
 
         let clean_url = self.clean_url(&resolved_url, &platform);
         let click_id = Uuid::new_v4().simple().to_string();
+        let ref_str = referrer_id.map(|id| id.to_string()).unwrap_or_else(|| "0".to_string());
+        let default_sub_id = format!("u{}_r{}_{}", user_id, ref_str, &click_id[..8]);
 
-        let (affiliate_url, sub_id) = self.build_affiliate_url(
-            &clean_url,
-            template,
-            user_id,
-            referrer_id,
-            &click_id,
-        );
+        let mut affiliate_note: Option<String> = None;
 
-        let (primary_voucher, tips) = self.pick_best_voucher(&platform);
+        let override_campaign_id = match platform {
+            Platform::Shopee => settings.campaign_shopee,
+            Platform::Lazada => settings.campaign_lazada,
+            Platform::Tiki => settings.campaign_tiki,
+            Platform::TikTokShop => settings.campaign_tiktok,
+            Platform::Unknown => None,
+        };
+
+        // 1. Ưu tiên gọi ACCESSTRADE API thật nếu có API Token
+        let (affiliate_url, sub_id, is_affiliate) = if let Some(token) = settings.accesstrade_token.map(str::trim).filter(|s| !s.is_empty()) {
+            match self
+                .accesstrade
+                .create_affiliate_link(
+                    token,
+                    &platform,
+                    &clean_url,
+                    user_id,
+                    &click_id,
+                    override_campaign_id,
+                )
+                .await
+            {
+                Ok(res) => (res.url, default_sub_id, true),
+                Err(err_msg) => {
+                    warn!("Fallback khỏi ACCESSTRADE API sang link dự phòng: {}", err_msg);
+                    affiliate_note = Some(err_msg);
+                    self.build_affiliate_url(
+                        &clean_url,
+                        settings.deeplink_template,
+                        user_id,
+                        referrer_id,
+                        &click_id,
+                    )
+                }
+            }
+        } else {
+            // 2. Fallback sang Deeplink Template hoặc Clean URL
+            self.build_affiliate_url(
+                &clean_url,
+                settings.deeplink_template,
+                user_id,
+                referrer_id,
+                &click_id,
+            )
+        };
+
+        let (primary_voucher, tips) = self.pick_best_voucher(&platform, is_affiliate);
 
         let estimated_cashback_text = match platform {
             Platform::Shopee => "Hoàn thêm 3.0% - 10.5% (Tối đa 150,000₫/đơn)",
@@ -391,6 +469,8 @@ impl DealParser {
             resolved_url,
             clean_url,
             affiliate_url,
+            is_affiliate,
+            affiliate_note,
             click_id,
             sub_id,
             primary_voucher,
@@ -456,9 +536,12 @@ mod tests {
     #[test]
     fn test_pick_best_voucher_shopee() {
         let parser = DealParser::new();
-        let (voucher, _) = parser.pick_best_voucher(&Platform::Shopee);
-        assert!(voucher.name.contains("Mã Facebook 20%"));
-        assert_eq!(voucher.remaining_percent, 83);
-        assert!(voucher.back_hours.contains("0H · 9H · 15H · 20H"));
+        let (voucher_aff, _) = parser.pick_best_voucher(&Platform::Shopee, true);
+        assert!(voucher_aff.name.contains("Facebook"));
+        assert_eq!(voucher_aff.remaining_percent, 83);
+        assert!(voucher_aff.back_hours.contains("0H · 9H · 15H · 20H"));
+
+        let (voucher_clean, _) = parser.pick_best_voucher(&Platform::Shopee, false);
+        assert!(voucher_clean.name.contains("Cổng Săn Mã Shopee"));
     }
 }

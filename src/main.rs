@@ -5,11 +5,13 @@ mod services;
 mod utils;
 mod web;
 
+use std::sync::Arc;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use config::Config;
 use db::AppDb;
+use services::accesstrade::AccessTradeClient;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -41,12 +43,16 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Khởi tạo Client ACCESSTRADE API dùng chung cho cả Web Admin & Telegram Bot
+    let accesstrade = Arc::new(AccessTradeClient::new());
+
     // 1. Luôn khởi chạy Web Admin Dashboard & Health Check Server trước tiên
     let web_db = db.clone();
     let web_config = config.clone();
+    let web_at = accesstrade.clone();
     let web_port = web_config.port;
     let web_handle = tokio::spawn(async move {
-        if let Err(err) = web::start_web_server(web_config.port, web_db, web_config).await {
+        if let Err(err) = web::start_web_server(web_config.port, web_db, web_config, web_at).await {
             error!("Lỗi khi khởi chạy Web Admin Server: {}", err);
         }
     });
@@ -73,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
         _ = web_handle => {
             error!("Web Server đã dừng.");
         }
-        res = bot::run_bot(config, db) => {
+        res = bot::run_bot(config, db, accesstrade) => {
             if let Err(err) = res {
                 error!("Lỗi khi chạy Telegram bot: {}", err);
             }
@@ -119,12 +125,20 @@ async fn run_internal_verification(db: &AppDb, config: &Config) -> anyhow::Resul
     info!("--- [2/4] Kiểm tra DealParser (Phân tích link & gắn hoàn tiền) ---");
     let parser = DealParser::new();
     let sample_text = "Mua cái áo này nha: https://shopee.vn/product/123456/987654321 giá siêu tốt";
+    let aff_settings = services::deal_parser::AffiliateSettings {
+        deeplink_template: &config.accesstrade_deeplink_template,
+        accesstrade_token: config.accesstrade_api_token.as_deref(),
+        campaign_shopee: None,
+        campaign_lazada: None,
+        campaign_tiki: None,
+        campaign_tiktok: None,
+    };
     let parsed = parser
         .process_link(
             sample_text,
             user_f1.telegram_id,
             user_f1.referred_by,
-            &config.accesstrade_deeplink_template,
+            aff_settings,
         )
         .await?;
     info!("Link sạch: {}", parsed.clean_url);

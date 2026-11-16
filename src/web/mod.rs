@@ -1,8 +1,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 use axum::{
-    extract::{Form, Path, State},
-    http::{header, HeaderMap, StatusCode},
+    extract::{Form, Request, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    middleware::{self, Next},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
     Router,
@@ -15,39 +16,31 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::db::repository::Repository;
 use crate::db::AppDb;
-use crate::utils::format_vnd;
+use crate::services::accesstrade::{mask_token, AccessTradeClient};
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: AppDb,
     pub config: Config,
+    pub accesstrade: Arc<AccessTradeClient>,
     pub sessions: Arc<RwLock<HashSet<String>>>,
 }
 
 /// Khởi chạy Web Admin Dashboard Server
-pub async fn start_web_server(port: u16, db: AppDb, config: Config) -> anyhow::Result<()> {
+pub async fn start_web_server(
+    port: u16,
+    db: AppDb,
+    config: Config,
+    accesstrade: Arc<AccessTradeClient>,
+) -> anyhow::Result<()> {
     let state = AppState {
         db,
         config,
+        accesstrade,
         sessions: Arc::new(RwLock::new(HashSet::new())),
     };
 
-    let app = Router::new()
-        // Các route công khai
-        .route("/", get(handle_root))
-        .route("/health", get(handle_health))
-        .route("/admin/login", get(handle_login_page).post(handle_login_submit))
-        .route("/admin/logout", get(handle_logout))
-        
-        // Các route quản trị (được bảo vệ bằng phiên đăng nhập Admin)
-        .route("/admin", get(handle_dashboard))
-        .route("/admin/deals/new", post(handle_add_deal))
-        .route("/admin/deals/{id}/toggle", post(handle_toggle_deal))
-        .route("/admin/deals/{id}/delete", post(handle_delete_deal))
-        .route("/admin/settings/affiliate", post(handle_update_affiliate_settings))
-        
-        // Gắn state ứng dụng
-        .with_state(state);
+    let app = build_router(state);
 
     let addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -55,6 +48,46 @@ pub async fn start_web_server(port: u16, db: AppDb, config: Config) -> anyhow::R
 
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn build_router(state: AppState) -> Router {
+    Router::new()
+        // Các route công khai
+        .route("/", get(handle_root))
+        .route("/health", get(handle_health))
+        .route("/admin/login", get(handle_login_page).post(handle_login_submit))
+        .route("/admin/logout", get(handle_logout))
+        // Các route quản trị (chỉ 1 tài khoản Admin duy nhất)
+        .route("/admin", get(handle_dashboard))
+        .route("/admin/settings/accesstrade", post(handle_update_accesstrade))
+        .route("/admin/settings/accesstrade/sync", post(handle_sync_accesstrade))
+        .route("/admin/settings/affiliate", post(handle_update_affiliate_settings))
+        .layer(middleware::from_fn(security_headers_middleware))
+        .with_state(state)
+}
+
+/// Bổ sung các HTTP Security Headers bắt buộc cho mọi phản hồi Web Admin
+async fn security_headers_middleware(req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    let headers = res.headers_mut();
+    headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
+    headers.insert(
+        "strict-transport-security",
+        HeaderValue::from_static("max-age=31536000"),
+    );
+    headers.insert("x-xss-protection", HeaderValue::from_static("1; mode=block"));
+    res
+}
+
+/// Escape các ký tự HTML đặc biệt chống XSS khi render ra trang quản trị
+fn escape_html(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 /// Root redirect về /admin
@@ -162,8 +195,16 @@ async fn handle_login_submit(
     State(state): State<AppState>,
     Form(form): Form<LoginForm>,
 ) -> Response {
-    let user_match = form.username.as_bytes().ct_eq(state.config.admin_username.as_bytes()).into();
-    let pass_match = form.password.as_bytes().ct_eq(state.config.admin_password.as_bytes()).into();
+    let user_match = form
+        .username
+        .as_bytes()
+        .ct_eq(state.config.admin_username.as_bytes())
+        .into();
+    let pass_match = form
+        .password
+        .as_bytes()
+        .ct_eq(state.config.admin_password.as_bytes())
+        .into();
 
     if user_match && pass_match {
         let token = Uuid::new_v4().to_string();
@@ -184,7 +225,7 @@ async fn handle_login_submit(
         }
         response
     } else {
-        error!("❌ Thử đăng nhập trái phép vào Web Admin Dashboard với username: {}", form.username);
+        error!("❌ Thử đăng nhập trái phép vào Web Admin Dashboard");
         let error_html = r#"<!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -219,6 +260,36 @@ async fn handle_logout(State(state): State<AppState>, headers: HeaderMap) -> Res
     response
 }
 
+fn render_platform_status(label: &str, matched: &Option<(String, String)>, manual_id: &str) -> String {
+    if !manual_id.trim().is_empty() {
+        return format!(
+            "<div class=\"flex items-center justify-between py-1.5 border-b border-gray-800/60\">\
+                <span class=\"text-gray-300\">{}</span>\
+                <span class=\"text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded-md font-mono\">🟢 Thủ công (ID: {})</span>\
+             </div>",
+            label,
+            escape_html(manual_id.trim())
+        );
+    }
+    match matched {
+        Some((id, _)) => format!(
+            "<div class=\"flex items-center justify-between py-1.5 border-b border-gray-800/60\">\
+                <span class=\"text-gray-300\">{}</span>\
+                <span class=\"text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded-md font-mono\">🟢 Đã duyệt (ID: {})</span>\
+             </div>",
+            label,
+            escape_html(id)
+        ),
+        None => format!(
+            "<div class=\"flex items-center justify-between py-1.5 border-b border-gray-800/60\">\
+                <span class=\"text-gray-300\">{}</span>\
+                <span class=\"text-xs px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded-md\">🟡 Chưa duyệt trên AccessTrade</span>\
+             </div>",
+            label
+        ),
+    }
+}
+
 /// Giao diện chính Dashboard Quản Trị
 async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> Response {
     if !is_authenticated(&state, &headers).await {
@@ -228,57 +299,65 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
     let conn = match state.db.conn() {
         Ok(c) => c,
         Err(e) => {
-            return Html(format!("<h1>Lỗi kết nối cơ sở dữ liệu: {}</h1>", e)).into_response();
+            return Html(format!("<h1>Lỗi kết nối cơ sở dữ liệu: {}</h1>", escape_html(&e.to_string()))).into_response();
         }
     };
 
     let stats = Repository::get_admin_dashboard_stats(&conn).await.unwrap_or_default();
-    let deals = Repository::get_all_deals_for_admin(&conn).await.unwrap_or_default();
     let clicks = Repository::get_recent_clicks_for_admin(&conn, 50).await.unwrap_or_default();
+
     let affiliate_template = Repository::get_setting(&conn, "affiliate_template")
         .await
         .ok()
         .flatten()
         .unwrap_or_default();
 
-    // Render danh sách deals HTML
-    let mut deals_rows = String::new();
-    for d in &deals {
-        let status_badge = if d.is_active {
-            "<span class=\"px-2.5 py-1 bg-green-500/20 text-green-400 rounded-lg text-xs font-semibold\">Đang chạy</span>"
-        } else {
-            "<span class=\"px-2.5 py-1 bg-gray-500/20 text-gray-400 rounded-lg text-xs font-semibold\">Tạm tắt</span>"
-        };
+    let db_at_token = Repository::get_setting(&conn, "accesstrade_api_token")
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| state.config.accesstrade_api_token.clone());
 
-        let coupon = d.coupon_code.as_deref().unwrap_or("Tự động");
-        let toggle_text = if d.is_active { "Tắt" } else { "Bật" };
+    let camp_shopee = Repository::get_setting(&conn, "campaign_shopee").await.ok().flatten().unwrap_or_default();
+    let camp_lazada = Repository::get_setting(&conn, "campaign_lazada").await.ok().flatten().unwrap_or_default();
+    let camp_tiki = Repository::get_setting(&conn, "campaign_tiki").await.ok().flatten().unwrap_or_default();
+    let camp_tiktok = Repository::get_setting(&conn, "campaign_tiktok").await.ok().flatten().unwrap_or_default();
 
-        deals_rows.push_str(&format!(
-            r#"<tr class="border-b border-gray-800 hover:bg-gray-800/40 transition">
-                <td class="py-3 px-4 text-xs text-gray-400">#{}</td>
-                <td class="py-3 px-4 font-bold text-white">{}</td>
-                <td class="py-3 px-4 text-sm text-yellow-400 font-mono">{}</td>
-                <td class="py-3 px-4 text-sm text-gray-300">{}</td>
-                <td class="py-3 px-4 text-xs text-gray-400">{}</td>
-                <td class="py-3 px-4">{}</td>
-                <td class="py-3 px-4 text-right space-x-2">
-                    <form method="POST" action="/admin/deals/{}/toggle" class="inline">
-                        <button class="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs text-white">{}</button>
-                    </form>
-                    <form method="POST" action="/admin/deals/{}/delete" class="inline" onsubmit="return confirm('Bạn có chắc chắn muốn xoá mã này không?');">
-                        <button class="px-3 py-1 bg-red-600/80 hover:bg-red-600 rounded-lg text-xs text-white">Xoá</button>
-                    </form>
-                </td>
-            </tr>"#,
-            d.id, d.title, coupon, d.discount_desc, format_vnd(d.min_spend), status_badge, d.id, toggle_text, d.id
-        ));
-    }
+    let (at_status_badge, campaign_status_html) = if let Some(ref token) = db_at_token {
+        let masked = mask_token(token);
+        match state.accesstrade.get_approved_campaigns(token, false).await {
+            Ok(approved) => {
+                let badge = format!(
+                    "<span class=\"px-2.5 py-1 bg-green-500/20 text-green-400 rounded-lg text-xs font-semibold\">🟢 Đã kết nối ({})</span>",
+                    masked
+                );
+                let rows = format!(
+                    "{}{}{}{}",
+                    render_platform_status("🟠 Shopee", &approved.shopee, &camp_shopee),
+                    render_platform_status("🔵 Lazada", &approved.lazada, &camp_lazada),
+                    render_platform_status("🔹 Tiki", &approved.tiki, &camp_tiki),
+                    render_platform_status("🎵 TikTok Shop", &approved.tiktok, &camp_tiktok),
+                );
+                (badge, rows)
+            }
+            Err(err) => {
+                let badge = format!(
+                    "<span class=\"px-2.5 py-1 bg-red-500/20 text-red-400 rounded-lg text-xs font-semibold\">🔴 Lỗi kết nối ({})</span>",
+                    masked
+                );
+                let err_box = format!("<p class=\"text-xs text-red-400\">{}</p>", escape_html(&err));
+                (badge, err_box)
+            }
+        }
+    } else {
+        (
+            "<span class=\"px-2.5 py-1 bg-gray-700 text-gray-300 rounded-lg text-xs font-semibold\">⚪ Chưa nhập API Key</span>".to_string(),
+            "<p class=\"text-xs text-gray-400\">Vui lòng nhập <b>ACCESSTRADE API Access Key</b> bên dưới hoặc thiết lập biến môi trường <code>ACCESSTRADE_API_TOKEN</code> trên Render.</p>".to_string(),
+        )
+    };
 
-    if deals_rows.is_empty() {
-        deals_rows = r#"<tr><td colspan="7" class="py-8 text-center text-gray-500">Chưa có mã giảm giá nào trong kho. Hãy thêm mã mới bên dưới!</td></tr>"#.to_string();
-    }
-
-    // Render danh sách clicks gần đây
+    // Render danh sách clicks gần đây (có escape chống XSS)
     let mut clicks_rows = String::new();
     for c in &clicks {
         clicks_rows.push_str(&format!(
@@ -286,10 +365,15 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
                 <td class="py-3 px-4 text-xs font-mono text-gray-400">{}</td>
                 <td class="py-3 px-4 font-semibold text-white">{}</td>
                 <td class="py-3 px-4 text-xs text-gray-400 max-w-xs truncate" title="{}">{}</td>
-                <td class="py-3 px-4 text-xs text-blue-400 max-w-xs truncate"><a href="{}" target="_blank" class="hover:underline">Mở Link Affiliate ↗</a></td>
+                <td class="py-3 px-4 text-xs text-blue-400 max-w-xs truncate"><a href="{}" target="_blank" rel="noopener noreferrer" class="hover:underline">Mở Link Đầu Ra ↗</a></td>
                 <td class="py-3 px-4 text-xs text-gray-500 font-mono">{}</td>
             </tr>"#,
-            c.user_id, c.platform, c.clean_url, c.clean_url, c.affiliate_url, c.created_at
+            c.user_id,
+            escape_html(&c.platform),
+            escape_html(&c.clean_url),
+            escape_html(&c.clean_url),
+            escape_html(&c.affiliate_url),
+            escape_html(&c.created_at)
         ));
     }
 
@@ -328,7 +412,7 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
                     <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
                     <span>Admin: <strong class="text-white">{}</strong></span>
                     <span class="text-gray-600">|</span>
-                    <span>Bot: <a href="https://t.me/{}" target="_blank" class="text-yellow-400 hover:underline">@{}</a></span>
+                    <span>Bot: <a href="https://t.me/{}" target="_blank" rel="noopener noreferrer" class="text-yellow-400 hover:underline">@{}</a></span>
                 </div>
                 <a href="/admin/logout" class="px-3.5 py-1.5 bg-red-600/80 hover:bg-red-600 text-white rounded-xl text-xs font-semibold transition">
                     Đăng Xuất
@@ -339,29 +423,17 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
 
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         <!-- Thống kê tổng quan -->
-        <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             <div class="bg-gray-900 border border-gray-800 p-5 rounded-2xl shadow-lg">
                 <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Người Dùng Telegram</div>
                 <div class="text-3xl font-black text-white">{}</div>
-                <div class="text-xs text-green-400 mt-2 flex items-center">
-                    <span>👥 Khách đã tương tác bot</span>
-                </div>
+                <div class="text-xs text-green-400 mt-2">👥 Khách đã tương tác bot</div>
             </div>
 
             <div class="bg-gray-900 border border-gray-800 p-5 rounded-2xl shadow-lg">
                 <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Tổng Lượt Dán Link / Click</div>
                 <div class="text-3xl font-black text-yellow-400">{}</div>
-                <div class="text-xs text-gray-400 mt-2 flex items-center">
-                    <span>🔗 Đã sinh link Affiliate thành công</span>
-                </div>
-            </div>
-
-            <div class="bg-gray-900 border border-gray-800 p-5 rounded-2xl shadow-lg">
-                <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Kho Mã Giảm Giá Đang Có</div>
-                <div class="text-3xl font-black text-orange-400">{}</div>
-                <div class="text-xs text-gray-400 mt-2 flex items-center">
-                    <span>🎟️ Voucher hiển thị trong lệnh /deals</span>
-                </div>
+                <div class="text-xs text-gray-400 mt-2">🔗 Tổng số link đã xử lý</div>
             </div>
 
             <div class="bg-gray-900 border border-gray-800 p-5 rounded-2xl shadow-lg">
@@ -375,83 +447,90 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
             </div>
         </section>
 
-        <!-- Thêm mã giảm giá mới -->
-        <section class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
-            <h2 class="text-lg font-bold text-white mb-4 flex items-center space-x-2">
-                <span>➕</span>
-                <span>Thêm Mã Giảm Giá Mới Vào Kho (/deals)</span>
-            </h2>
-            <form method="POST" action="/admin/deals/new" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <!-- Kết nối ACCESSTRADE API Full 4 Sàn -->
+        <section class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-5">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-4">
                 <div>
-                    <label class="block text-xs font-semibold text-gray-400 mb-1">Sàn Thương Mại</label>
-                    <select name="platform" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500">
-                        <option value="Shopee">Shopee</option>
-                        <option value="Lazada">Lazada</option>
-                        <option value="TikTok Shop">TikTok Shop</option>
-                        <option value="Tiki">Tiki</option>
-                    </select>
+                    <h2 class="text-lg font-bold text-white flex items-center space-x-2">
+                        <span>🚀</span>
+                        <span>Kết Nối ACCESSTRADE API (Tự Động Full 4 Sàn)</span>
+                    </h2>
+                    <p class="text-xs text-gray-400 mt-1">
+                        Bot tự động gọi API <code>v1/product_link/create</code> (kèm <code>utm_source=facebook</code>) để sinh link rút gọn và cộng 100% hoa hồng về ví AccessTrade của bạn.
+                    </p>
+                </div>
+                <div class="flex items-center space-x-2">
+                    {}
+                    <form method="POST" action="/admin/settings/accesstrade/sync" class="inline">
+                        <button type="submit" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-xs text-yellow-400 font-semibold transition">
+                            🔄 Đồng Bộ Lại Chiến Dịch
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="bg-gray-950/60 border border-gray-800 rounded-xl p-4">
+                    <div class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Trạng Thái Duyệt Các Sàn</div>
+                    <div class="text-sm space-y-1">
+                        {}
+                    </div>
+                    <p class="text-xs text-gray-500 mt-3">
+                        Sàn nào báo <b>Chưa duyệt</b>: Hãy vào <a href="https://pub2.accesstrade.vn" target="_blank" rel="noopener noreferrer" class="text-yellow-400 underline">pub2.accesstrade.vn</a> bấm Đăng ký chiến dịch sàn đó rồi nhấn <b>Đồng Bộ Lại</b>.
+                    </p>
                 </div>
 
-                <div>
-                    <label class="block text-xs font-semibold text-gray-400 mb-1">Tiêu Đề Deal</label>
-                    <input type="text" name="title" required placeholder="Ví dụ: Giảm 50K Toàn Sàn..." class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500">
-                </div>
+                <form method="POST" action="/admin/settings/accesstrade" class="lg:col-span-2 space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">ACCESSTRADE API Access Key (Token)</label>
+                        <input type="password" name="api_token" placeholder="Dán API Access Key mới (hoặc để trống để giữ Token hiện tại)..." class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                        <p class="text-xs text-gray-500 mt-1">💡 Khuyên dùng thêm biến <code>ACCESSTRADE_API_TOKEN</code> trong tab Environment trên Render để không bị mất khi Render khởi động lại.</p>
+                    </div>
 
-                <div>
-                    <label class="block text-xs font-semibold text-gray-400 mb-1">Mã Coupon (Nếu có)</label>
-                    <input type="text" name="coupon_code" placeholder="Để trống nếu tự động áp" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500">
-                </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-400 mb-1">Campaign ID Shopee (Tùy chọn)</label>
+                            <input type="text" name="campaign_shopee" value="{}" placeholder="Tự động nhận diện nếu để trống" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-400 mb-1">Campaign ID Lazada (Tùy chọn)</label>
+                            <input type="text" name="campaign_lazada" value="{}" placeholder="Tự động nhận diện nếu để trống" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-400 mb-1">Campaign ID Tiki (Tùy chọn)</label>
+                            <input type="text" name="campaign_tiki" value="{}" placeholder="Tự động nhận diện nếu để trống" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-400 mb-1">Campaign ID TikTok Shop (Tùy chọn)</label>
+                            <input type="text" name="campaign_tiktok" value="{}" placeholder="Tự động nhận diện nếu để trống" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                        </div>
+                    </div>
 
-                <div>
-                    <label class="block text-xs font-semibold text-gray-400 mb-1">Mô Tả Ưu Đãi</label>
-                    <input type="text" name="discount_desc" required placeholder="Ví dụ: Giảm 20% tối đa 100K..." class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500">
-                </div>
-
-                <div>
-                    <label class="block text-xs font-semibold text-gray-400 mb-1">Đơn Tối Thiểu (VNĐ)</label>
-                    <input type="number" name="min_spend" required value="0" step="1000" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500">
-                </div>
-
-                <div>
-                    <label class="block text-xs font-semibold text-gray-400 mb-1">Link Lấy Mã / Sản Phẩm</label>
-                    <input type="url" name="deal_url" required placeholder="https://..." class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500">
-                </div>
-
-                <div class="sm:col-span-2 lg:col-span-3 pt-2">
-                    <button type="submit" class="px-6 py-2.5 bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-white font-bold rounded-xl shadow-lg transition">
-                        Lưu Mã Giảm Giá
+                    <button type="submit" class="px-6 py-2.5 bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-gray-900 font-bold rounded-xl shadow-lg transition">
+                        Lưu &amp; Kích Hoạt ACCESSTRADE API
                     </button>
-                </div>
-            </form>
+                </form>
+            </div>
         </section>
 
-        <!-- Bảng quản lý kho deals -->
-        <section class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden shadow-xl">
-            <div class="p-5 border-b border-gray-800 flex justify-between items-center">
-                <h2 class="text-lg font-bold text-white flex items-center space-x-2">
-                    <span>🎟️</span>
-                    <span>Danh Sách Mã Giảm Giá Hiện Có</span>
-                </h2>
-                <span class="text-xs text-gray-500 font-mono">Tự động đồng bộ với lệnh /deals của Telegram</span>
-            </div>
-            <div class="overflow-x-auto">
-                <table class="w-full text-left">
-                    <thead class="bg-gray-800/60 text-xs uppercase text-gray-400 border-b border-gray-800">
-                        <tr>
-                            <th class="py-3 px-4">ID</th>
-                            <th class="py-3 px-4">Tiêu Đề</th>
-                            <th class="py-3 px-4">Mã Coupon</th>
-                            <th class="py-3 px-4">Giảm Giá</th>
-                            <th class="py-3 px-4">Đơn Tối Thiểu</th>
-                            <th class="py-3 px-4">Trạng Thái</th>
-                            <th class="py-3 px-4 text-right">Thao Tác</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {}
-                    </tbody>
-                </table>
-            </div>
+        <!-- Cấu hình Link Tiếp Thị Dự Phòng (Deeplink Template) -->
+        <section class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+            <h2 class="text-lg font-bold text-white mb-2 flex items-center space-x-2">
+                <span>🔗</span>
+                <span>Cấu Hình Deeplink Dự Phòng (Nếu Chưa Dùng API Token)</span>
+            </h2>
+            <p class="text-xs text-gray-400 mb-4">
+                Nếu chiến dịch trên API chưa duyệt, hệ thống sẽ kiểm tra mẫu link dự phòng này. Nếu để trống, bot tự động trả về link sản phẩm sạch để khách mở App mua hàng không bị lỗi 404.
+            </p>
+            <form method="POST" action="/admin/settings/affiliate" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-400 mb-1">Mẫu Deeplink Template</label>
+                    <input type="text" name="template" value="{}" placeholder="Ví dụ: https://go.isclix.com/deep_link/PUB_ID/CAMPAIGN_ID?url={{CLEAN_URL}}&utm_source=facebook&sub1={{USER_ID}}" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                </div>
+                <button type="submit" class="px-5 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white font-semibold rounded-xl transition text-sm">
+                    Lưu Deeplink Dự Phòng
+                </button>
+            </form>
         </section>
 
         <!-- Lịch sử dán link gần nhất -->
@@ -469,7 +548,7 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
                             <th class="py-3 px-4">Telegram ID</th>
                             <th class="py-3 px-4">Sàn</th>
                             <th class="py-3 px-4">Link Khách Gửi</th>
-                            <th class="py-3 px-4">Link Affiliate Sinh Ra</th>
+                            <th class="py-3 px-4">Link Đầu Ra</th>
                             <th class="py-3 px-4">Thời Gian</th>
                         </tr>
                     </thead>
@@ -479,27 +558,6 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
                 </table>
             </div>
         </section>
-        <!-- Cấu hình Link Tiếp Thị Liên Kết (Affiliate) -->
-        <section class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
-            <h2 class="text-lg font-bold text-white mb-2 flex items-center space-x-2">
-                <span>💰</span>
-                <span>Cấu Hình Nhận Tiền Hoa Hồng (Affiliate Deeplink)</span>
-            </h2>
-            <p class="text-xs text-gray-400 mb-4">
-                Dán mẫu link Tiếp thị liên kết của bạn (từ <b>AccessTrade</b>, <b>Shopee Affiliate</b>, hoặc <b>Ecomobi</b>) vào đây để nhận 100% tiền chiết khấu hoa hồng về tài khoản của bạn.<br>
-                <span class="text-yellow-400 font-semibold">⚠️ Lưu ý:</span> Nếu để trống ô này, bot sẽ tự động trả về link sản phẩm sạch để khách mở thẳng App Shopee/Lazada mua hàng bình thường (không bị lỗi 404).
-            </p>
-            <form method="POST" action="/admin/settings/affiliate" class="space-y-4">
-                <div>
-                    <label class="block text-xs font-semibold text-gray-400 mb-1">Mẫu Deeplink Template của bạn</label>
-                    <input type="text" name="template" value="{}" placeholder="Ví dụ: https://fast.accesstrade.com.vn/deep_link/MÃ_CỦA_BẠN?url={{CLEAN_URL}}&sub_id1={{USER_ID}}" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500">
-                    <p class="text-xs text-gray-500 mt-1">Các biến thay thế tự động: <code>{{CLEAN_URL}}</code> (Link sản phẩm sạch), <code>{{USER_ID}}</code> (ID Telegram người mua)</p>
-                </div>
-                <button type="submit" class="px-6 py-2.5 bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold rounded-xl shadow-lg transition">
-                    Lưu Mẫu Link Affiliate
-                </button>
-            </form>
-        </section>
     </main>
 
     <footer class="max-w-7xl mx-auto px-4 py-8 text-center text-xs text-gray-500 border-t border-gray-800/50 mt-12">
@@ -507,97 +565,85 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
     </footer>
 </body>
 </html>"#,
-        state.config.admin_username,
-        state.config.bot_username,
-        state.config.bot_username,
+        escape_html(&state.config.admin_username),
+        escape_html(&state.config.bot_username),
+        escape_html(&state.config.bot_username),
         stats.total_users,
         stats.total_clicks,
-        stats.total_deals,
         stats.shopee_clicks,
         stats.lazada_clicks,
         stats.tiktok_clicks,
         stats.tiki_clicks,
-        deals_rows,
-        clicks_rows,
-        affiliate_template
+        at_status_badge,
+        campaign_status_html,
+        escape_html(&camp_shopee),
+        escape_html(&camp_lazada),
+        escape_html(&camp_tiki),
+        escape_html(&camp_tiktok),
+        escape_html(&affiliate_template),
+        clicks_rows
     );
 
     Html(dashboard_html).into_response()
 }
 
-/// Form thêm deal mới
+/// Form cập nhật cấu hình ACCESSTRADE API & Campaign ID
 #[derive(serde::Deserialize)]
-pub struct NewDealForm {
-    pub platform: String,
-    pub title: String,
-    pub coupon_code: Option<String>,
-    pub discount_desc: String,
-    pub min_spend: f64,
-    pub deal_url: String,
+pub struct AccessTradeForm {
+    pub api_token: String,
+    pub campaign_shopee: String,
+    pub campaign_lazada: String,
+    pub campaign_tiki: String,
+    pub campaign_tiktok: String,
 }
 
-/// Xử lý thêm Deal mới
-async fn handle_add_deal(
+async fn handle_update_accesstrade(
     headers: HeaderMap,
     State(state): State<AppState>,
-    Form(form): Form<NewDealForm>,
+    Form(form): Form<AccessTradeForm>,
 ) -> Response {
     if !is_authenticated(&state, &headers).await {
         return Redirect::to("/admin/login").into_response();
     }
 
     if let Ok(conn) = state.db.conn() {
-        let coupon = form.coupon_code.as_deref().filter(|s| !s.trim().is_empty());
-        let _ = Repository::add_deal(
-            &conn,
-            &form.platform,
-            &form.title,
-            coupon,
-            &form.discount_desc,
-            form.min_spend,
-            &form.deal_url,
-        )
-        .await;
+        let token_trimmed = form.api_token.trim();
+        if !token_trimmed.is_empty() {
+            let _ = Repository::set_setting(&conn, "accesstrade_api_token", token_trimmed).await;
+            info!("✅ Quản trị viên đã cập nhật ACCESSTRADE API Token mới qua Web Admin.");
+        }
+        let _ = Repository::set_setting(&conn, "campaign_shopee", form.campaign_shopee.trim()).await;
+        let _ = Repository::set_setting(&conn, "campaign_lazada", form.campaign_lazada.trim()).await;
+        let _ = Repository::set_setting(&conn, "campaign_tiki", form.campaign_tiki.trim()).await;
+        let _ = Repository::set_setting(&conn, "campaign_tiktok", form.campaign_tiktok.trim()).await;
     }
 
+    state.accesstrade.invalidate_cache().await;
     Redirect::to("/admin").into_response()
 }
 
-/// Xử lý Bật/Tắt Deal
-async fn handle_toggle_deal(
-    headers: HeaderMap,
-    Path(id): Path<i64>,
-    State(state): State<AppState>,
-) -> Response {
+async fn handle_sync_accesstrade(headers: HeaderMap, State(state): State<AppState>) -> Response {
     if !is_authenticated(&state, &headers).await {
         return Redirect::to("/admin/login").into_response();
     }
 
     if let Ok(conn) = state.db.conn() {
-        let _ = Repository::toggle_deal(&conn, id).await;
+        let token_opt = Repository::get_setting(&conn, "accesstrade_api_token")
+            .await
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| state.config.accesstrade_api_token.clone());
+
+        if let Some(token) = token_opt {
+            let _ = state.accesstrade.get_approved_campaigns(&token, true).await;
+        }
     }
 
     Redirect::to("/admin").into_response()
 }
 
-/// Xử lý Xoá Deal
-async fn handle_delete_deal(
-    headers: HeaderMap,
-    Path(id): Path<i64>,
-    State(state): State<AppState>,
-) -> Response {
-    if !is_authenticated(&state, &headers).await {
-        return Redirect::to("/admin/login").into_response();
-    }
-
-    if let Ok(conn) = state.db.conn() {
-        let _ = Repository::delete_deal(&conn, id).await;
-    }
-
-    Redirect::to("/admin").into_response()
-}
-
-/// Form cập nhật cấu hình link Affiliate
+/// Form cập nhật cấu hình link Affiliate dự phòng
 #[derive(serde::Deserialize)]
 pub struct AffiliateSettingsForm {
     pub template: String,
@@ -615,7 +661,7 @@ async fn handle_update_affiliate_settings(
 
     if let Ok(conn) = state.db.conn() {
         let _ = Repository::set_setting(&conn, "affiliate_template", form.template.trim()).await;
-        info!("✅ Đã cập nhật mẫu link Affiliate: {}", form.template.trim());
+        info!("✅ Đã cập nhật mẫu link Affiliate dự phòng trên Web Admin.");
     }
 
     Redirect::to("/admin").into_response()
@@ -628,11 +674,19 @@ mod tests {
     #[test]
     fn test_extract_session_token() {
         let mut headers = HeaderMap::new();
-        headers.insert(header::COOKIE, "dealx_session=test-123-abc; other=xyz".parse().unwrap());
+        headers.insert(
+            header::COOKIE,
+            "dealx_session=test-123-abc; other=xyz".parse().unwrap(),
+        );
         assert_eq!(extract_session_token(&headers), Some("test-123-abc".to_string()));
 
         let empty_headers = HeaderMap::new();
         assert_eq!(extract_session_token(&empty_headers), None);
+    }
+
+    #[test]
+    fn test_escape_html() {
+        assert_eq!(escape_html("<script>alert('1')</script>"), "&lt;script&gt;alert(&#39;1&#39;)&lt;/script&gt;");
     }
 
     #[tokio::test]
@@ -647,6 +701,7 @@ mod tests {
             default_referral_bonus_rate: 10.0,
             min_withdrawal_vnd: 50000.0,
             accesstrade_deeplink_template: "template".to_string(),
+            accesstrade_api_token: None,
             admin_username: "admin".to_string(),
             admin_password: "password".to_string(),
             port: 10000,
@@ -655,20 +710,10 @@ mod tests {
         let state = AppState {
             db,
             config,
+            accesstrade: Arc::new(AccessTradeClient::new()),
             sessions: Arc::new(RwLock::new(HashSet::new())),
         };
 
-        // Kiểm tra xem router có dựng thành công và không panic cú pháp route
-        let _app: Router = Router::new()
-            .route("/", get(handle_root))
-            .route("/health", get(handle_health))
-            .route("/admin/login", get(handle_login_page).post(handle_login_submit))
-            .route("/admin/logout", get(handle_logout))
-            .route("/admin", get(handle_dashboard))
-            .route("/admin/deals/new", post(handle_add_deal))
-            .route("/admin/deals/{id}/toggle", post(handle_toggle_deal))
-            .route("/admin/deals/{id}/delete", post(handle_delete_deal))
-            .route("/admin/settings/affiliate", post(handle_update_affiliate_settings))
-            .with_state(state);
+        let _app: Router = build_router(state);
     }
 }

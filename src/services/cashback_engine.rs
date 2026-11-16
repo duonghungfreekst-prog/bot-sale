@@ -116,6 +116,7 @@ mod tests {
             default_referral_bonus_rate: 10.0,
             min_withdrawal_vnd: 50000.0,
             accesstrade_deeplink_template: "template".to_string(),
+            accesstrade_api_token: None,
             admin_username: "admin".to_string(),
             admin_password: "password".to_string(),
             port: 10000,

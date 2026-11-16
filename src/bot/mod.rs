@@ -8,12 +8,13 @@ use tracing::{info, warn};
 
 use crate::config::Config;
 use crate::db::AppDb;
+use crate::services::accesstrade::AccessTradeClient;
 use crate::services::deal_parser::DealParser;
 
-pub async fn run_bot(config: Config, db: AppDb) -> anyhow::Result<()> {
+pub async fn run_bot(config: Config, db: AppDb, accesstrade: Arc<AccessTradeClient>) -> anyhow::Result<()> {
     info!("Khởi tạo Telegram Bot: @{}...", config.bot_username);
     let bot = Bot::new(&config.telegram_token);
-    let parser = Arc::new(DealParser::new());
+    let parser = Arc::new(DealParser::with_accesstrade(accesstrade));
 
     // Tự động đăng ký danh sách commands để Telegram hiện nút [Menu] cạnh ô nhập tin nhắn (chỉ 2 lệnh cốt lõi)
     let commands = vec![

@@ -12,7 +12,7 @@ use crate::config::Config;
 use crate::db::models::ClickRecord;
 use crate::db::repository::Repository;
 use crate::db::AppDb;
-use crate::services::deal_parser::DealParser;
+use crate::services::deal_parser::{AffiliateSettings, DealParser};
 
 #[derive(BotCommands, Clone, Debug)]
 #[command(rename_rule = "lowercase", description = "Danh sách lệnh hỗ trợ:")]
@@ -99,7 +99,7 @@ pub async fn handle_message(
             .parse_mode(ParseMode::Html)
             .await?;
 
-        // Kiểm tra xem Admin đã lưu link affiliate riêng trong Web Admin chưa
+        // Lấy cấu hình ACCESSTRADE API Token & Campaign ID từ Web Admin hoặc biến môi trường
         let affiliate_template = Repository::get_setting(&conn, "affiliate_template")
             .await
             .ok()
@@ -107,17 +107,42 @@ pub async fn handle_message(
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| config.accesstrade_deeplink_template.clone());
 
-        // Bóc tách link và tạo link có mã sale (Affiliate link nhận 100% chiết khấu cho chủ bot)
+        let db_at_token = Repository::get_setting(&conn, "accesstrade_api_token")
+            .await
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| config.accesstrade_api_token.clone());
+
+        let campaign_shopee = Repository::get_setting(&conn, "campaign_shopee").await.ok().flatten().filter(|s| !s.trim().is_empty());
+        let campaign_lazada = Repository::get_setting(&conn, "campaign_lazada").await.ok().flatten().filter(|s| !s.trim().is_empty());
+        let campaign_tiki = Repository::get_setting(&conn, "campaign_tiki").await.ok().flatten().filter(|s| !s.trim().is_empty());
+        let campaign_tiktok = Repository::get_setting(&conn, "campaign_tiktok").await.ok().flatten().filter(|s| !s.trim().is_empty());
+
+        let aff_settings = AffiliateSettings {
+            deeplink_template: &affiliate_template,
+            accesstrade_token: db_at_token.as_deref(),
+            campaign_shopee: campaign_shopee.as_deref(),
+            campaign_lazada: campaign_lazada.as_deref(),
+            campaign_tiki: campaign_tiki.as_deref(),
+            campaign_tiktok: campaign_tiktok.as_deref(),
+        };
+
+        // Bóc tách link và gọi ACCESSTRADE API tạo link thực tế
         match parser
             .process_link(
                 text,
                 user.telegram_id,
                 None, // Toàn bộ hoa hồng chiết khấu chảy trực tiếp về cho chủ bot
-                &affiliate_template,
+                aff_settings,
             )
             .await
         {
             Ok(parsed) => {
+                if let Some(ref note) = parsed.affiliate_note {
+                    warn!("Ghi chú Affiliate cho sàn {}: {}", parsed.platform.as_str(), note);
+                }
+
                 // Ghi nhận lượt click vào Database LibSQL
                 let click_record = ClickRecord {
                     id: parsed.click_id.clone(),
@@ -139,23 +164,35 @@ pub async fn handle_message(
                     tips_text.push_str(&format!("- {}\n", tip));
                 }
 
-                // Định dạng chuẩn xác theo mẫu người dùng cung cấp
+                let header_line = if parsed.is_affiliate {
+                    format!(
+                        "👉 <b>{} ({}) · 🟢 {}% :</b>\n{} (<code>{}</code>)",
+                        parsed.primary_voucher.name,
+                        parsed.primary_voucher.discount_desc,
+                        parsed.primary_voucher.remaining_percent,
+                        parsed.affiliate_url,
+                        parsed.primary_voucher.min_spend_desc
+                    )
+                } else {
+                    format!(
+                        "👉 <b>{}</b>\n🔗 <i>Link mở sản phẩm:</i> {}\n<i>({})</i>",
+                        parsed.primary_voucher.name,
+                        parsed.affiliate_url,
+                        parsed.primary_voucher.discount_desc
+                    )
+                };
+
                 let reply_html = format!(
                     "📦 <b>{}</b>\n\
                      🔗 <i>Link gốc:</i> {}\n\n\
-                     👉 <b>{} ({}) · 🟢 {}% :</b>\n\
-                     {} (<code>{}</code>)\n\n\
+                     {}\n\n\
                      ⏰ <b>BACK MÃ LÚC:</b> {}\n\n\
                      ⚠️ <b>Lưu ý để áp mã thành công 100%:</b>\n\
                      {}\n\
-                     👉 <i>Bấm nút bên dưới để mở App sàn và áp mã giảm giá ngay:</i>",
+                     👉 <i>Bấm các nút bên dưới để lưu mã & mở App sàn mua hàng ngay:</i>",
                     parsed.product_title,
                     parsed.original_url,
-                    parsed.primary_voucher.name,
-                    parsed.primary_voucher.discount_desc,
-                    parsed.primary_voucher.remaining_percent,
-                    parsed.affiliate_url,
-                    parsed.primary_voucher.min_spend_desc,
+                    header_line,
                     parsed.primary_voucher.back_hours,
                     tips_text.trim_end()
                 );

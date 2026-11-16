@@ -42,27 +42,43 @@ pub fn deal_action_keyboard(affiliate_url: &str, platform: &str) -> InlineKeyboa
     let target_url = Url::parse(affiliate_url)
         .unwrap_or_else(|_| Url::parse("https://shopee.vn").unwrap());
 
-    InlineKeyboardMarkup::new(vec![
-        vec![InlineKeyboardButton::url(
-            format!("🛍️ Mở {} & Mua Giá Giảm Ngay 🛍️", platform),
-            target_url,
-        )],
-    ])
-}
+    let mut rows = vec![vec![InlineKeyboardButton::url(
+        format!("🛍️ Mở {} & Mua Giá Giảm Ngay 🛍️", platform),
+        target_url,
+    )]];
 
-/// Bàn phím chọn sàn để lọc mã giảm giá
-pub fn deals_filter_keyboard() -> InlineKeyboardMarkup {
-    InlineKeyboardMarkup::new(vec![
-        vec![
-            InlineKeyboardButton::callback("🟠 Shopee", "deals_shopee"),
-            InlineKeyboardButton::callback("🔵 Lazada", "deals_lazada"),
-            InlineKeyboardButton::callback("🔵 Tiki", "deals_tiki"),
-        ],
-        vec![
-            InlineKeyboardButton::callback("🌟 Xem Tất Cả Mã", "deals_all"),
-            InlineKeyboardButton::callback("🔙 Về Menu Chính", "menu_main"),
-        ],
-    ])
+    match platform.to_lowercase().as_str() {
+        "shopee" => {
+            if let (Ok(voucher_url), Ok(video_url)) = (
+                Url::parse("https://shopee.vn/m/ma-giam-gia"),
+                Url::parse("https://shopee.vn/m/shopee-video"),
+            ) {
+                rows.push(vec![
+                    InlineKeyboardButton::url("🎟️ Lưu Mã Shopee", voucher_url),
+                    InlineKeyboardButton::url("🎬 Săn Mã Video", video_url),
+                ]);
+            }
+        }
+        "lazada" => {
+            if let Ok(voucher_url) = Url::parse("https://www.lazada.vn/voucher") {
+                rows.push(vec![InlineKeyboardButton::url(
+                    "🎟️ Thu Thập Voucher Lazada",
+                    voucher_url,
+                )]);
+            }
+        }
+        "tiki" => {
+            if let Ok(voucher_url) = Url::parse("https://tiki.vn/khuyen-mai/ma-giam-gia") {
+                rows.push(vec![InlineKeyboardButton::url(
+                    "🎟️ Lưu Mã Giảm Giá Tiki",
+                    voucher_url,
+                )]);
+            }
+        }
+        _ => {}
+    }
+
+    InlineKeyboardMarkup::new(rows)
 }
 
 mod urlencoding {

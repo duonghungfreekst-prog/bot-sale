@@ -26,5 +26,7 @@ services:
         value: "10.0"
       - key: MIN_WITHDRAWAL_VND
         value: "50000"
+      - key: ACCESSTRADE_API_TOKEN
+        sync: false
       - key: ACCESSTRADE_DEEPLINK_TEMPLATE
-        value: "https://fast.accesstrade.com.vn/deep_link/630000000000?url={CLEAN_URL}&sub_id1={USER_ID}&sub_id2={REF_ID}&sub_id3={CLICK_ID}"
+        value: ""

@@ -15,8 +15,9 @@ pub struct Config {
     // Ngưỡng rút tiền tối thiểu (VNĐ)
     pub min_withdrawal_vnd: f64,
     
-    // Cấu hình Affiliate Deeplink template (AccessTrade / Custom)
+    // Cấu hình Affiliate Deeplink template & API Token (AccessTrade)
     pub accesstrade_deeplink_template: String,
+    pub accesstrade_api_token: Option<String>,
     
     // Cấu hình tài khoản Quản trị viên (Chỉ 1 tài khoản Admin duy nhất)
     pub admin_username: String,
@@ -66,6 +67,11 @@ impl Config {
         let accesstrade_deeplink_template = env::var("ACCESSTRADE_DEEPLINK_TEMPLATE")
             .unwrap_or_else(|_| "https://fast.accesstrade.com.vn/deep_link/630000000000?url={CLEAN_URL}&sub_id1={USER_ID}&sub_id2={REF_ID}&sub_id3={CLICK_ID}".to_string());
 
+        let accesstrade_api_token = env::var("ACCESSTRADE_API_TOKEN")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
         let admin_username = env::var("ADMIN_USERNAME")
             .unwrap_or_else(|_| "admin".to_string());
 
@@ -87,6 +93,7 @@ impl Config {
             default_referral_bonus_rate,
             min_withdrawal_vnd,
             accesstrade_deeplink_template,
+            accesstrade_api_token,
             admin_username,
             admin_password,
             port,
