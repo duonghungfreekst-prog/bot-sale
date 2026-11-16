@@ -17,13 +17,11 @@ pub async fn run_bot(config: Config, db: AppDb) -> anyhow::Result<()> {
 
     // Tự động đăng ký danh sách commands để Telegram hiện nút [Menu] cạnh ô nhập tin nhắn
     let commands = vec![
-        BotCommand::new("start", "🚀 Bắt đầu / Khởi động lại bot"),
-        BotCommand::new("wallet", "💰 Xem ví & số dư hoàn tiền"),
-        BotCommand::new("deals", "🎟️ Xem mã giảm giá hot hôm nay"),
-        BotCommand::new("share", "🤝 Mời bạn bè nhận hoa hồng 10%"),
-        BotCommand::new("history", "📜 Lịch sử đơn & lượt click"),
-        BotCommand::new("withdraw", "💳 Rút tiền về tài khoản ngân hàng"),
-        BotCommand::new("help", "📖 Hướng dẫn chi tiết cách săn sale"),
+        BotCommand::new("start", "🚀 Bắt đầu / Hướng dẫn dán link"),
+        BotCommand::new("deals", "🎟️ Xem kho mã giảm giá hot hôm nay"),
+        BotCommand::new("help", "📖 Mẹo áp mã giảm 20% - 50% thành công"),
+        BotCommand::new("share", "🤝 Chia sẻ bot cho bạn bè cùng săn sale"),
+        BotCommand::new("stats", "📊 Thống kê lượt click (Dành cho Admin)"),
     ];
 
     if let Err(e) = bot.set_my_commands(commands).await {

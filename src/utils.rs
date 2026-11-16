@@ -27,6 +27,7 @@ pub fn format_vnd(amount: f64) -> String {
 }
 
 /// Chống CRLF / Log Injection (theo quy định PHẦN 3)
+#[allow(dead_code)]
 pub fn sanitize_crlf(input: &str) -> String {
     input
         .chars()
@@ -52,6 +53,7 @@ pub fn generate_referral_code() -> String {
 
 /// Ẩn bớt số tài khoản ngân hàng để bảo vệ dữ liệu người dùng
 /// Ví dụ: "123456789" -> "123***789"
+#[allow(dead_code)]
 pub fn mask_account(acc: &str) -> String {
     let len = acc.chars().count();
     if len <= 4 {

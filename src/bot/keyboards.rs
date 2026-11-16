@@ -1,20 +1,19 @@
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, KeyboardMarkup};
 use url::Url;
 
-/// Bàn phím Reply Keyboard thường trực ở dưới khung chat
+/// Bàn phím Reply Keyboard thường trực ở dưới khung chat (Tập trung săn sale)
 pub fn persistent_reply_keyboard() -> KeyboardMarkup {
     KeyboardMarkup::new(vec![
         vec![
-            KeyboardButton::new("🚀 Bắt Đầu"),
-            KeyboardButton::new("💰 Ví Hoàn Tiền"),
+            KeyboardButton::new("🎟️ Mã Giảm Giá Hôm Nay"),
+            KeyboardButton::new("📖 Hướng Dẫn Săn Sale"),
         ],
         vec![
-            KeyboardButton::new("🎟️ Mã Giảm Giá"),
-            KeyboardButton::new("🤝 Giới Thiệu Bạn Bè"),
+            KeyboardButton::new("🟠 Săn Sale Shopee"),
+            KeyboardButton::new("🔵 Săn Sale Lazada"),
         ],
         vec![
-            KeyboardButton::new("📖 Hướng Dẫn"),
-            KeyboardButton::new("💳 Rút Tiền"),
+            KeyboardButton::new("🚀 Chia Sẻ Cho Bạn Bè"),
         ],
     ])
     .resize_keyboard()
@@ -22,14 +21,14 @@ pub fn persistent_reply_keyboard() -> KeyboardMarkup {
 }
 
 /// Bàn phím Inline cho Menu chính
-pub fn main_menu_keyboard(bot_username: &str, ref_code: &str) -> InlineKeyboardMarkup {
+pub fn main_menu_keyboard(bot_username: &str) -> InlineKeyboardMarkup {
     let share_text = format!(
-        "Tớ vừa tìm được Bot Săn Sale & Hoàn Tiền siêu xịn! Mua Shopee/Lazada/Tiki được hoàn tiền mặt như Shopback nè: https://t.me/{}?start={}",
-        bot_username, ref_code
+        "Dán link sản phẩm Shopee/Lazada vào bot này là tự động được gắn mã giảm giá 20% - 50k nè: https://t.me/{}",
+        bot_username
     );
     let share_url_str = format!(
         "https://t.me/share/url?url={}&text={}",
-        urlencoding::encode(&format!("https://t.me/{}?start={}", bot_username, ref_code)),
+        urlencoding::encode(&format!("https://t.me/{}", bot_username)),
         urlencoding::encode(&share_text)
     );
 
@@ -37,16 +36,11 @@ pub fn main_menu_keyboard(bot_username: &str, ref_code: &str) -> InlineKeyboardM
 
     InlineKeyboardMarkup::new(vec![
         vec![
-            InlineKeyboardButton::callback("💰 Xem Ví Hoàn Tiền", "menu_wallet"),
-            InlineKeyboardButton::callback("🎟️ Mã Giảm Giá", "menu_deals"),
+            InlineKeyboardButton::callback("🎟️ Xem Mã Giảm Giá Hôm Nay", "menu_deals"),
         ],
         vec![
-            InlineKeyboardButton::url("🚀 Mời Bạn Nhận Hoa Hồng", share_url),
-            InlineKeyboardButton::callback("📜 Lịch Sử Đơn", "menu_history"),
-        ],
-        vec![
-            InlineKeyboardButton::callback("📖 Hướng Dẫn Săn Sale", "menu_guide"),
-            InlineKeyboardButton::callback("💳 Hướng Dẫn Rút Tiền", "menu_withdraw_guide"),
+            InlineKeyboardButton::url("🚀 Chia Sẻ Cho Bạn Bè", share_url),
+            InlineKeyboardButton::callback("📖 Hướng Dẫn Áp Mã", "menu_guide"),
         ],
     ])
 }
@@ -65,12 +59,11 @@ pub fn deal_action_keyboard(affiliate_url: &str, platform: &str) -> InlineKeyboa
 
     InlineKeyboardMarkup::new(vec![
         vec![InlineKeyboardButton::url(
-            format!("🛍️ Mở {} & Nhận Hoàn Tiền", platform),
+            format!("🛍️ Mở {} & Áp Mã Sale Ngay 🛍️", platform),
             target_url,
         )],
         vec![
-            InlineKeyboardButton::callback("🎟️ Mã Giảm Giá Sàn Này", deals_callback),
-            InlineKeyboardButton::callback("💰 Kiểm Tra Số Dư Ví", "menu_wallet"),
+            InlineKeyboardButton::callback("🎟️ Xem Thêm Mã Sàn Này", deals_callback),
         ],
     ])
 }
@@ -84,7 +77,7 @@ pub fn deals_filter_keyboard() -> InlineKeyboardMarkup {
             InlineKeyboardButton::callback("🔵 Tiki", "deals_tiki"),
         ],
         vec![
-            InlineKeyboardButton::callback("🌟 Xem Tất Cả Deals", "deals_all"),
+            InlineKeyboardButton::callback("🌟 Xem Tất Cả Mã", "deals_all"),
             InlineKeyboardButton::callback("🔙 Về Menu Chính", "menu_main"),
         ],
     ])

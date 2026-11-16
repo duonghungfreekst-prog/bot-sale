@@ -13,27 +13,21 @@ use crate::db::models::ClickRecord;
 use crate::db::repository::Repository;
 use crate::db::AppDb;
 use crate::services::deal_parser::DealParser;
-use crate::utils::{format_vnd, mask_account, sanitize_crlf};
+use crate::utils::format_vnd;
 
 #[derive(BotCommands, Clone, Debug)]
 #[command(rename_rule = "lowercase", description = "Danh sách lệnh hỗ trợ:")]
 pub enum Command {
-    #[command(description = "Bắt đầu sử dụng bot và kích hoạt")]
-    Start(String),
-    #[command(description = "Xem hướng dẫn chi tiết cách săn sale & hoàn tiền")]
+    #[command(description = "Bắt đầu sử dụng bot săn mã giảm giá")]
+    Start,
+    #[command(description = "Xem hướng dẫn chi tiết cách áp mã giảm giá")]
     Help,
-    #[command(description = "Kiểm tra ví hoàn tiền, số dư & hoa hồng giới thiệu")]
-    Wallet,
-    #[command(description = "Kiểm tra ví hoàn tiền (viết tắt tiếng Việt)")]
-    Vi,
     #[command(description = "Xem mã giảm giá & deals hot (Shopee, Lazada, Tiki)")]
     Deals(String),
-    #[command(description = "Lấy link giới thiệu bạn bè nhận hoa hồng trọn đời")]
+    #[command(description = "Chia sẻ bot săn sale cho bạn bè")]
     Share,
-    #[command(description = "Xem lịch sử click link và đơn hoàn tiền")]
-    History,
-    #[command(description = "Rút tiền về tài khoản ngân hàng")]
-    Withdraw(String),
+    #[command(description = "Xem thống kê hoạt động bot (Dành cho Admin)")]
+    Stats,
 }
 
 /// Xử lý tin nhắn văn bản thông thường
@@ -55,16 +49,16 @@ pub async fn handle_message(
         .from
         .as_ref()
         .map(|u| u.full_name())
-        .unwrap_or_else(|| "Thành viên".to_string());
+        .unwrap_or_else(|| "Bạn".to_string());
 
     // Xử lý các nút bấm từ Reply Keyboard thường trực ở đáy màn hình
     let mapped_cmd = match text {
-        "🚀 Bắt Đầu" | "Bắt Đầu" | "start" => Some(Command::Start(String::new())),
-        "💰 Ví Hoàn Tiền" | "Ví Hoàn Tiền" => Some(Command::Wallet),
-        "🎟️ Mã Giảm Giá" | "Mã Giảm Giá" => Some(Command::Deals(String::new())),
-        "🤝 Giới Thiệu Bạn Bè" | "Giới Thiệu" => Some(Command::Share),
-        "📖 Hướng Dẫn" | "Hướng Dẫn" => Some(Command::Help),
-        "💳 Rút Tiền" | "Rút Tiền" => Some(Command::Withdraw(String::new())),
+        "🚀 Bắt Đầu" | "Bắt Đầu" | "start" => Some(Command::Start),
+        "🎟️ Mã Giảm Giá Hôm Nay" | "Mã Giảm Giá" | "deals" => Some(Command::Deals(String::new())),
+        "🟠 Săn Sale Shopee" => Some(Command::Deals("Shopee".to_string())),
+        "🔵 Săn Sale Lazada" => Some(Command::Deals("Lazada".to_string())),
+        "📖 Hướng Dẫn Săn Sale" | "Hướng Dẫn" | "help" => Some(Command::Help),
+        "🚀 Chia Sẻ Cho Bạn Bè" | "Chia Sẻ" | "share" => Some(Command::Share),
         _ => None,
     };
 
@@ -81,7 +75,6 @@ pub async fn handle_message(
 
     // Kiểm tra xem tin nhắn có chứa URL link sản phẩm không
     if parser.extract_first_url(text).is_some() {
-        // Đảm bảo user đã tồn tại trong DB
         let conn = match db.conn() {
             Ok(c) => c,
             Err(e) => {
@@ -106,18 +99,18 @@ pub async fn handle_message(
             }
         };
 
-        // Gửi thông báo đang xử lý
+        // Gửi thông báo đang tìm và gắn mã giảm giá
         let wait_msg = bot
-            .send_message(msg.chat.id, "🔍 <i>Đang phân tích link và tạo mã hoàn tiền cá nhân...</i>")
+            .send_message(msg.chat.id, "🔍 <i>Đang quét và gắn mã giảm giá tốt nhất cho sản phẩm này...</i>")
             .parse_mode(ParseMode::Html)
             .await?;
 
-        // Bóc tách link và tạo link hoàn tiền
+        // Bóc tách link và tạo link có mã sale (Affiliate link nhận 100% chiết khấu cho chủ bot)
         match parser
             .process_link(
                 text,
                 user.telegram_id,
-                user.referred_by,
+                None, // Toàn bộ hoa hồng chiết khấu chảy trực tiếp về cho chủ bot
                 &config.accesstrade_deeplink_template,
             )
             .await
@@ -144,16 +137,16 @@ pub async fn handle_message(
                     tips_text.push_str(&format!("- {}\n", tip));
                 }
 
+                // Định dạng chuẩn xác theo mẫu người dùng cung cấp
                 let reply_html = format!(
                     "📦 <b>{}</b>\n\
                      🔗 <i>Link gốc:</i> {}\n\n\
                      👉 <b>{} ({}) · 🟢 {}% :</b>\n\
                      {} (<code>{}</code>)\n\n\
                      ⏰ <b>BACK MÃ LÚC:</b> {}\n\n\
-                     ⚠️ <b>Lưu ý để áp mã thành công:</b>\n\
-                     {}\n\n\
-                     💰 <b>Hoàn tiền mặt thêm:</b> <b>{}</b> <i>(như Shopback)</i>\n\
-                     👤 <b>Mã định danh hoàn tiền:</b> <code>{}</code>",
+                     ⚠️ <b>Lưu ý để áp mã thành công 100%:</b>\n\
+                     {}\n\
+                     👉 <i>Bấm nút bên dưới để mở App sàn và áp mã giảm giá ngay:</i>",
                     parsed.product_title,
                     parsed.original_url,
                     parsed.primary_voucher.name,
@@ -162,9 +155,7 @@ pub async fn handle_message(
                     parsed.affiliate_url,
                     parsed.primary_voucher.min_spend_desc,
                     parsed.primary_voucher.back_hours,
-                    tips_text.trim_end(),
-                    parsed.estimated_cashback_text,
-                    user.referral_code
+                    tips_text.trim_end()
                 );
 
                 // Xóa tin nhắn chờ và gửi kết quả
@@ -194,23 +185,24 @@ pub async fn handle_message(
     // Tin nhắn thông thường không có link
     let reply = format!(
         "👋 Chào <b>{}</b>!\n\n\
-         🤖 <b>Bot Săn Sale & Hoàn Tiền</b> hoạt động như sau:\n\
+         🤖 <b>Bot Tự Động Săn Mã Giảm Giá Đa Sàn (Shopee, Lazada, Tiki)</b>\n\n\
+         📌 <b>Cách lấy mã giảm giá cực đơn giản:</b>\n\
          1️⃣ Mở app <b>Shopee, Lazada, Tiki</b> và copy link món đồ bạn muốn mua.\n\
          2️⃣ Dán trực tiếp đường link vào khung chat này.\n\
-         3️⃣ Bot sẽ làm sạch link và tạo nút mua kèm mã <b>Hoàn Tiền Mặt</b> về ví của bạn y như Shopback!\n\n\
-         👉 Dùng lệnh /wallet để xem số dư, hoặc /deals để lấy mã giảm giá hôm nay.",
+         3️⃣ Bot sẽ tự động nhặt và trả lại link đã được <b>Gắn Mã Giảm 20% - 50k - 100k</b>!\n\n\
+         👇 <i>Bấm các nút chức năng bên dưới hoặc gửi link sản phẩm ngay:</i>",
         full_name
     );
 
     bot.send_message(msg.chat.id, reply)
         .parse_mode(ParseMode::Html)
-        .reply_markup(main_menu_keyboard(&config.bot_username, "NEW"))
+        .reply_markup(main_menu_keyboard(&config.bot_username))
         .await?;
 
     Ok(())
 }
 
-/// Xử lý các lệnh Slash Commands (/start, /wallet, /deals,...)
+/// Xử lý các lệnh Slash Commands (/start, /deals, /help, /share, /stats)
 pub async fn handle_command(
     bot: Bot,
     msg: Message,
@@ -224,7 +216,7 @@ pub async fn handle_command(
         .from
         .as_ref()
         .map(|u| u.full_name())
-        .unwrap_or_else(|| "Thành viên".to_string());
+        .unwrap_or_else(|| "Bạn".to_string());
 
     let conn = match db.conn() {
         Ok(c) => c,
@@ -237,121 +229,48 @@ pub async fn handle_command(
     };
 
     match cmd {
-        Command::Start(param) => {
-            let ref_param = if param.trim().is_empty() {
-                None
-            } else {
-                Some(param.trim())
-            };
-
-            let (user, is_new) = match Repository::get_or_create_user(
+        Command::Start => {
+            let _ = Repository::get_or_create_user(
                 &conn,
                 user_id,
                 username,
                 &full_name,
-                ref_param,
+                None,
             )
-            .await
-            {
-                Ok(res) => res,
-                Err(err) => {
-                    error!("Lỗi get_or_create_user: {}", err);
-                    bot.send_message(msg.chat.id, "❌ Có lỗi khi khởi tạo tài khoản của bạn. Vui lòng thử lại sau.")
-                        .await?;
-                    return Ok(());
-                }
-            };
-
-            let welcome_extra = if is_new && user.referred_by.is_some() {
-                "\n🎁 <i>Bạn đã được kết nối qua mã giới thiệu của bạn bè! Bạn sẽ nhận thêm 10,000₫ vào đơn hàng hoàn tiền đầu tiên!</i>\n"
-            } else {
-                ""
-            };
-
-            let welcome = format!(
-                "🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI BOT SĂN SALE & HOÀN TIỀN</b> 🎉\n{}\n\
-                 💎 <b>Mã giới thiệu của bạn:</b> <code>{}</code>\n\
-                 🔗 <b>Link giới thiệu:</b> <code>https://t.me/{}?start={}</code>\n\n\
-                 📌 <b>Cách kiếm tiền & tiết kiệm:</b>\n\
-                 • <b>Hoàn tiền mua sắm:</b> Dán bất kỳ link sản phẩm Shopee/Lazada/Tiki vào đây trước khi mua để nhận lại tiền mặt.\n\
-                 • <b>Hoa hồng giới thiệu:</b> Mời bạn bè cùng săn sale. Khi bạn bè nhận hoàn tiền, bạn nhận thêm <b>10% hoa hồng trọn đời</b>!\n\n\
-                 👇 <i>Chọn chức năng bên dưới hoặc gửi link sản phẩm ngay để thử:</i>",
-                welcome_extra,
-                user.referral_code,
-                config.bot_username,
-                user.referral_code
-            );
+            .await;
 
             // Bật bàn phím chức năng thường trực dưới khung chat
-            let _ = bot.send_message(msg.chat.id, "🔘 <i>Menu phím tắt nhanh đã được ghim cố định ở đáy khung chat!</i>")
+            let _ = bot.send_message(msg.chat.id, "🔘 <i>Menu săn sale nhanh đã được ghim cố định ở đáy khung chat!</i>")
                 .parse_mode(ParseMode::Html)
                 .reply_markup(persistent_reply_keyboard())
                 .await;
 
+            let welcome = format!(
+                "🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI BOT SĂN MÃ GIẢM GIÁ TỰ ĐỘNG</b> 🎉\n\n\
+                 ⚡ <b>Mua hàng rẻ hơn 20% - 50% chỉ với 1 bước:</b>\n\
+                 Chỉ cần <b>Dán bất kỳ link Shopee, Lazada, Tiki</b> nào vào khung chat này, Bot sẽ tự động nhặt mã <b>Facebook 20%</b>, <b>Mã Video 30%</b>, <b>Freeship</b> và gửi lại link mua hàng đã gắn mã cho bạn!\n\n\
+                 👇 <i>Hãy gửi thử 1 link sản phẩm ngay bây giờ để nhận mã giảm giá:</i>"
+            );
+
             bot.send_message(msg.chat.id, welcome)
                 .parse_mode(ParseMode::Html)
-                .reply_markup(main_menu_keyboard(&config.bot_username, &user.referral_code))
+                .reply_markup(main_menu_keyboard(&config.bot_username))
                 .await?;
         }
 
         Command::Help => {
-            let help_text = format!(
-                "📖 <b>HƯỚNG DẪN SỬ DỤNG BOT HOÀN TIỀN NHƯ SHOPBACK</b>\n\n\
-                 1️⃣ <b>Cách nhận hoàn tiền khi mua sắm:</b>\n\
-                 • Bước 1: Vào Shopee, Lazada hoặc Tiki chọn sản phẩm bạn ưng ý.\n\
-                 • Bước 2: Bấm nút <b>Chia sẻ</b> -> chọn <b>Sao chép liên kết</b>.\n\
-                 • Bước 3: Dán link vào khung chat này. Bot sẽ gửi lại cho bạn nút mua hàng kèm mã hoàn tiền.\n\
-                 • Bước 4: Bấm vào nút mua hàng để mở App sàn và tiến hành thanh toán.\n\
-                 • Bước 5: Tiền hoàn sẽ chuyển vào trạng thái <b>Chờ duyệt</b> và chuyển sang <b>Khả dụng</b> sau khi đơn thành công.\n\n\
-                 2️⃣ <b>Cách rút tiền:</b>\n\
-                 • Gõ lệnh theo cú pháp: <code>/withdraw [số_tiền] [ngân_hàng] [số_tk] [tên_chủ_tk]</code>\n\
-                 • Ví dụ: <code>/withdraw 100000 MBBank 0987654321 NGUYEN VAN A</code>\n\
-                 • Số tiền rút tối thiểu: <b>{}</b>.\n\n\
-                 3️⃣ <b>Kiếm tiền thụ động với bạn bè:</b>\n\
-                 • Gõ /share để lấy link giới thiệu. Nhận ngay 10% hoa hồng trên mỗi đơn bạn bè mua thành công!",
-                format_vnd(config.min_withdrawal_vnd)
-            );
+            let help_text = 
+                "📖 <b>HƯỚNG DẪN 3 BƯỚC NHẬN MÃ GIẢM GIÁ ĐƠN GIẢN:</b>\n\n\
+                 1️⃣ <b>Bước 1:</b> Vào App Shopee, Lazada hoặc Tiki chọn sản phẩm bạn muốn mua.\n\
+                 2️⃣ <b>Bước 2:</b> Bấm nút <b>Chia sẻ</b> -> chọn <b>Sao chép liên kết</b>.\n\
+                 3️⃣ <b>Bước 3:</b> Dán đường link vào khung chat bot này. Bot sẽ trả về link đã được <b>gắn mã giảm giá</b>.\n\n\
+                 ⚠️ <b>MẸO ÁP MÃ THÀNH CÔNG 100%:</b>\n\
+                 • Bấm vào link bot gửi để mở App sàn.\n\
+                 • Xoá sản phẩm cũ trong giỏ hàng trước khi mua để mã không bị xung đột.\n\
+                 • Canh đúng các khung giờ back mã: <code>0H · 9H · 12H · 15H · 20H</code> để áp mã giảm sâu nhất!";
 
             bot.send_message(msg.chat.id, help_text)
                 .parse_mode(ParseMode::Html)
-                .await?;
-        }
-
-        Command::Wallet | Command::Vi => {
-            let summary = match Repository::get_wallet_summary(&conn, user_id).await {
-                Ok(s) => s,
-                Err(err) => {
-                    error!("Lỗi lấy ví: {}", err);
-                    bot.send_message(msg.chat.id, "❌ Không thể tải thông tin ví. Vui lòng bấm /start để kích hoạt trước.")
-                        .await?;
-                    return Ok(());
-                }
-            };
-
-            let wallet_html = format!(
-                "💼 <b>VÍ HOÀN TIỀN CỦA BẠN</b>\n\n\
-                 🟢 <b>Số dư khả dụng:</b> <b>{}</b> <i>(Rút được ngay)</i>\n\
-                 🟡 <b>Số dư chờ duyệt:</b> <b>{}</b> <i>(Đang đối soát)</i>\n\
-                 ⚪ <b>Tổng tiền đã rút:</b> <b>{}</b>\n\
-                 🏆 <b>Tổng thu nhập tích lũy:</b> <b>{}</b>\n\n\
-                 👥 <b>Số bạn bè đã giới thiệu (F1):</b> <b>{} người</b>\n\
-                 🎁 <b>Hoa hồng từ bạn bè:</b> <b>{}</b>\n\n\
-                 🔗 <b>Link giới thiệu của bạn:</b>\n\
-                 <code>https://t.me/{}?start={}</code>\n\n\
-                 💡 <i>Để rút tiền về tài khoản ngân hàng, dùng lệnh /withdraw</i>",
-                format_vnd(summary.balance_available),
-                format_vnd(summary.balance_pending),
-                format_vnd(summary.balance_withdrawn),
-                format_vnd(summary.total_earned),
-                summary.total_referrals,
-                format_vnd(summary.total_ref_bonus),
-                config.bot_username,
-                summary.referral_code
-            );
-
-            bot.send_message(msg.chat.id, wallet_html)
-                .parse_mode(ParseMode::Html)
-                .reply_markup(main_menu_keyboard(&config.bot_username, &summary.referral_code))
                 .await?;
         }
 
@@ -404,173 +323,50 @@ pub async fn handle_command(
         }
 
         Command::Share => {
-            let user = Repository::get_user_by_telegram_id(&conn, user_id)
-                .await
-                .ok()
-                .flatten();
-
-            let ref_code = user.map(|u| u.referral_code).unwrap_or_else(|| "VIP".to_string());
-            let share_link = format!("https://t.me/{}?start={}", config.bot_username, ref_code);
+            let share_link = format!("https://t.me/{}", config.bot_username);
 
             let share_html = format!(
-                "🤝 <b>CHƯƠNG TRÌNH GIỚI THIỆU BẠN BÈ - NHẬN HOA HỒNG TRỌN ĐỜI</b> 🤝\n\n\
-                 Mỗi khi bạn bè mua sắm qua bot và nhận tiền hoàn, bạn sẽ nhận được <b>10% hoa hồng</b> trên tổng tiền hoàn của họ vĩnh viễn!\n\n\
-                 💎 <b>Mã giới thiệu của bạn:</b> <code>{}</code>\n\
-                 🔗 <b>Link chia sẻ trực tiếp:</b>\n\
+                "🚀 <b>CHIA SẺ BOT SĂN MÃ GIẢM GIÁ CHO BẠN BÈ</b> 🚀\n\n\
+                 Giúp bạn bè mua sắm tiết kiệm từ 20% - 50% trên Shopee, Lazada, Tiki mỗi ngày!\n\n\
+                 🔗 <b>Link bot:</b>\n\
                  <code>{}</code>\n\n\
-                 👉 <i>Hãy copy link trên và gửi cho bạn bè hoặc các nhóm săn sale để xây dựng dòng thu nhập thụ động!</i>",
-                ref_code, share_link
+                 👉 <i>Hãy copy link trên và chia sẻ lên Facebook, Zalo hoặc nhóm săn sale nhé!</i>",
+                share_link
             );
 
             bot.send_message(msg.chat.id, share_html)
                 .parse_mode(ParseMode::Html)
-                .reply_markup(main_menu_keyboard(&config.bot_username, &ref_code))
+                .reply_markup(main_menu_keyboard(&config.bot_username))
                 .await?;
         }
 
-        Command::History => {
-            let clicks = Repository::get_recent_clicks(&conn, user_id, 5)
-                .await
-                .unwrap_or_default();
-            let orders = Repository::get_recent_cashback_orders(&conn, user_id, 5)
-                .await
-                .unwrap_or_default();
-            let withdrawals = Repository::get_recent_withdrawals(&conn, user_id, 5)
-                .await
-                .unwrap_or_default();
-
-            let mut text = "📜 <b>LỊCH SỬ HOẠT ĐỘNG GẦN ĐÂY</b>\n\n".to_string();
-
-            text.push_str("🛍️ <b>Đơn hoàn tiền:</b>\n");
-            if orders.is_empty() {
-                text.push_str("<i>Chưa có đơn hàng nào được ghi nhận. Hãy dán link và mua sắm ngay!</i>\n\n");
+        Command::Stats => {
+            let mut rows = conn.query("SELECT COUNT(*) FROM users", ()).await.unwrap();
+            let total_users: i64 = if let Some(r) = rows.next().await.unwrap() {
+                r.get(0).unwrap_or(0)
             } else {
-                for o in orders {
-                    let status_badge = match o.status.as_str() {
-                        "APPROVED" => "🟢 Đã duyệt",
-                        "REJECTED" => "🔴 Bị từ chối",
-                        _ => "🟡 Chờ đối soát",
-                    };
-                    text.push_str(&format!(
-                        "• Đơn <code>{}</code> ({}) - Hoàn: <b>{}</b> [{}]\n",
-                        o.order_id,
-                        o.platform,
-                        format_vnd(o.user_cashback),
-                        status_badge
-                    ));
-                }
-                text.push('\n');
-            }
-
-            text.push_str("💳 <b>Lịch sử rút tiền:</b>\n");
-            if withdrawals.is_empty() {
-                text.push_str("<i>Chưa có yêu cầu rút tiền nào.</i>\n\n");
-            } else {
-                for w in withdrawals {
-                    let st = match w.status.as_str() {
-                        "COMPLETED" => "🟢 Thành công",
-                        "REJECTED" => "🔴 Bị từ chối",
-                        _ => "🟡 Đang xử lý",
-                    };
-                    text.push_str(&format!(
-                        "• Mã <code>{}</code>: <b>{}</b> về {} [{}]\n",
-                        w.id,
-                        format_vnd(w.amount),
-                        w.bank_name,
-                        st
-                    ));
-                }
-                text.push('\n');
-            }
-
-            text.push_str("🔗 <b>5 lượt tạo link gần nhất:</b>\n");
-            if clicks.is_empty() {
-                text.push_str("<i>Chưa có lượt tạo link nào.</i>\n");
-            } else {
-                for c in clicks {
-                    text.push_str(&format!(
-                        "• [{}] {}\n",
-                        c.platform,
-                        c.clean_url
-                    ));
-                }
-            }
-
-            bot.send_message(msg.chat.id, text)
-                .parse_mode(ParseMode::Html)
-                .await?;
-        }
-
-        Command::Withdraw(params_str) => {
-            let parts: Vec<&str> = params_str.split_whitespace().collect();
-            if parts.len() < 4 {
-                let guide = format!(
-                    "⚠️ <b>Cú pháp rút tiền chưa chính xác!</b>\n\n\
-                     Vui lòng nhập theo định dạng:\n\
-                     <code>/withdraw [số_tiền] [ngân_hàng] [số_tài_khoản] [tên_chủ_tài_khoản]</code>\n\n\
-                     <b>Ví dụ mẫu:</b>\n\
-                     <code>/withdraw 100000 MBBank 0987654321 NGUYEN VAN A</code>\n\n\
-                     📌 <i>Mức rút tối thiểu: {}</i>",
-                    format_vnd(config.min_withdrawal_vnd)
-                );
-                bot.send_message(msg.chat.id, guide)
-                    .parse_mode(ParseMode::Html)
-                    .await?;
-                return Ok(());
-            }
-
-            let amount: f64 = match parts[0].replace([',', '.'], "").parse() {
-                Ok(a) => a,
-                Err(_) => {
-                    bot.send_message(msg.chat.id, "❌ Số tiền rút không hợp lệ. Vui lòng nhập số nguyên.")
-                        .await?;
-                    return Ok(());
-                }
+                0
             };
 
-            let bank_name = sanitize_crlf(parts[1]);
-            let account_number = sanitize_crlf(parts[2]);
-            let account_name = sanitize_crlf(&parts[3..].join(" "));
+            let mut rows_clicks = conn.query("SELECT COUNT(*) FROM clicks", ()).await.unwrap();
+            let total_clicks: i64 = if let Some(r) = rows_clicks.next().await.unwrap() {
+                r.get(0).unwrap_or(0)
+            } else {
+                0
+            };
 
-            match Repository::create_withdrawal(
-                &conn,
-                user_id,
-                amount,
-                &bank_name,
-                &account_number,
-                &account_name,
-                config.min_withdrawal_vnd,
-            )
-            .await
-            {
-                Ok(wd) => {
-                    let success_html = format!(
-                        "✅ <b>YÊU CẦU RÚT TIỀN ĐÃ ĐƯỢC TIẾP NHẬN</b>\n\n\
-                         🆔 <b>Mã giao dịch:</b> <code>{}</code>\n\
-                         💵 <b>Số tiền:</b> <b>{}</b>\n\
-                         🏦 <b>Ngân hàng:</b> {}\n\
-                         🔢 <b>Số tài khoản:</b> {}\n\
-                         👤 <b>Tên người nhận:</b> {}\n\
-                         ⏳ <b>Trạng thái:</b> 🟡 Đang xử lý\n\n\
-                         <i>Hệ thống sẽ chuyển khoản cho bạn trong vòng 1-2 ngày làm việc. Cảm ơn bạn đã đồng hành!</i>",
-                        wd.id,
-                        format_vnd(wd.amount),
-                        wd.bank_name,
-                        mask_account(&wd.account_number),
-                        wd.account_name
-                    );
+            let stats_html = format!(
+                "📊 <b>BÁO CÁO HOẠT ĐỘNG BOT (DÀNH CHO CHỦ BOT)</b>\n\n\
+                 👥 <b>Tổng số người dùng bot:</b> <b>{} người</b>\n\
+                 🔗 <b>Tổng số lượt dán link & tạo mã:</b> <b>{} lượt</b>\n\n\
+                 💰 <b>Hoa hồng tiếp thị:</b>\n\
+                 100% doanh thu chiết khấu từ các lượt click trên sẽ được sàn TMĐT đối soát và chuyển trực tiếp vào tài khoản ngân hàng của bạn hàng tháng!",
+                total_users, total_clicks
+            );
 
-                    bot.send_message(msg.chat.id, success_html)
-                        .parse_mode(ParseMode::Html)
-                        .await?;
-                }
-                Err(err) => {
-                    let err_html = format!("❌ <b>Không thể tạo yêu cầu rút tiền:</b>\n\n{}", err);
-                    bot.send_message(msg.chat.id, err_html)
-                        .parse_mode(ParseMode::Html)
-                        .await?;
-                }
-            }
+            bot.send_message(msg.chat.id, stats_html)
+                .parse_mode(ParseMode::Html)
+                .await?;
         }
     }
 
@@ -589,7 +385,6 @@ pub async fn handle_callback(
         None => return Ok(()),
     };
 
-    let user_id = q.from.id.0 as i64;
     let chat_id = match q.message {
         Some(ref msg) => msg.chat().id,
         None => return Ok(()),
@@ -600,37 +395,9 @@ pub async fn handle_callback(
         Err(_) => return Ok(()),
     };
 
-    // Xác nhận đã nhận callback với Telegram
     let _ = bot.answer_callback_query(q.id).await;
 
     match data {
-        "menu_wallet" => {
-            if let Ok(summary) = Repository::get_wallet_summary(&conn, user_id).await {
-                let wallet_html = format!(
-                    "💼 <b>VÍ HOÀN TIỀN CỦA BẠN</b>\n\n\
-                     🟢 <b>Số dư khả dụng:</b> <b>{}</b>\n\
-                     🟡 <b>Số dư chờ duyệt:</b> <b>{}</b>\n\
-                     ⚪ <b>Tổng đã rút:</b> <b>{}</b>\n\
-                     👥 <b>Bạn bè giới thiệu:</b> <b>{} người</b>\n\
-                     🎁 <b>Hoa hồng bạn bè:</b> <b>{}</b>\n\n\
-                     Mã giới thiệu: <code>{}</code>\n\
-                     Link: <code>https://t.me/{}?start={}</code>",
-                    format_vnd(summary.balance_available),
-                    format_vnd(summary.balance_pending),
-                    format_vnd(summary.balance_withdrawn),
-                    summary.total_referrals,
-                    format_vnd(summary.total_ref_bonus),
-                    summary.referral_code,
-                    config.bot_username,
-                    summary.referral_code
-                );
-                bot.send_message(chat_id, wallet_html)
-                    .parse_mode(ParseMode::Html)
-                    .reply_markup(main_menu_keyboard(&config.bot_username, &summary.referral_code))
-                    .await?;
-            }
-        }
-
         "menu_deals" | "deals_all" => {
             if let Ok(deals) = Repository::get_active_deals(&conn, None).await {
                 let mut text = "🔥 <b>MÃ GIẢM GIÁ TẤT CẢ CÁC SÀN</b> 🔥\n\n".to_string();
@@ -718,63 +485,21 @@ pub async fn handle_callback(
             }
         }
 
-        "menu_history" => {
-            let orders = Repository::get_recent_cashback_orders(&conn, user_id, 5)
-                .await
-                .unwrap_or_default();
-            let mut text = "📜 <b>LỊCH SỬ ĐƠN HOÀN TIỀN</b>\n\n".to_string();
-            if orders.is_empty() {
-                text.push_str("<i>Chưa có đơn hoàn tiền nào. Hãy dán link sản phẩm và đặt hàng ngay để nhận tiền hoàn nhé!</i>");
-            } else {
-                for o in orders {
-                    text.push_str(&format!(
-                        "• Đơn <code>{}</code> - Hoàn: <b>{}</b> ({})\n",
-                        o.order_id,
-                        format_vnd(o.user_cashback),
-                        o.status
-                    ));
-                }
-            }
-            bot.send_message(chat_id, text)
-                .parse_mode(ParseMode::Html)
-                .await?;
-        }
-
         "menu_guide" => {
-            let guide = "📖 <b>HƯỚNG DẪN 3 BƯỚC NHẬN HOÀN TIỀN:</b>\n\n\
+            let guide = "📖 <b>HƯỚNG DẪN 3 BƯỚC NHẬN MÃ GIẢM GIÁ:</b>\n\n\
                          1️⃣ Copy link sản phẩm trên app Shopee, Lazada hoặc Tiki.\n\
-                         2️⃣ Dán link vào khung chat này để bot tạo link hoàn tiền.\n\
-                         3️⃣ Bấm nút mua hàng để mở app sàn và đặt hàng bình thường.\n\n\
-                         <i>Sau khi nhận hàng thành công, tiền sẽ chuyển vào ví hoàn tiền của bạn!</i>";
-            bot.send_message(chat_id, guide)
-                .parse_mode(ParseMode::Html)
-                .await?;
-        }
-
-        "menu_withdraw_guide" => {
-            let guide = format!(
-                "💳 <b>HƯỚNG DẪN RÚT TIỀN VỀ TÀI KHOẢN NGÂN HÀNG:</b>\n\n\
-                 Dùng lệnh: <code>/withdraw [số_tiền] [ngân_hàng] [số_tk] [tên_chủ_tk]</code>\n\n\
-                 Ví dụ:\n\
-                 <code>/withdraw 100000 Vietcombank 1234567890 NGUYEN VAN A</code>\n\n\
-                 • Mức rút tối thiểu: <b>{}</b>\n\
-                 • Tiền sẽ về tài khoản trong 24h - 48h làm việc.",
-                format_vnd(config.min_withdrawal_vnd)
-            );
+                         2️⃣ Dán link vào khung chat này để bot gắn mã giảm giá.\n\
+                         3️⃣ Bấm nút mua hàng để mở app sàn và đặt hàng với giá đã giảm!\n\n\
+                         <i>Mẹo: Xóa sản phẩm cũ trong giỏ hàng trước khi mua để tránh bị lỗi mã!</i>";
             bot.send_message(chat_id, guide)
                 .parse_mode(ParseMode::Html)
                 .await?;
         }
 
         "menu_main" => {
-            let user = Repository::get_user_by_telegram_id(&conn, user_id)
-                .await
-                .ok()
-                .flatten();
-            let ref_code = user.map(|u| u.referral_code).unwrap_or_else(|| "NEW".to_string());
-            bot.send_message(chat_id, "🏠 <b>MENU CHÍNH BOT SĂN SALE</b>")
+            bot.send_message(chat_id, "🏠 <b>MENU CHÍNH BOT SĂN MÃ GIẢM GIÁ</b>")
                 .parse_mode(ParseMode::Html)
-                .reply_markup(main_menu_keyboard(&config.bot_username, &ref_code))
+                .reply_markup(main_menu_keyboard(&config.bot_username))
                 .await?;
         }
 

@@ -49,6 +49,7 @@ pub struct ParsedDeal {
     pub click_id: String,
     pub sub_id: String,
     pub primary_voucher: SaleVoucher,
+    #[allow(dead_code)]
     pub estimated_cashback_text: String,
     pub tips: Vec<String>,
 }

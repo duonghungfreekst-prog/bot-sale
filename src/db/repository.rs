@@ -216,6 +216,7 @@ impl Repository {
     }
 
     /// Lấy danh sách lượt click gần nhất của người dùng
+    #[allow(dead_code)]
     pub async fn get_recent_clicks(conn: &Connection, user_id: i64, limit: i64) -> Result<Vec<ClickRecord>> {
         let mut rows = conn
             .query(
@@ -407,6 +408,7 @@ impl Repository {
     }
 
     /// Lấy lịch sử yêu cầu rút tiền của người dùng
+    #[allow(dead_code)]
     pub async fn get_recent_withdrawals(conn: &Connection, user_id: i64, limit: i64) -> Result<Vec<Withdrawal>> {
         let mut rows = conn
             .query(
@@ -472,6 +474,7 @@ impl Repository {
     }
 
     /// Lấy danh sách đơn hoàn tiền gần nhất của user
+    #[allow(dead_code)]
     pub async fn get_recent_cashback_orders(conn: &Connection, user_id: i64, limit: i64) -> Result<Vec<CashbackOrder>> {
         let mut rows = conn
             .query(
