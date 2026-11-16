@@ -44,6 +44,7 @@ pub async fn start_web_server(port: u16, db: AppDb, config: Config) -> anyhow::R
         .route("/admin/deals/new", post(handle_add_deal))
         .route("/admin/deals/{id}/toggle", post(handle_toggle_deal))
         .route("/admin/deals/{id}/delete", post(handle_delete_deal))
+        .route("/admin/settings/affiliate", post(handle_update_affiliate_settings))
         
         // Gắn state ứng dụng
         .with_state(state);
@@ -234,6 +235,11 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
     let stats = Repository::get_admin_dashboard_stats(&conn).await.unwrap_or_default();
     let deals = Repository::get_all_deals_for_admin(&conn).await.unwrap_or_default();
     let clicks = Repository::get_recent_clicks_for_admin(&conn, 50).await.unwrap_or_default();
+    let affiliate_template = Repository::get_setting(&conn, "affiliate_template")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
 
     // Render danh sách deals HTML
     let mut deals_rows = String::new();
@@ -473,6 +479,27 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
                 </table>
             </div>
         </section>
+        <!-- Cấu hình Link Tiếp Thị Liên Kết (Affiliate) -->
+        <section class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+            <h2 class="text-lg font-bold text-white mb-2 flex items-center space-x-2">
+                <span>💰</span>
+                <span>Cấu Hình Nhận Tiền Hoa Hồng (Affiliate Deeplink)</span>
+            </h2>
+            <p class="text-xs text-gray-400 mb-4">
+                Dán mẫu link Tiếp thị liên kết của bạn (từ <b>AccessTrade</b>, <b>Shopee Affiliate</b>, hoặc <b>Ecomobi</b>) vào đây để nhận 100% tiền chiết khấu hoa hồng về tài khoản của bạn.<br>
+                <span class="text-yellow-400 font-semibold">⚠️ Lưu ý:</span> Nếu để trống ô này, bot sẽ tự động trả về link sản phẩm sạch để khách mở thẳng App Shopee/Lazada mua hàng bình thường (không bị lỗi 404).
+            </p>
+            <form method="POST" action="/admin/settings/affiliate" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-400 mb-1">Mẫu Deeplink Template của bạn</label>
+                    <input type="text" name="template" value="{}" placeholder="Ví dụ: https://fast.accesstrade.com.vn/deep_link/MÃ_CỦA_BẠN?url={{CLEAN_URL}}&sub_id1={{USER_ID}}" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                    <p class="text-xs text-gray-500 mt-1">Các biến thay thế tự động: <code>{{CLEAN_URL}}</code> (Link sản phẩm sạch), <code>{{USER_ID}}</code> (ID Telegram người mua)</p>
+                </div>
+                <button type="submit" class="px-6 py-2.5 bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold rounded-xl shadow-lg transition">
+                    Lưu Mẫu Link Affiliate
+                </button>
+            </form>
+        </section>
     </main>
 
     <footer class="max-w-7xl mx-auto px-4 py-8 text-center text-xs text-gray-500 border-t border-gray-800/50 mt-12">
@@ -491,7 +518,8 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
         stats.tiktok_clicks,
         stats.tiki_clicks,
         deals_rows,
-        clicks_rows
+        clicks_rows,
+        affiliate_template
     );
 
     Html(dashboard_html).into_response()
@@ -569,6 +597,30 @@ async fn handle_delete_deal(
     Redirect::to("/admin").into_response()
 }
 
+/// Form cập nhật cấu hình link Affiliate
+#[derive(serde::Deserialize)]
+pub struct AffiliateSettingsForm {
+    pub template: String,
+}
+
+/// Xử lý cập nhật mẫu link Affiliate
+async fn handle_update_affiliate_settings(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Form(form): Form<AffiliateSettingsForm>,
+) -> Response {
+    if !is_authenticated(&state, &headers).await {
+        return Redirect::to("/admin/login").into_response();
+    }
+
+    if let Ok(conn) = state.db.conn() {
+        let _ = Repository::set_setting(&conn, "affiliate_template", form.template.trim()).await;
+        info!("✅ Đã cập nhật mẫu link Affiliate: {}", form.template.trim());
+    }
+
+    Redirect::to("/admin").into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -616,6 +668,7 @@ mod tests {
             .route("/admin/deals/new", post(handle_add_deal))
             .route("/admin/deals/{id}/toggle", post(handle_toggle_deal))
             .route("/admin/deals/{id}/delete", post(handle_delete_deal))
+            .route("/admin/settings/affiliate", post(handle_update_affiliate_settings))
             .with_state(state);
     }
 }

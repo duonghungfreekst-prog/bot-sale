@@ -253,6 +253,12 @@ impl DealParser {
         let ref_str = referrer_id.map(|id| id.to_string()).unwrap_or_else(|| "0".to_string());
         let sub_id = format!("u{}_r{}_{}", user_id, ref_str, &click_id[..8]);
 
+        // Nếu template đang là mã mẫu chưa cấu hình (chứa 630000000000 hoặc rỗng)
+        // thì trả về chính link sản phẩm sạch để khách mở thẳng Shopee/Lazada không bị lỗi 404
+        if template.contains("630000000000") || template.trim().is_empty() {
+            return (clean_url.to_string(), sub_id);
+        }
+
         let encoded_clean = urlencoding::encode(clean_url);
         let aff_url = template
             .replace("{CLEAN_URL}", &encoded_clean)

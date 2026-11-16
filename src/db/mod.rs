@@ -135,6 +135,16 @@ impl AppDb {
         .await
         .context("Tạo bảng deals thất bại")?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
+            (),
+        )
+        .await
+        .context("Tạo bảng settings thất bại")?;
+
         info!("LibSQL schema migration thành công.");
         Ok(())
     }

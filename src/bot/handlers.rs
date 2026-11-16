@@ -105,13 +105,21 @@ pub async fn handle_message(
             .parse_mode(ParseMode::Html)
             .await?;
 
+        // Kiểm tra xem Admin đã lưu link affiliate riêng trong Web Admin chưa
+        let affiliate_template = Repository::get_setting(&conn, "affiliate_template")
+            .await
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| config.accesstrade_deeplink_template.clone());
+
         // Bóc tách link và tạo link có mã sale (Affiliate link nhận 100% chiết khấu cho chủ bot)
         match parser
             .process_link(
                 text,
                 user.telegram_id,
                 None, // Toàn bộ hoa hồng chiết khấu chảy trực tiếp về cho chủ bot
-                &config.accesstrade_deeplink_template,
+                &affiliate_template,
             )
             .await
         {

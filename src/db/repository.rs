@@ -664,4 +664,26 @@ impl Repository {
         }
         Ok(list)
     }
+
+    /// Lấy cấu hình hệ thống từ bảng settings
+    pub async fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
+        let mut rows = conn
+            .query("SELECT value FROM settings WHERE key = ?1", params![key])
+            .await?;
+        if let Some(row) = rows.next().await? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Cập nhật cấu hình hệ thống vào bảng settings
+    pub async fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
+            params![key, value],
+        )
+        .await?;
+        Ok(())
+    }
 }
