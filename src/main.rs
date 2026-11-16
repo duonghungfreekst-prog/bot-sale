@@ -65,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
         info!("⚠️ CHÚ Ý: Chưa tìm thấy TELEGRAM_BOT_TOKEN trong biến môi trường!");
         info!("   Web Admin Dashboard vẫn đang chạy phục vụ tại cổng {}", web_port);
         info!("   Vui lòng vào tab 'Environment' trên Render để thêm:");
-        info!("   TELEGRAM_BOT_TOKEN=8831085826:AAGUZhdW3J4Vk6tq5BYdWfQ2tZ2zHFPA3Jw");
+        info!("   TELEGRAM_BOT_TOKEN=<TELEGRAM_BOT_TOKEN_CUA_BAN>");
         info!("   BOT_USERNAME=vvipass_vip_bot");
         info!("-------------------------------------------------------");
         

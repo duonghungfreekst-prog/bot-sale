@@ -26,6 +26,16 @@ pub fn format_vnd(amount: f64) -> String {
     }
 }
 
+/// Chống XSS / Telegram HTML parse error bằng cách escape ký tự đặc biệt
+pub fn escape_html(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
 /// Chống CRLF / Log Injection (theo quy định PHẦN 3)
 #[allow(dead_code)]
 pub fn sanitize_crlf(input: &str) -> String {
@@ -87,5 +97,13 @@ mod tests {
         let code = generate_referral_code();
         assert_eq!(code.len(), 7);
         assert!(code.starts_with('R'));
+    }
+
+    #[test]
+    fn test_escape_html() {
+        assert_eq!(
+            escape_html("Áo <Mới> & \"Đẹp\""),
+            "Áo &lt;Mới&gt; &amp; &quot;Đẹp&quot;"
+        );
     }
 }

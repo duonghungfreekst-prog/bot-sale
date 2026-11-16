@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use anyhow::{anyhow, Result};
 use regex::Regex;
-use reqwest::Client;
+use reqwest::{redirect, Client};
 use tracing::{info, warn};
 use url::Url;
 use uuid::Uuid;
@@ -54,6 +54,7 @@ pub struct SaleVoucher {
 pub struct ParsedDeal {
     pub platform: Platform,
     pub product_title: String,
+    pub product_price_vnd: Option<f64>,
     pub original_url: String,
     #[allow(dead_code)]
     pub resolved_url: String,
@@ -88,8 +89,26 @@ impl DealParser {
     }
 
     pub fn with_accesstrade(accesstrade: Arc<AccessTradeClient>) -> Self {
+        let redirect_policy = redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 8 {
+                return attempt.stop();
+            }
+            let next_url = attempt.url().as_str().to_lowercase();
+            // Ngăn chặn chuyển hướng sang trang đăng nhập hoặc captcha (ví dụ Shopee /verify/traffic hay /buyer/login) làm mất ID sản phẩm
+            if next_url.contains("/verify/")
+                || next_url.contains("/buyer/login")
+                || next_url.contains("/login")
+                || next_url.contains("captcha")
+                || next_url.contains("security_check")
+            {
+                return attempt.stop();
+            }
+            attempt.follow()
+        });
+
         let http_client = Client::builder()
             .timeout(Duration::from_secs(6))
+            .redirect(redirect_policy)
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .build()
             .unwrap_or_else(|_| Client::new());
@@ -117,7 +136,11 @@ impl DealParser {
 
     /// Trích xuất URL đầu tiên từ một đoạn tin nhắn
     pub fn extract_first_url(&self, text: &str) -> Option<String> {
-        self.url_regex.find(text).map(|m| m.as_str().to_string())
+        self.url_regex.find(text).map(|m| {
+            m.as_str()
+                .trim_end_matches(&['.', ',', '!', '?', ')', ']', '>', '"', '\''][..])
+                .to_string()
+        })
     }
 
     /// Trích xuất tiêu đề sản phẩm từ tin nhắn của người dùng hoặc bóc tách từ link
@@ -527,6 +550,7 @@ impl DealParser {
         let default_sub_id = format!("u{}_r{}_{}", user_id, ref_str, &click_id[..8]);
 
         let mut affiliate_note: Option<String> = None;
+        let mut product_price_vnd: Option<f64> = None;
 
         let override_campaign_id = match platform {
             Platform::Shopee => settings.campaign_shopee,
@@ -556,6 +580,7 @@ impl DealParser {
                             product_title = api_name;
                         }
                     }
+                    product_price_vnd = res.product_price_vnd;
                     (res.url, default_sub_id, true)
                 }
                 Err(err_msg) => {
@@ -595,6 +620,7 @@ impl DealParser {
         Ok(ParsedDeal {
             platform,
             product_title,
+            product_price_vnd,
             original_url: raw_url,
             resolved_url,
             clean_url,
@@ -661,6 +687,12 @@ mod tests {
 
         let title = parser.extract_title_from_text(text, &url).unwrap();
         assert!(title.contains("Dép Bông Lông Gấu"));
+
+        let wrapped = "Xem deal nè (https://shopee.vn/product/123/456)!";
+        assert_eq!(
+            parser.extract_first_url(wrapped).unwrap(),
+            "https://shopee.vn/product/123/456"
+        );
     }
 
     #[test]

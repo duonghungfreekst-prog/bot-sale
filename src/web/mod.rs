@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 use axum::{
     extract::{Form, Request, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
@@ -17,6 +18,7 @@ use crate::config::Config;
 use crate::db::repository::Repository;
 use crate::db::AppDb;
 use crate::services::accesstrade::{mask_token, AccessTradeClient};
+use crate::utils::escape_html;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -77,17 +79,11 @@ async fn security_headers_middleware(req: Request, next: Next) -> Response {
         HeaderValue::from_static("max-age=31536000"),
     );
     headers.insert("x-xss-protection", HeaderValue::from_static("1; mode=block"));
+    headers.insert(
+        "content-security-policy",
+        HeaderValue::from_static("default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:"),
+    );
     res
-}
-
-/// Escape các ký tự HTML đặc biệt chống XSS khi render ra trang quản trị
-fn escape_html(input: &str) -> String {
-    input
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
 }
 
 /// Root redirect về /admin
@@ -210,6 +206,10 @@ async fn handle_login_submit(
         let token = Uuid::new_v4().to_string();
         {
             let mut sessions = state.sessions.write().await;
+            // Giới hạn số phiên đăng nhập lưu trên RAM tránh phình bộ nhớ
+            if sessions.len() >= 100 {
+                sessions.clear();
+            }
             sessions.insert(token.clone());
         }
 
@@ -226,6 +226,7 @@ async fn handle_login_submit(
         response
     } else {
         error!("❌ Thử đăng nhập trái phép vào Web Admin Dashboard");
+        tokio::time::sleep(Duration::from_millis(500)).await;
         let error_html = r#"<!DOCTYPE html>
 <html lang="vi">
 <head>
