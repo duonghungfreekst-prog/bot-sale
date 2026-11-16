@@ -75,6 +75,9 @@ pub struct DealParser {
     url_regex: Regex,
     shopee_item_regex: Regex,
     lazada_item_regex: Regex,
+    lazada_origin_regex: Regex,
+    lazada_js_regex: Regex,
+    lazada_app_item_regex: Regex,
     tiki_item_regex: Regex,
 }
 
@@ -94,6 +97,9 @@ impl DealParser {
         let url_regex = Regex::new(r"https?://[^\s]+").unwrap();
         let shopee_item_regex = Regex::new(r"(?:-i\.|\/product\/)(\d+)\/(\d+)|\bi\.(\d+)\.(\d+)").unwrap();
         let lazada_item_regex = Regex::new(r"-i(\d+)(?:-s(\d+))?\.html").unwrap();
+        let lazada_origin_regex = Regex::new(r#"<link\s+[^>]*rel=["']origin["'][^>]*href=["']([^"']+)["']"#).unwrap();
+        let lazada_js_regex = Regex::new(r#"window\.location\.href\s*=\s*['"](https?://[^'"]*lazada\.vn/products/[^'"]+)['"]"#).unwrap();
+        let lazada_app_item_regex = Regex::new(r#"itemId=(\d+)"#).unwrap();
         let tiki_item_regex = Regex::new(r"-p(\d+)\.html").unwrap();
 
         Self {
@@ -102,6 +108,9 @@ impl DealParser {
             url_regex,
             shopee_item_regex,
             lazada_item_regex,
+            lazada_origin_regex,
+            lazada_js_regex,
+            lazada_app_item_regex,
             tiki_item_regex,
         }
     }
@@ -153,10 +162,29 @@ impl DealParser {
             || lower.contains("s.shopee.vn")
             || lower.contains("s.lazada.vn")
             || lower.contains("c.lazada.vn")
+            || lower.contains("lazada.vn/s.")
             || lower.contains("lzd.co")
             || lower.contains("ti.ki")
             || lower.contains("vt.tiktok.com")
             || lower.contains("vm.tiktok.com")
+            || lower.contains("tiktok.com/t/")
+    }
+
+    /// Chuẩn hóa các shortlink bị sai subdomain trước khi giải mã (ví dụ www.lazada.vn/s.XXX -> s.lazada.vn/s.XXX)
+    fn normalize_short_url(&self, raw_url: &str) -> String {
+        if let Ok(parsed) = Url::parse(raw_url) {
+            if let Some(host) = parsed.host_str() {
+                let host_lower = host.to_lowercase();
+                if host_lower.contains("lazada.vn")
+                    && !host_lower.starts_with("s.lazada.vn")
+                    && !host_lower.starts_with("c.lazada.vn")
+                    && parsed.path().starts_with("/s.")
+                {
+                    return format!("https://s.lazada.vn{}", parsed.path());
+                }
+            }
+        }
+        raw_url.to_string()
     }
 
     /// Resolve link rút gọn đến link đích thực tế
@@ -165,39 +193,109 @@ impl DealParser {
             return (raw_url.to_string(), None);
         }
 
-        info!("Đang giải mã shortlink: {}", raw_url);
-        match self.http_client.get(raw_url).send().await {
+        let fetch_url = self.normalize_short_url(raw_url);
+        info!("Đang giải mã shortlink: {} (fetch: {})", raw_url, fetch_url);
+        match self.http_client.get(&fetch_url).send().await {
             Ok(resp) => {
-                let final_url = resp.url().as_str().to_string();
+                let mut final_url = resp.url().as_str().to_string();
                 let fetched_title = match resp.text().await {
-                    Ok(body) => self.extract_title_from_html(&body),
+                    Ok(body) => {
+                        // Xử lý trang chuyển tiếp HTML/JS đặc thù của Lazada (s.lazada.vn, c.lazada.vn, lzd.co)
+                        if final_url.contains("lazada") || fetch_url.contains("lazada") || fetch_url.contains("lzd.co") {
+                            if let Some(target) = self.extract_lazada_target_from_html(&body) {
+                                info!("Đã trích xuất link đích thực tế từ trang chuyển tiếp Lazada: {}", target);
+                                final_url = target;
+                            }
+                        }
+                        self.extract_title_from_html(&body)
+                    }
                     Err(_) => None,
                 };
                 info!("Giải mã thành công: {} -> {}", raw_url, final_url);
                 (final_url, fetched_title)
             }
             Err(err) => {
-                warn!("Không thể giải mã shortlink (dùng link gốc): {}", err);
-                (raw_url.to_string(), None)
+                warn!("Không thể giải mã shortlink (dùng link chuẩn hóa): {}", err);
+                (fetch_url, None)
             }
         }
     }
 
+    /// Trích xuất URL sản phẩm thực tế từ trang HTML bridge của Lazada
+    pub fn extract_lazada_target_from_html(&self, html: &str) -> Option<String> {
+        // 1. Thẻ <link rel="origin" href="...">
+        if let Some(caps) = self.lazada_origin_regex.captures(html) {
+            if let Some(href) = caps.get(1) {
+                let u = href.as_str();
+                if u.contains("lazada.vn/products/") {
+                    if let Ok(p) = Url::parse(u) {
+                        return Some(format!("https://www.lazada.vn{}", p.path()));
+                    }
+                    return Some(u.to_string());
+                }
+            }
+        }
+
+        // 2. window.location.href = 'https://www.lazada.vn/products/...'
+        if let Some(caps) = self.lazada_js_regex.captures(html) {
+            if let Some(loc) = caps.get(1) {
+                let u = loc.as_str();
+                if let Ok(p) = Url::parse(u) {
+                    return Some(format!("https://www.lazada.vn{}", p.path()));
+                }
+                return Some(u.to_string());
+            }
+        }
+
+        // 3. App link itemId
+        if let Some(caps) = self.lazada_app_item_regex.captures(html) {
+            if let Some(id) = caps.get(1) {
+                return Some(format!("https://www.lazada.vn/products/-i{}.html", id.as_str()));
+            }
+        }
+
+        None
+    }
+
     /// Trích xuất title từ HTML <title> hoặc <meta property="og:title">
     pub fn extract_title_from_html(&self, html: &str) -> Option<String> {
+        let is_junk_title = |t: &str| {
+            let lower = t.to_lowercase();
+            lower.is_empty()
+                || lower.contains("security check")
+                || lower.contains("captcha")
+                || lower.contains("just a moment")
+                || lower.contains("access denied")
+                || lower.contains("cloudflare")
+                || lower.contains("không tồn tại")
+                || lower == "shopee"
+                || lower == "lazada"
+                || lower == "tiktok"
+        };
+
         let og_regex = Regex::new(r#"<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']"#).ok()?;
         if let Some(caps) = og_regex.captures(html) {
             if let Some(m) = caps.get(1) {
-                return Some(html_escape_decode(m.as_str()));
+                let decoded = html_escape_decode(m.as_str().trim());
+                if !is_junk_title(&decoded) {
+                    return Some(decoded);
+                }
             }
         }
 
         let title_regex = Regex::new(r#"<title>([^<]+)</title>"#).ok()?;
         if let Some(caps) = title_regex.captures(html) {
             if let Some(m) = caps.get(1) {
-                let t = m.as_str().trim();
-                let t = t.replace("| Shopee Việt Nam", "").replace("- Lazada.vn", "");
-                return Some(html_escape_decode(t.trim()));
+                let t = m
+                    .as_str()
+                    .trim()
+                    .replace("| Shopee Việt Nam", "")
+                    .replace("| Lazada Việt Nam", "")
+                    .replace("- Lazada.vn", "");
+                let decoded = html_escape_decode(t.trim());
+                if !is_junk_title(&decoded) {
+                    return Some(decoded);
+                }
             }
         }
 
@@ -209,11 +307,24 @@ impl DealParser {
         if let Ok(parsed) = Url::parse(url_str) {
             let path = parsed.path();
             let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-            if let Some(first) = segments.first() {
-                let slug = first.split("-i.").next().unwrap_or(first);
-                let title = slug.replace(['-', '_'], " ");
+            let candidate = if segments.first().map(|s| *s == "products").unwrap_or(false) {
+                segments.get(1).copied()
+            } else {
+                segments.first().copied()
+            };
+
+            if let Some(seg) = candidate {
+                let slug = seg
+                    .split("-i.")
+                    .next()
+                    .unwrap_or(seg)
+                    .split("-p")
+                    .next()
+                    .unwrap_or(seg);
+                let slug = slug.split("-i").next().unwrap_or(slug);
+                let title = slug.replace(['-', '_'], " ").replace(".html", "");
                 let title = title.trim();
-                if title.len() > 3 && !title.starts_with("product") {
+                if title.len() > 3 && !title.starts_with("product") && !title.starts_with("s.") {
                     return capitalize_words(title);
                 }
             }
@@ -249,6 +360,13 @@ impl DealParser {
                 if let Some(caps) = self.lazada_item_regex.captures(url_str) {
                     if let Some(item_id) = caps.get(1) {
                         return format!("https://www.lazada.vn/products/-i{}.html", item_id.as_str());
+                    }
+                }
+                // Nếu vẫn là shortlink Lazada (s.lazada.vn, c.lazada.vn, lzd.co), tuyệt đối giữ nguyên host và path, không đổi thành www.lazada.vn
+                if let Some(host) = parsed.host_str() {
+                    let host_lower = host.to_lowercase();
+                    if host_lower.contains("s.lazada.vn") || host_lower.contains("c.lazada.vn") || host_lower.contains("lzd.co") {
+                        return format!("https://{}{}", host, parsed.path());
                     }
                 }
                 format!("https://www.lazada.vn{}", parsed.path())
@@ -361,8 +479,8 @@ impl DealParser {
                     back_hours: "Cập nhật liên tục 24/7".to_string(),
                 },
                 vec![
-                    "Mở sản phẩm bằng đường link của bot để kiểm tra voucher trợ giá trong giỏ hàng".to_string(),
-                    "Chọn voucher freeship extra để được giảm thêm phí vận chuyển".to_string(),
+                    "Khi bấm mở trong Telegram: nhấn [Mở trong ứng dụng] hoặc dấu 3 chấm góc trên -> [Mở bằng trình duyệt] để nhảy thẳng vào App TikTok".to_string(),
+                    "Chọn thêm voucher trợ giá & freeship extra tại giỏ hàng trước khi đặt đơn".to_string(),
                 ],
             ),
         }
@@ -394,8 +512,9 @@ impl DealParser {
         }
 
         // Ưu tiên: Tiêu đề gửi kèm từ tin nhắn -> Tiêu đề bóc từ HTML -> Tiêu đề bóc từ Slug URL
-        let product_title = if let Some(title) = self.extract_title_from_text(input_text, &raw_url) {
-            title
+        let user_text_title = self.extract_title_from_text(input_text, &raw_url);
+        let mut product_title = if let Some(ref title) = user_text_title {
+            title.clone()
         } else if let Some(title) = html_title {
             title
         } else {
@@ -431,7 +550,14 @@ impl DealParser {
                 )
                 .await
             {
-                Ok(res) => (res.url, default_sub_id, true),
+                Ok(res) => {
+                    if user_text_title.is_none() {
+                        if let Some(api_name) = res.product_name {
+                            product_title = api_name;
+                        }
+                    }
+                    (res.url, default_sub_id, true)
+                }
                 Err(err_msg) => {
                     warn!("Fallback khỏi ACCESSTRADE API sang link dự phòng: {}", err_msg);
                     affiliate_note = Some(err_msg);
@@ -547,5 +673,44 @@ mod tests {
 
         let (voucher_clean, _) = parser.pick_best_voucher(&Platform::Shopee, false);
         assert!(voucher_clean.name.contains("Cổng Săn Mã Shopee"));
+    }
+
+    #[test]
+    fn test_lazada_shortlink_and_html_bridge() {
+        let parser = DealParser::new();
+        assert!(parser.is_short_link("https://s.lazada.vn/s.CDJeh"));
+        assert!(parser.is_short_link("https://www.lazada.vn/s.CDJeh"));
+        assert_eq!(
+            parser.normalize_short_url("https://www.lazada.vn/s.CDJeh"),
+            "https://s.lazada.vn/s.CDJeh"
+        );
+        assert_eq!(
+            parser.clean_url("https://s.lazada.vn/s.CDJeh", &Platform::Lazada),
+            "https://s.lazada.vn/s.CDJeh"
+        );
+
+        let bridge_html = r#"<html><head><link rel="origin" href="https://www.lazada.vn/products/gat-mua-bosch-i2198179077-s10463772943.html?dsource=share"></head></html>"#;
+        let extracted = parser.extract_lazada_target_from_html(bridge_html).unwrap();
+        assert_eq!(
+            extracted,
+            "https://www.lazada.vn/products/gat-mua-bosch-i2198179077-s10463772943.html"
+        );
+        assert_eq!(
+            parser.clean_url(&extracted, &Platform::Lazada),
+            "https://www.lazada.vn/products/-i2198179077.html"
+        );
+    }
+
+    #[test]
+    fn test_extract_title_ignores_antibot() {
+        let parser = DealParser::new();
+        assert_eq!(
+            parser.extract_title_from_html("<html><head><title>Security Check</title></head></html>"),
+            None
+        );
+        assert_eq!(
+            parser.extract_title_from_html("<html><head><title>Gạt mưa Bosch | Lazada Việt Nam</title></head></html>"),
+            Some("Gạt mưa Bosch".to_string())
+        );
     }
 }

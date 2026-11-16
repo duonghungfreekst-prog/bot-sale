@@ -31,7 +31,13 @@ pub struct ApprovedCampaigns {
 #[derive(Clone, Debug)]
 pub struct AffiliateLinkResult {
     pub url: String,
+    #[allow(dead_code)]
     pub campaign_id: String,
+    pub product_name: Option<String>,
+    #[allow(dead_code)]
+    pub product_price_vnd: Option<f64>,
+    #[allow(dead_code)]
+    pub commission_amount_vnd: Option<f64>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -98,6 +104,15 @@ struct TikTokFeedCreateResp {
 struct TikTokFeedLinkData {
     aff_short_url: Option<String>,
     aff_url: Option<String>,
+    product_name: Option<String>,
+    product_price: Option<TikTokAmountInfo>,
+    product_commission: Option<TikTokAmountInfo>,
+}
+
+#[derive(Deserialize, Debug)]
+struct TikTokAmountInfo {
+    amount: Option<serde_json::Value>,
+    minimum_amount: Option<serde_json::Value>,
 }
 
 /// Client giao tiếp với ACCESSTRADE Publisher API v1/v2
@@ -236,22 +251,30 @@ impl AccessTradeClient {
             }
         };
 
-        // Gọi v1/product_link/create (áp dụng chung cho Shopee, Lazada, Tiki và TikTok Shop CPS)
+        // Với TikTok Shop: Ưu tiên gọi API v2/tiktokshop_product_feeds/create_link trước
+        // vì v2 sinh ra link TikTok Universal (/t/...) kèm chain_key & enable_shop_tab_popup=1 giúp nhảy thẳng vào sản phẩm trên App TikTok
+        if *platform == Platform::TikTokShop {
+            match self.call_v2_tiktok_feed(token, clean_url, &campaign_id, user_id, click_id).await {
+                Ok(res) => return Ok(res),
+                Err(v2_err) => {
+                    info!("API v2 TikTok Shop không áp dụng cho URL này ({}), chuyển sang v1: {}", clean_url, v2_err);
+                }
+            }
+        }
+
+        // Gọi v1/product_link/create (áp dụng cho Shopee, Lazada, Tiki và fallback cho TikTok)
         match self
             .call_v1_product_link(token, &campaign_id, clean_url, user_id, click_id)
             .await
         {
-            Ok(url) => Ok(AffiliateLinkResult { url, campaign_id }),
+            Ok(url) => Ok(AffiliateLinkResult {
+                url,
+                campaign_id,
+                product_name: None,
+                product_price_vnd: None,
+                commission_amount_vnd: None,
+            }),
             Err(err) => {
-                // Nếu là TikTok Shop và v1 không nhận URL, thử gọi v2/tiktokshop_product_feeds/create_link
-                if *platform == Platform::TikTokShop {
-                    if let Ok(v2_url) = self.call_v2_tiktok_feed(token, clean_url, user_id, click_id).await {
-                        return Ok(AffiliateLinkResult {
-                            url: v2_url,
-                            campaign_id,
-                        });
-                    }
-                }
                 warn!("⚠️ Tạo link ACCESSTRADE thất bại cho {}: {}", platform.as_str(), err);
                 Err(err)
             }
@@ -321,9 +344,10 @@ impl AccessTradeClient {
         &self,
         token: &str,
         product_url: &str,
+        campaign_id: &str,
         user_id: i64,
         click_id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<AffiliateLinkResult, String> {
         let payload = TikTokFeedCreateReq {
             product_url,
             utm_source: "facebook",
@@ -349,16 +373,46 @@ impl AccessTradeClient {
 
         if parsed.status == Some(true) {
             if let Some(data) = parsed.data {
-                if let Some(short) = data.aff_short_url.as_deref().filter(|s| !s.trim().is_empty()) {
-                    return Ok(short.to_string());
-                }
-                if let Some(aff) = data.aff_url.as_deref().filter(|s| !s.trim().is_empty()) {
-                    return Ok(aff.to_string());
+                let target_url = data
+                    .aff_short_url
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+                    .or_else(|| data.aff_url.as_deref().filter(|s| !s.trim().is_empty()))
+                    .map(|s| s.to_string());
+
+                if let Some(url) = target_url {
+                    let product_price_vnd = data
+                        .product_price
+                        .as_ref()
+                        .and_then(|p| parse_json_f64(p.minimum_amount.as_ref()));
+                    let commission_amount_vnd = data
+                        .product_commission
+                        .as_ref()
+                        .and_then(|c| parse_json_f64(c.amount.as_ref()));
+                    let product_name = data
+                        .product_name
+                        .filter(|s| !s.trim().is_empty());
+
+                    return Ok(AffiliateLinkResult {
+                        url,
+                        campaign_id: campaign_id.to_string(),
+                        product_name,
+                        product_price_vnd,
+                        commission_amount_vnd,
+                    });
                 }
             }
         }
 
         Err("Sản phẩm không thuộc danh sách TikTok Product Feed".to_string())
+    }
+}
+
+fn parse_json_f64(val: Option<&serde_json::Value>) -> Option<f64> {
+    match val? {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
     }
 }
 
