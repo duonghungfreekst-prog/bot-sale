@@ -41,38 +41,50 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // Kiểm tra xem token Telegram đã được cấu hình chưa
-    if config.telegram_token.contains("DEMO_TOKEN") || config.telegram_token.trim().is_empty() {
-        info!("-------------------------------------------------------");
-        info!("⚠️ CHÚ Ý: Chưa tìm thấy TELEGRAM_BOT_TOKEN thực tế!");
-        info!("   Vui lòng tạo file .env từ file .env.example và điền:");
-        info!("   TELEGRAM_BOT_TOKEN=your_token_from_botfather");
-        info!("   BOT_USERNAME=your_bot_username");
-        info!("-------------------------------------------------------");
-        info!("Hệ thống đã tự động chạy kiểm thử tích hợp nội bộ để xác nhận mọi thành phần.");
-        run_internal_verification(&db, &config).await?;
-        info!("Mọi thành phần (LibSQL, DealParser, CashbackEngine) đều hoạt động xuất sắc 100%!");
-        return Ok(());
-    }
-
-    // Khởi chạy Web Admin Dashboard & Health Check Server
+    // 1. Luôn khởi chạy Web Admin Dashboard & Health Check Server trước tiên
     let web_db = db.clone();
     let web_config = config.clone();
-    tokio::spawn(async move {
+    let web_port = web_config.port;
+    let web_handle = tokio::spawn(async move {
         if let Err(err) = web::start_web_server(web_config.port, web_db, web_config).await {
             error!("Lỗi khi khởi chạy Web Admin Server: {}", err);
         }
     });
 
-    // Khởi chạy Telegram bot
-    if let Err(err) = bot::run_bot(config, db).await {
-        error!("Lỗi khi chạy Telegram bot: {}", err);
+    info!("🌐 Web Admin Dashboard & Health Check đang lắng nghe tại cổng {}", web_port);
+
+    // 2. Kiểm tra xem token Telegram đã được cấu hình chưa
+    if config.telegram_token.contains("DEMO_TOKEN") || config.telegram_token.trim().is_empty() {
+        info!("-------------------------------------------------------");
+        info!("⚠️ CHÚ Ý: Chưa tìm thấy TELEGRAM_BOT_TOKEN trong biến môi trường!");
+        info!("   Web Admin Dashboard vẫn đang chạy phục vụ tại cổng {}", web_port);
+        info!("   Vui lòng vào tab 'Environment' trên Render để thêm:");
+        info!("   TELEGRAM_BOT_TOKEN=8831085826:AAGUZhdW3J4Vk6tq5BYdWfQ2tZ2zHFPA3Jw");
+        info!("   BOT_USERNAME=vvipass_vip_bot");
+        info!("-------------------------------------------------------");
+        
+        // Giữ Web Admin Server chạy liên tục, tuyệt đối không exit làm sập Render Web Service
+        let _ = web_handle.await;
+        return Ok(());
+    }
+
+    // 3. Khởi chạy Telegram bot song song cùng Web Admin Server
+    tokio::select! {
+        _ = web_handle => {
+            error!("Web Server đã dừng.");
+        }
+        res = bot::run_bot(config, db) => {
+            if let Err(err) = res {
+                error!("Lỗi khi chạy Telegram bot: {}", err);
+            }
+        }
     }
 
     Ok(())
 }
 
 /// Chạy tự kiểm tra toàn bộ luồng nghiệp vụ khi chưa cắm token Telegram
+#[allow(dead_code)]
 async fn run_internal_verification(db: &AppDb, config: &Config) -> anyhow::Result<()> {
     use db::repository::Repository;
     use services::cashback_engine::CashbackEngine;
