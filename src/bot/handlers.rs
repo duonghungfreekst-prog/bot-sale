@@ -246,10 +246,10 @@ pub async fn handle_command(
                 .await;
 
             let welcome = format!(
-                "🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI BOT SĂN MÃ GIẢM GIÁ TỰ ĐỘNG</b> 🎉\n\n\
-                 ⚡ <b>Mua hàng rẻ hơn 20% - 50% chỉ với 1 bước:</b>\n\
-                 Chỉ cần <b>Dán bất kỳ link Shopee, Lazada, Tiki</b> nào vào khung chat này, Bot sẽ tự động nhặt mã <b>Facebook 20%</b>, <b>Mã Video 30%</b>, <b>Freeship</b> và gửi lại link mua hàng đã gắn mã cho bạn!\n\n\
-                 👇 <i>Hãy gửi thử 1 link sản phẩm ngay bây giờ để nhận mã giảm giá:</i>"
+                "⚡ <b>CHÀO MỪNG BẠN ĐẾN VỚI DEALX - TRỢ LÝ SĂN MÃ & ÉP GIÁ</b> ⚡\n\n\
+                 🔥 <b>Mua hàng rẻ hơn 20% - 50% chỉ với 1 bước:</b>\n\
+                 Chỉ cần <b>Dán bất kỳ link Shopee, Lazada, Tiki</b> nào vào khung chat này, DealX sẽ tự động gom mã <b>Facebook 20%</b>, <b>Mã Video 30% - 50%</b>, <b>Freeship</b> và gửi lại link mua hàng đã gắn mã cho bạn!\n\n\
+                 👇 <i>Hãy gửi thử 1 link sản phẩm ngay bây giờ để DealX ép giá cho bạn:</i>"
             );
 
             bot.send_message(msg.chat.id, welcome)
@@ -326,7 +326,7 @@ pub async fn handle_command(
             let share_link = format!("https://t.me/{}", config.bot_username);
 
             let share_html = format!(
-                "🚀 <b>CHIA SẺ BOT SĂN MÃ GIẢM GIÁ CHO BẠN BÈ</b> 🚀\n\n\
+                "⚡ <b>CHIA SẺ DEALX CHO BẠN BÈ CÙNG SĂN SALE</b> ⚡\n\n\
                  Giúp bạn bè mua sắm tiết kiệm từ 20% - 50% trên Shopee, Lazada, Tiki mỗi ngày!\n\n\
                  🔗 <b>Link bot:</b>\n\
                  <code>{}</code>\n\n\
