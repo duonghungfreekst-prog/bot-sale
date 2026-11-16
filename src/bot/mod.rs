@@ -34,9 +34,10 @@ pub async fn run_bot(
     let bot = Bot::new(&config.telegram_token);
     let parser = Arc::new(DealParser::with_accesstrade(accesstrade));
 
-    // Tự động đăng ký danh sách commands để Telegram hiện nút [Menu] cạnh ô nhập tin nhắn (chỉ 2 lệnh cốt lõi)
+    // Tự động đăng ký danh sách commands để Telegram hiện nút [Menu] cạnh ô nhập tin nhắn
     let commands = vec![
         BotCommand::new("start", "🚀 Bắt đầu / Hướng dẫn dán link săn sale"),
+        BotCommand::new("deals", "🎟️ Kho mã 20% - 35%+ & Mã độc quyền"),
         BotCommand::new("help", "📖 Mẹo áp mã giảm 20% - 50% thành công"),
     ];
 

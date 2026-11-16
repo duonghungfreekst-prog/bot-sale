@@ -134,6 +134,11 @@ impl DealParser {
         }
     }
 
+    /// Trả về client ACCESSTRADE dùng chung (kèm cache chiến dịch & kho mã giảm giá)
+    pub fn accesstrade(&self) -> &Arc<AccessTradeClient> {
+        &self.accesstrade
+    }
+
     /// Trích xuất URL đầu tiên từ một đoạn tin nhắn
     pub fn extract_first_url(&self, text: &str) -> Option<String> {
         self.url_regex.find(text).map(|m| {

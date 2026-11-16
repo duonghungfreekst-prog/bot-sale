@@ -3,7 +3,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 use axum::{
-    extract::{Form, Request, State},
+    extract::{Form, Query, Request, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Redirect, Response},
@@ -17,10 +17,10 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::db::repository::Repository;
+use crate::db::repository::{NewDealInput, Repository};
 use crate::db::AppDb;
-use crate::services::accesstrade::{mask_token, AccessTradeClient};
-use crate::utils::escape_html;
+use crate::services::accesstrade::{mask_token, AccessTradeClient, ApprovedCampaigns};
+use crate::utils::{escape_html, format_vnd, sanitize_crlf};
 
 pub type WebhookUpdateSender = mpsc::UnboundedSender<Result<Update, Infallible>>;
 
@@ -76,6 +76,11 @@ fn build_router(state: AppState) -> Router {
         .route("/admin/settings/accesstrade", post(handle_update_accesstrade))
         .route("/admin/settings/accesstrade/sync", post(handle_sync_accesstrade))
         .route("/admin/settings/affiliate", post(handle_update_affiliate_settings))
+        .route("/admin/vouchers/sync", post(handle_sync_vouchers))
+        .route("/admin/deals/add", post(handle_add_deal))
+        .route("/admin/deals/import", post(handle_import_deals))
+        .route("/admin/deals/toggle", post(handle_toggle_deal))
+        .route("/admin/deals/delete", post(handle_delete_deal))
         .layer(middleware::from_fn(security_headers_middleware))
         .with_state(state)
 }
@@ -346,8 +351,26 @@ fn render_platform_status(label: &str, matched: &Option<(String, String)>, manua
     }
 }
 
+#[derive(serde::Deserialize, Default)]
+struct DashboardQuery {
+    notice: Option<String>,
+}
+
+async fn resolve_accesstrade_token(conn: &libsql::Connection, config: &Config) -> Option<String> {
+    Repository::get_setting(conn, "accesstrade_api_token")
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| config.accesstrade_api_token.clone())
+}
+
 /// Giao diện chính Dashboard Quản Trị
-async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> Response {
+async fn handle_dashboard(
+    headers: HeaderMap,
+    Query(query): Query<DashboardQuery>,
+    State(state): State<AppState>,
+) -> Response {
     if !is_authenticated(&state, &headers).await {
         return Redirect::to("/admin/login").into_response();
     }
@@ -361,6 +384,7 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
 
     let stats = Repository::get_admin_dashboard_stats(&conn).await.unwrap_or_default();
     let clicks = Repository::get_recent_clicks_for_admin(&conn, 50).await.unwrap_or_default();
+    let saved_deals = Repository::get_all_deals_for_admin(&conn).await.unwrap_or_default();
 
     let affiliate_template = Repository::get_setting(&conn, "affiliate_template")
         .await
@@ -368,12 +392,7 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
         .flatten()
         .unwrap_or_default();
 
-    let db_at_token = Repository::get_setting(&conn, "accesstrade_api_token")
-        .await
-        .ok()
-        .flatten()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| state.config.accesstrade_api_token.clone());
+    let db_at_token = resolve_accesstrade_token(&conn, &state.config).await;
 
     let has_turso = state.config.turso_url.is_some() && state.config.turso_auth_token.is_some();
     let has_env_token = state.config.accesstrade_api_token.is_some();
@@ -394,8 +413,16 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
         )
     } else {
         r#"<div class="bg-green-500/10 border border-green-500/30 rounded-2xl px-4 py-3 text-xs text-green-300">
-            🟢 <b>Lưu trữ bền vững:</b> Đã cố định <code>ACCESSTRADE_API_TOKEN</code> qua Environment &amp; kết nối Turso Cloud Database.
+            🟢 <b>Lưu trữ bền vững:</b> Đã cố định <code>ACCESSTRADE_API_TOKEN</code> &amp; kết nối Turso Cloud Database.
         </div>"#.to_string()
+    };
+
+    let notice_banner = match query.notice.as_deref() {
+        Some(n) if !n.trim().is_empty() => format!(
+            r#"<div class="bg-blue-500/15 border border-blue-500/40 rounded-2xl px-4 py-3 text-sm text-blue-200 font-medium">ℹ️ {}</div>"#,
+            escape_html(n)
+        ),
+        _ => String::new(),
     };
 
     let camp_shopee = Repository::get_setting(&conn, "campaign_shopee").await.ok().flatten().unwrap_or_default();
@@ -403,6 +430,7 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
     let camp_tiki = Repository::get_setting(&conn, "campaign_tiki").await.ok().flatten().unwrap_or_default();
     let camp_tiktok = Repository::get_setting(&conn, "campaign_tiktok").await.ok().flatten().unwrap_or_default();
 
+    let mut approved_opt: Option<ApprovedCampaigns> = None;
     let (at_status_badge, campaign_status_html) = if let Some(ref token) = db_at_token {
         let masked = mask_token(token);
         match state.accesstrade.get_approved_campaigns(token, false).await {
@@ -418,6 +446,7 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
                     render_platform_status("🔹 Tiki", &approved.tiki, &camp_tiki),
                     render_platform_status("🎵 TikTok Shop", &approved.tiktok, &camp_tiktok),
                 );
+                approved_opt = Some(approved);
                 (badge, rows)
             }
             Err(err) => {
@@ -435,6 +464,86 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
             "<p class=\"text-xs text-gray-400\">Vui lòng nhập <b>ACCESSTRADE API Access Key</b> bên dưới hoặc thiết lập biến môi trường <code>ACCESSTRADE_API_TOKEN</code> trên Render.</p>".to_string(),
         )
     };
+
+    // Kho mã giảm 20% - 35%+ đang cache từ ACCESSTRADE API
+    let cached_vouchers = state.accesstrade.peek_cached_high_discount_vouchers().await;
+    let mut voucher_rows = String::new();
+    for v in cached_vouchers.iter().take(10) {
+        let target_url = v.best_target_url(approved_opt.as_ref());
+        voucher_rows.push_str(&format!(
+            r#"<tr class="border-b border-gray-800/80 hover:bg-gray-800/40">
+                <td class="py-2.5 px-3 text-xs font-bold text-orange-400">-{}%</td>
+                <td class="py-2.5 px-3 text-xs text-white font-semibold">{}</td>
+                <td class="py-2.5 px-3 text-xs font-mono text-yellow-300">{}</td>
+                <td class="py-2.5 px-3 text-xs text-gray-300">{}</td>
+                <td class="py-2.5 px-3 text-xs text-gray-400">{}</td>
+                <td class="py-2.5 px-3 text-xs"><a href="{}" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">Mở ↗</a></td>
+            </tr>"#,
+            v.discount_percent,
+            escape_html(&v.platform),
+            escape_html(&v.coupon_code),
+            escape_html(&v.shop_name),
+            escape_html(&v.end_time),
+            escape_html(target_url)
+        ));
+    }
+    if voucher_rows.is_empty() {
+        voucher_rows = r#"<tr><td colspan="6" class="py-6 text-center text-xs text-gray-500">Chưa nạp cache kho mã 20%-35%+. Bấm nút <b>Quét Ngay Kho Mã 20%-35%+</b> để đồng bộ từ ACCESSTRADE API.</td></tr>"#.to_string();
+    }
+
+    // Bảng danh sách Mã Độc Quyền Hợp Tác & Deals trong DB
+    let mut exclusive_rows = String::new();
+    for d in &saved_deals {
+        let kind_badge = if d.is_exclusive {
+            r#"<span class="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-xs font-semibold">👑 Độc Quyền</span>"#
+        } else {
+            r#"<span class="px-2 py-0.5 bg-gray-700 text-gray-300 rounded text-xs">Thường</span>"#
+        };
+        let status_badge = if d.is_active {
+            r#"<span class="text-green-400 text-xs font-semibold">🟢 Đang bật</span>"#
+        } else {
+            r#"<span class="text-gray-500 text-xs">⚫ Đang tắt</span>"#
+        };
+        let code_display = d.coupon_code.as_deref().unwrap_or("-");
+        let min_note = if d.min_spend > 0.0 {
+            format!(" · Đơn từ {}", escape_html(&format_vnd(d.min_spend)))
+        } else {
+            String::new()
+        };
+        exclusive_rows.push_str(&format!(
+            r#"<tr class="border-b border-gray-800/80 hover:bg-gray-800/40">
+                <td class="py-2.5 px-3">{}</td>
+                <td class="py-2.5 px-3 text-xs font-semibold text-white">{}</td>
+                <td class="py-2.5 px-3 text-xs text-gray-200">{}<div class="text-gray-400">{}{}</div></td>
+                <td class="py-2.5 px-3 text-xs font-mono text-yellow-300">{}</td>
+                <td class="py-2.5 px-3">{}</td>
+                <td class="py-2.5 px-3 text-xs">
+                    <div class="flex items-center space-x-2">
+                        <form method="POST" action="/admin/deals/toggle">
+                            <input type="hidden" name="deal_id" value="{}">
+                            <button type="submit" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-gray-200">Bật/Tắt</button>
+                        </form>
+                        <form method="POST" action="/admin/deals/delete">
+                            <input type="hidden" name="deal_id" value="{}">
+                            <button type="submit" class="px-2 py-1 bg-red-600/20 hover:bg-red-600/40 border border-red-500/40 rounded text-red-300">Xoá</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>"#,
+            kind_badge,
+            escape_html(&d.platform),
+            escape_html(&d.title),
+            escape_html(&d.discount_desc),
+            min_note,
+            escape_html(code_display),
+            status_badge,
+            d.id,
+            d.id
+        ));
+    }
+    if exclusive_rows.is_empty() {
+        exclusive_rows = r#"<tr><td colspan="6" class="py-6 text-center text-xs text-gray-500">Chưa có Mã Độc Quyền Hợp Tác nào. Hãy dán danh sách mã từ AM ACCESSTRADE / MCN / Nhãn hàng vào ô bên trên.</td></tr>"#.to_string();
+    }
 
     // Render danh sách clicks gần đây (có escape chống XSS)
     let mut clicks_rows = String::new();
@@ -509,6 +618,7 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
     </header>
 
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        {}
         {}
         <!-- Thống kê tổng quan -->
         <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -601,6 +711,119 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
             </div>
         </section>
 
+        <!-- Kho Mã Giảm 20% - 35%+ Thật Từ ACCESSTRADE API -->
+        <section class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-4">
+                <div>
+                    <h2 class="text-lg font-bold text-white flex items-center space-x-2">
+                        <span>🔥</span>
+                        <span>Kho Mã Giảm 20% - 35%+ Thật (Đồng Bộ ACCESSTRADE API)</span>
+                        <span class="px-2.5 py-0.5 bg-orange-500/20 text-orange-300 rounded-lg text-xs font-semibold">{} mã đang sẵn</span>
+                    </h2>
+                    <p class="text-xs text-gray-400 mt-1">
+                        Bot tự động quét các mã giảm thật từ 20% trở lên trên hệ thống ACCESSTRADE để hiển thị cho khách khi bấm <code>/deals</code> hoặc nút <b>Kho Mã 20% - 35%+</b> trên Telegram.
+                    </p>
+                </div>
+                <form method="POST" action="/admin/vouchers/sync">
+                    <button type="submit" class="px-4 py-2 bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/40 text-orange-300 rounded-xl text-xs font-semibold transition">
+                        🔄 Quét Ngay Kho Mã 20%-35%+
+                    </button>
+                </form>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead class="bg-gray-800/60 text-xs uppercase text-gray-400 border-b border-gray-800">
+                        <tr>
+                            <th class="py-2.5 px-3">Mức Giảm</th>
+                            <th class="py-2.5 px-3">Sàn</th>
+                            <th class="py-2.5 px-3">Mã Code</th>
+                            <th class="py-2.5 px-3">Gian Hàng / Thương Hiệu</th>
+                            <th class="py-2.5 px-3">HSD</th>
+                            <th class="py-2.5 px-3">Link Áp Mã</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Kho Mã Độc Quyền Hợp Tác (Cấp Riêng AM / MCN / Shop) -->
+        <section class="bg-gray-900 border border-purple-500/30 rounded-2xl p-6 shadow-xl space-y-5">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-4">
+                <div>
+                    <h2 class="text-lg font-bold text-white flex items-center space-x-2">
+                        <span>👑</span>
+                        <span>Kho Mã Độc Quyền Hợp Tác (Cấp Riêng AM / MCN / Nhãn Hàng)</span>
+                        <span class="px-2.5 py-0.5 bg-purple-500/20 text-purple-300 rounded-lg text-xs font-semibold">{} mã đã lưu</span>
+                    </h2>
+                    <p class="text-xs text-gray-400 mt-1">
+                        Dán hàng loạt mã độc quyền nhận được từ Account Manager ACCESSTRADE (MCN / Super Hoa Hồng) hoặc hợp tác trực tiếp với Shop. Các mã này luôn được <b>ưu tiên hàng đầu</b> trên Telegram Bot!
+                    </p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Nhập hàng loạt -->
+                <form method="POST" action="/admin/deals/import" class="bg-gray-950/60 border border-gray-800 rounded-xl p-4 space-y-3">
+                    <div class="text-xs font-bold uppercase tracking-wider text-purple-300">⚡ Nhập Nhanh Hàng Loạt (Hỗ trợ dấu | hoặc copy thẳng từ Excel/Google Sheets)</div>
+                    <p class="text-xs text-gray-400">
+                        Mỗi dòng 1 mã theo thứ tự: <code>Sàn | Tên/Shop | Mã Code | Mức giảm | Link áp mã | Đơn tối thiểu</code>
+                    </p>
+                    <textarea name="bulk_lines" rows="5" required placeholder="Shopee | Deal Độc Quyền MCN 30% | ATVIP30 | Giảm 30% tối đa 100k | https://shopee.vn/search?... | 200000" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
+                    <button type="submit" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-xl text-xs transition">
+                        📥 Nhập Danh Sách Mã Độc Quyền
+                    </button>
+                </form>
+
+                <!-- Thêm lẻ 1 mã -->
+                <form method="POST" action="/admin/deals/add" class="bg-gray-950/60 border border-gray-800 rounded-xl p-4 space-y-3">
+                    <div class="text-xs font-bold uppercase tracking-wider text-gray-300">➕ Thêm Lẻ 1 Mã Độc Quyền</div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <select name="platform" class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-xs">
+                            <option value="Shopee">Shopee</option>
+                            <option value="TikTok Shop">TikTok Shop</option>
+                            <option value="Lazada">Lazada</option>
+                            <option value="Tiki">Tiki</option>
+                        </select>
+                        <input type="text" name="coupon_code" required placeholder="Mã Code (VD: ATVIP35)" class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs">
+                        <input type="text" name="title" required placeholder="Tên Shop / Chương trình" class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-xs">
+                        <input type="text" name="discount_desc" required placeholder="Mức giảm (VD: Giảm 35% tối đa 120k)" class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-xs">
+                        <input type="url" name="deal_url" required placeholder="Link áp mã (https://...)" class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs">
+                        <input type="number" name="min_spend" min="0" step="1000" value="0" placeholder="Đơn tối thiểu (VNĐ)" class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs">
+                    </div>
+                    <label class="inline-flex items-center space-x-2 text-xs text-gray-300">
+                        <input type="checkbox" name="is_exclusive" value="1" checked class="rounded bg-gray-800 border-gray-600">
+                        <span>Đánh dấu là 👑 Mã Độc Quyền Hợp Tác (Ưu tiên hiển thị đầu tiên)</span>
+                    </label>
+                    <div>
+                        <button type="submit" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white font-semibold rounded-xl text-xs transition">
+                            💾 Lưu Mã Độc Quyền
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead class="bg-gray-800/60 text-xs uppercase text-gray-400 border-b border-gray-800">
+                        <tr>
+                            <th class="py-2.5 px-3">Loại</th>
+                            <th class="py-2.5 px-3">Sàn</th>
+                            <th class="py-2.5 px-3">Tên &amp; Mô Tả</th>
+                            <th class="py-2.5 px-3">Mã Code</th>
+                            <th class="py-2.5 px-3">Trạng Thái</th>
+                            <th class="py-2.5 px-3">Hành Động</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
         <!-- Cấu hình Link Tiếp Thị Dự Phòng (Deeplink Template) -->
         <section class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
             <h2 class="text-lg font-bold text-white mb-2 flex items-center space-x-2">
@@ -657,6 +880,7 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
         escape_html(&state.config.bot_username),
         escape_html(&state.config.bot_username),
         bot_mode_badge,
+        notice_banner,
         persistence_banner,
         stats.total_users,
         stats.total_clicks,
@@ -670,6 +894,10 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
         escape_html(&camp_lazada),
         escape_html(&camp_tiki),
         escape_html(&camp_tiktok),
+        cached_vouchers.len(),
+        voucher_rows,
+        saved_deals.len(),
+        exclusive_rows,
         escape_html(&affiliate_template),
         clicks_rows
     );
@@ -718,19 +946,235 @@ async fn handle_sync_accesstrade(headers: HeaderMap, State(state): State<AppStat
     }
 
     if let Ok(conn) = state.db.conn() {
-        let token_opt = Repository::get_setting(&conn, "accesstrade_api_token")
-            .await
-            .ok()
-            .flatten()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| state.config.accesstrade_api_token.clone());
-
-        if let Some(token) = token_opt {
+        if let Some(token) = resolve_accesstrade_token(&conn, &state.config).await {
             let _ = state.accesstrade.get_approved_campaigns(&token, true).await;
         }
     }
 
     Redirect::to("/admin").into_response()
+}
+
+fn redirect_with_notice(msg: &str) -> Response {
+    let encoded: String = url::form_urlencoded::byte_serialize(msg.as_bytes()).collect();
+    Redirect::to(&format!("/admin?notice={}", encoded)).into_response()
+}
+
+async fn handle_sync_vouchers(headers: HeaderMap, State(state): State<AppState>) -> Response {
+    if !is_authenticated(&state, &headers).await {
+        return Redirect::to("/admin/login").into_response();
+    }
+
+    let Ok(conn) = state.db.conn() else {
+        return redirect_with_notice("Lỗi kết nối cơ sở dữ liệu.");
+    };
+
+    let Some(token) = resolve_accesstrade_token(&conn, &state.config).await else {
+        return redirect_with_notice("Chưa cấu hình ACCESSTRADE API Token.");
+    };
+
+    match state.accesstrade.fetch_high_discount_vouchers(&token, 20, true).await {
+        Ok(list) => redirect_with_notice(&format!(
+            "Đã đồng bộ thành công {} mã giảm giá 20% - 35%+ thật từ ACCESSTRADE!",
+            list.len()
+        )),
+        Err(err) => redirect_with_notice(&format!("Lỗi đồng bộ kho mã: {}", err)),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct AddDealForm {
+    pub platform: String,
+    pub title: String,
+    pub coupon_code: String,
+    pub discount_desc: String,
+    pub deal_url: String,
+    pub min_spend: Option<f64>,
+    pub is_exclusive: Option<String>,
+}
+
+fn is_valid_http_url(u: &str) -> bool {
+    let trimmed = u.trim();
+    trimmed.starts_with("https://") || trimmed.starts_with("http://")
+}
+
+async fn handle_add_deal(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Form(form): Form<AddDealForm>,
+) -> Response {
+    if !is_authenticated(&state, &headers).await {
+        return Redirect::to("/admin/login").into_response();
+    }
+
+    if !is_valid_http_url(&form.deal_url) {
+        return redirect_with_notice("Link áp mã phải bắt đầu bằng https:// hoặc http://");
+    }
+
+    let Ok(conn) = state.db.conn() else {
+        return redirect_with_notice("Lỗi kết nối cơ sở dữ liệu.");
+    };
+
+    let code_clean = form.coupon_code.trim();
+    let item = NewDealInput {
+        platform: form.platform.trim().to_string(),
+        title: form.title.trim().to_string(),
+        coupon_code: if code_clean.is_empty() {
+            None
+        } else {
+            Some(code_clean.to_string())
+        },
+        discount_desc: form.discount_desc.trim().to_string(),
+        min_spend: form.min_spend.unwrap_or(0.0).max(0.0),
+        deal_url: form.deal_url.trim().to_string(),
+        expire_at: None,
+        is_exclusive: form.is_exclusive.is_some(),
+    };
+
+    match Repository::add_deal(&conn, &item).await {
+        Ok(inserted) => {
+            info!(
+                "👑 Admin đã {} mã '{}' ({})",
+                if inserted { "thêm mới" } else { "cập nhật" },
+                sanitize_crlf(&item.title),
+                sanitize_crlf(&item.platform)
+            );
+            redirect_with_notice(if inserted {
+                "Đã lưu Mã Độc Quyền mới vào kho Bot!"
+            } else {
+                "Đã cập nhật lại Mã Độc Quyền trùng code trong kho!"
+            })
+        }
+        Err(err) => redirect_with_notice(&format!("Lỗi lưu mã: {}", err)),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct BulkImportDealsForm {
+    pub bulk_lines: String,
+}
+
+async fn handle_import_deals(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Form(form): Form<BulkImportDealsForm>,
+) -> Response {
+    if !is_authenticated(&state, &headers).await {
+        return Redirect::to("/admin/login").into_response();
+    }
+
+    let (items, skipped) = parse_bulk_exclusive_deals(&form.bulk_lines);
+    if items.is_empty() {
+        return redirect_with_notice(
+            "Không có dòng nào đúng định dạng (Sàn | Tên | Mã Code | Mức giảm | Link https://... | Đơn tối thiểu).",
+        );
+    }
+
+    let Ok(conn) = state.db.conn() else {
+        return redirect_with_notice("Lỗi kết nối cơ sở dữ liệu.");
+    };
+
+    match Repository::add_deals_batch(&conn, &items).await {
+        Ok((inserted, updated)) => {
+            info!(
+                "📥 Admin nhập hàng loạt mã độc quyền: +{} mới, ~{} cập nhật, bỏ qua {} dòng sai định dạng.",
+                inserted, updated, skipped
+            );
+            redirect_with_notice(&format!(
+                "Nhập xong: +{} mã mới, cập nhật {} mã (bỏ qua {} dòng sai định dạng).",
+                inserted, updated, skipped
+            ))
+        }
+        Err(err) => redirect_with_notice(&format!("Lỗi nhập hàng loạt: {}", err)),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct DealIdForm {
+    pub deal_id: i64,
+}
+
+async fn handle_toggle_deal(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Form(form): Form<DealIdForm>,
+) -> Response {
+    if !is_authenticated(&state, &headers).await {
+        return Redirect::to("/admin/login").into_response();
+    }
+
+    if let Ok(conn) = state.db.conn() {
+        let _ = Repository::toggle_deal(&conn, form.deal_id).await;
+    }
+
+    Redirect::to("/admin").into_response()
+}
+
+async fn handle_delete_deal(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Form(form): Form<DealIdForm>,
+) -> Response {
+    if !is_authenticated(&state, &headers).await {
+        return Redirect::to("/admin/login").into_response();
+    }
+
+    if let Ok(conn) = state.db.conn() {
+        let _ = Repository::delete_deal(&conn, form.deal_id).await;
+    }
+
+    Redirect::to("/admin").into_response()
+}
+
+/// Phân tích văn bản nhập hàng loạt (hỗ trợ dấu `|` hoặc Tab từ Excel/Google Sheets)
+pub fn parse_bulk_exclusive_deals(raw_text: &str) -> (Vec<NewDealInput>, usize) {
+    let mut items = Vec::new();
+    let mut skipped = 0usize;
+
+    for raw_line in raw_text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let sep = if line.contains('\t') { '\t' } else { '|' };
+        let cols: Vec<&str> = line.split(sep).map(str::trim).collect();
+        if cols.len() < 5 {
+            skipped += 1;
+            continue;
+        }
+
+        let platform = cols[0];
+        let title = cols[1];
+        let code = cols[2];
+        let desc = cols[3];
+        let url = cols[4];
+        let min_spend = cols
+            .get(5)
+            .and_then(|s| s.replace([',', '.'], "").parse::<f64>().ok())
+            .unwrap_or(0.0);
+
+        if platform.is_empty() || title.is_empty() || desc.is_empty() || !is_valid_http_url(url) {
+            skipped += 1;
+            continue;
+        }
+
+        items.push(NewDealInput {
+            platform: platform.to_string(),
+            title: title.to_string(),
+            coupon_code: if code.is_empty() {
+                None
+            } else {
+                Some(code.to_string())
+            },
+            discount_desc: desc.to_string(),
+            min_spend: min_spend.max(0.0),
+            deal_url: url.to_string(),
+            expire_at: None,
+            is_exclusive: true,
+        });
+    }
+
+    (items, skipped)
 }
 
 /// Form cập nhật cấu hình link Affiliate dự phòng
@@ -873,5 +1317,27 @@ mod tests {
         assert_eq!(received.unwrap().id.0, 123456);
 
         let _ = std::fs::remove_file(&test_db_path);
+    }
+
+    #[test]
+    fn test_parse_bulk_exclusive_deals_pipe_tab_and_xss_guard() {
+        let input = "\
+Shopee | Deal MCN Độc Quyền | MCN30 | Giảm 30% tối đa 100k | https://shopee.vn/promo | 200.000
+TikTok Shop\tLive Độc Quyền\tTTS35\tGiảm 35% tối đa 120k\thttps://www.tiktok.com/shop\t150000
+Shopee | Link XSS | BAD | Giảm 50% | javascript:alert(1) | 0
+DongLoiThieuCot | 123
+";
+        let (parsed, skipped) = parse_bulk_exclusive_deals(input);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(skipped, 2);
+
+        assert_eq!(parsed[0].platform, "Shopee");
+        assert_eq!(parsed[0].coupon_code.as_deref(), Some("MCN30"));
+        assert_eq!(parsed[0].min_spend, 200000.0);
+        assert!(parsed[0].is_exclusive);
+
+        assert_eq!(parsed[1].platform, "TikTok Shop");
+        assert_eq!(parsed[1].coupon_code.as_deref(), Some("TTS35"));
+        assert_eq!(parsed[1].min_spend, 150000.0);
     }
 }

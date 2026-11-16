@@ -127,12 +127,28 @@ impl AppDb {
                 min_spend REAL NOT NULL DEFAULT 0.0,
                 deal_url TEXT NOT NULL,
                 expire_at TEXT,
-                is_active INTEGER NOT NULL DEFAULT 1
+                is_active INTEGER NOT NULL DEFAULT 1,
+                is_exclusive INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT ''
             );",
             (),
         )
         .await
         .context("Tạo bảng deals thất bại")?;
+
+        // Bổ sung cột mới an toàn cho DB cũ (SQLite bỏ qua lỗi nếu cột đã tồn tại)
+        let _ = conn
+            .execute(
+                "ALTER TABLE deals ADD COLUMN is_exclusive INTEGER NOT NULL DEFAULT 0",
+                (),
+            )
+            .await;
+        let _ = conn
+            .execute(
+                "ALTER TABLE deals ADD COLUMN created_at TEXT NOT NULL DEFAULT ''",
+                (),
+            )
+            .await;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS settings (

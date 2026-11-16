@@ -10,7 +10,7 @@ Hệ thống Bot Telegram săn sale đa sàn (**DealX - Trợ Lý Săn Mã & Ép
 - **Chỉ DUY NHẤT 1 tài khoản Admin:** Không cho phép bất kỳ ai đăng ký mới, chặn 100% truy cập trái phép.
 - **Bảo mật chuẩn:** Xác thực Cookie HTTP-only, chống Timing Attack với `subtle::ConstantTimeEq`.
 - **Thống kê thời gian thực:** Xem tổng số người dùng bot, tổng số link đã chuyển đổi, số lượt click theo từng sàn (Shopee, Lazada, TikTok, Tiki).
-- **Quản lý kho Deals & Voucher:** Thêm deal mới trực tiếp trên web, bật/tắt hoặc xoá mã nhanh chóng; tự động đồng bộ ngay lập tức với lệnh `/deals` trên Telegram.
+- **Quản lý kho Mã Độc Quyền & Đồng Bộ Kho Mã 20% - 35%+:** Nhập lẻ hoặc dán hàng loạt mã độc quyền hợp tác từ AM/MCN/Shop (hỗ trợ cả dấu `|` hoặc copy từ Excel/Google Sheets), bật/tắt hoặc xoá mã; tự động quét kho mã 20%-35%+ thật từ ACCESSTRADE API qua lệnh `/deals`.
 - **Xem nhật ký dán link:** Theo dõi 50 link khách hàng vừa gửi vào bot gần nhất kèm link affiliate tương ứng.
 
 ### 2. Phân Tích & Làm Sạch Link Sản Phẩm Tự Động

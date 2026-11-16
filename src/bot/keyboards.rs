@@ -5,6 +5,9 @@ use url::Url;
 pub fn persistent_reply_keyboard() -> KeyboardMarkup {
     KeyboardMarkup::new(vec![
         vec![
+            KeyboardButton::new("🎟️ Kho Mã 20% - 35%+"),
+        ],
+        vec![
             KeyboardButton::new("📖 Hướng Dẫn Săn Sale"),
             KeyboardButton::new("🚀 Chia Sẻ Cho Bạn Bè"),
         ],
@@ -29,12 +32,63 @@ pub fn main_menu_keyboard(bot_username: &str) -> InlineKeyboardMarkup {
 
     InlineKeyboardMarkup::new(vec![
         vec![
+            InlineKeyboardButton::callback("🎟️ Kho Mã 20% - 35%+ & Độc Quyền", "deals_page:all:0"),
+        ],
+        vec![
             InlineKeyboardButton::callback("📖 Hướng Dẫn Áp Mã Thành Công 100%", "menu_guide"),
         ],
         vec![
             InlineKeyboardButton::url("🚀 Chia Sẻ DealX Cho Bạn Bè", share_url),
         ],
     ])
+}
+
+/// Bàn phím lọc & phân trang cho Kho Mã Giảm Giá (/deals)
+pub fn deals_pagination_keyboard(filter: &str, page: usize, total_pages: usize) -> InlineKeyboardMarkup {
+    let filter_row = vec![
+        InlineKeyboardButton::callback(
+            if filter == "all" { "• 🌟 Tất Cả •" } else { "🌟 Tất Cả" },
+            "deals_page:all:0",
+        ),
+        InlineKeyboardButton::callback(
+            if filter == "exclusive" { "• 👑 Độc Quyền •" } else { "👑 Độc Quyền" },
+            "deals_page:exclusive:0",
+        ),
+        InlineKeyboardButton::callback(
+            if filter == "pct20" { "• 🔥 20%-35%+ •" } else { "🔥 20%-35%+" },
+            "deals_page:pct20:0",
+        ),
+    ];
+
+    let mut rows = vec![filter_row];
+
+    if total_pages > 1 {
+        let mut nav_row = Vec::new();
+        if page > 0 {
+            nav_row.push(InlineKeyboardButton::callback(
+                "⬅️ Trang trước",
+                format!("deals_page:{}:{}", filter, page - 1),
+            ));
+        }
+        nav_row.push(InlineKeyboardButton::callback(
+            format!("📄 {}/{}", page + 1, total_pages),
+            format!("deals_page:{}:{}", filter, page),
+        ));
+        if page + 1 < total_pages {
+            nav_row.push(InlineKeyboardButton::callback(
+                "Trang sau ➡️",
+                format!("deals_page:{}:{}", filter, page + 1),
+            ));
+        }
+        rows.push(nav_row);
+    }
+
+    rows.push(vec![InlineKeyboardButton::callback(
+        "🔄 Cập Nhật Kho Mã Mới Nhất",
+        format!("deals_refresh:{}:{}", filter, page),
+    )]);
+
+    InlineKeyboardMarkup::new(rows)
 }
 
 /// Bàn phím hành động khi người dùng gửi link sản phẩm
@@ -77,6 +131,11 @@ pub fn deal_action_keyboard(affiliate_url: &str, platform: &str) -> InlineKeyboa
         }
         _ => {}
     }
+
+    rows.push(vec![InlineKeyboardButton::callback(
+        "🔥 Xem Kho Mã 20% - 35%+ & Độc Quyền",
+        "deals_page:all:0",
+    )]);
 
     InlineKeyboardMarkup::new(rows)
 }

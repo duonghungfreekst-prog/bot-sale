@@ -2,16 +2,19 @@ use std::sync::Arc;
 use chrono::Utc;
 use teloxide::{
     prelude::*,
-    types::ParseMode,
+    types::{InlineKeyboardMarkup, LinkPreviewOptions, ParseMode},
     utils::command::BotCommands,
 };
 use tracing::{error, warn};
 
-use super::keyboards::{deal_action_keyboard, main_menu_keyboard, persistent_reply_keyboard};
+use super::keyboards::{
+    deal_action_keyboard, deals_pagination_keyboard, main_menu_keyboard, persistent_reply_keyboard,
+};
 use crate::config::Config;
 use crate::db::models::ClickRecord;
 use crate::db::repository::Repository;
 use crate::db::AppDb;
+use crate::services::accesstrade::ApprovedCampaigns;
 use crate::services::deal_parser::{AffiliateSettings, DealParser};
 use crate::utils::{escape_html, format_vnd};
 
@@ -20,12 +23,24 @@ use crate::utils::{escape_html, format_vnd};
 pub enum Command {
     #[command(description = "Bắt đầu / Hướng dẫn dán link săn sale")]
     Start,
+    #[command(description = "Kho mã giảm giá 20% - 35%+ & Mã độc quyền")]
+    Deals,
     #[command(description = "Xem hướng dẫn chi tiết cách áp mã giảm giá")]
     Help,
     #[command(description = "Chia sẻ DealX cho bạn bè cùng săn sale")]
     Share,
     #[command(description = "Xem thống kê hoạt động bot (Dành cho Admin)")]
     Stats,
+}
+
+fn no_link_preview() -> LinkPreviewOptions {
+    LinkPreviewOptions {
+        is_disabled: true,
+        url: None,
+        prefer_small_media: false,
+        prefer_large_media: false,
+        show_above_text: false,
+    }
 }
 
 /// Xử lý tin nhắn văn bản thông thường
@@ -52,19 +67,20 @@ pub async fn handle_message(
     // Xử lý các nút bấm từ Reply Keyboard thường trực ở đáy màn hình
     let mapped_cmd = match text {
         "🚀 Bắt Đầu" | "Bắt Đầu" | "start" => Some(Command::Start),
+        "🎟️ Kho Mã 20% - 35%+" | "🎟️ Kho Mã 20% - 35%" | "Kho Mã 20% - 35%" | "deals" | "ma" => Some(Command::Deals),
         "📖 Hướng Dẫn Săn Sale" | "Hướng Dẫn" | "help" => Some(Command::Help),
         "🚀 Chia Sẻ Cho Bạn Bè" | "Chia Sẻ" | "share" => Some(Command::Share),
         _ => None,
     };
 
     if let Some(cmd) = mapped_cmd {
-        return handle_command(bot, msg, cmd, db, config).await;
+        return handle_command(bot, msg, cmd, db, config, parser).await;
     }
 
     // Nếu tin nhắn bắt đầu bằng lệnh '/'
     if text.starts_with('/') {
         if let Ok(cmd) = Command::parse(text, &config.bot_username) {
-            return handle_command(bot, msg, cmd, db, config).await;
+            return handle_command(bot, msg, cmd, db, config, parser).await;
         }
     }
 
@@ -189,11 +205,39 @@ pub async fn handle_message(
                     _ => String::new(),
                 };
 
+                // Kiểm tra xem sàn này có mã độc quyền hợp tác đang bật trong DB không
+                let exclusive_block = match Repository::get_active_deals(&conn, Some(parsed.platform.as_str())).await {
+                    Ok(deals) => {
+                        let ex_list: Vec<_> = deals.into_iter().filter(|d| d.is_exclusive).take(2).collect();
+                        if ex_list.is_empty() {
+                            String::new()
+                        } else {
+                            let mut s = String::from("\n\n👑 <b>MÃ ĐỘC QUYỀN HỢP TÁC ĐANG CÓ:</b>");
+                            for d in ex_list {
+                                let code_tag = d
+                                    .coupon_code
+                                    .as_deref()
+                                    .filter(|c| !c.trim().is_empty())
+                                    .map(|c| format!(" · Mã: <code>{}</code>", escape_html(c)))
+                                    .unwrap_or_default();
+                                s.push_str(&format!(
+                                    "\n• <b>{}</b> ({}){}",
+                                    escape_html(&d.title),
+                                    escape_html(&d.discount_desc),
+                                    code_tag
+                                ));
+                            }
+                            s
+                        }
+                    }
+                    Err(_) => String::new(),
+                };
+
                 let reply_html = format!(
                     "📦 <b>{}</b>\n\
                      {}\
                      🔗 <i>Link gốc:</i> {}\n\n\
-                     {}\n\n\
+                     {}{}\n\n\
                      ⏰ <b>BACK MÃ LÚC:</b> {}\n\n\
                      ⚠️ <b>Lưu ý để áp mã thành công 100%:</b>\n\
                      {}\n\
@@ -202,6 +246,7 @@ pub async fn handle_message(
                     price_line,
                     escape_html(&parsed.original_url),
                     header_line,
+                    exclusive_block,
                     escape_html(&parsed.primary_voucher.back_hours),
                     tips_text.trim_end()
                 );
@@ -257,6 +302,7 @@ pub async fn handle_command(
     cmd: Command,
     db: AppDb,
     config: Config,
+    parser: Arc<DealParser>,
 ) -> ResponseResult<()> {
     let user_id = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
     let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
@@ -295,12 +341,28 @@ pub async fn handle_command(
 
             let welcome = "⚡ <b>CHÀO MỪNG BẠN ĐẾN VỚI DEALX - TRỢ LÝ SĂN MÃ &amp; ÉP GIÁ</b> ⚡\n\n\
                  🔥 <b>Mua hàng tiết kiệm hơn chỉ với 1 bước:</b>\n\
-                 Chỉ cần <b>Dán bất kỳ link Shopee, Lazada, Tiki hoặc TikTok Shop</b> nào vào khung chat này, DealX sẽ tự động kiểm tra ưu đãi, mở khóa voucher sàn và gửi lại link mua hàng tối ưu cho bạn!\n\n\
-                 👇 <i>Hãy gửi thử 1 link sản phẩm ngay bây giờ:</i>";
+                 Chỉ cần <b>Dán bất kỳ link Shopee, Lazada, Tiki hoặc TikTok Shop</b> nào vào khung chat này, hoặc bấm nút <b>🎟️ Kho Mã 20% - 35%+</b> bên dưới để lấy hàng loạt mã giảm giá thật mới nhất!\n\n\
+                 👇 <i>Hãy gửi thử 1 link sản phẩm hoặc bấm Kho Mã ngay:</i>";
 
             bot.send_message(msg.chat.id, welcome)
                 .parse_mode(ParseMode::Html)
                 .reply_markup(main_menu_keyboard(&config.bot_username))
+                .await?;
+        }
+
+        Command::Deals => {
+            let wait_msg = bot
+                .send_message(msg.chat.id, "🎟️ <i>Đang tải kho mã giảm giá 20% - 35%+ &amp; mã độc quyền...</i>")
+                .parse_mode(ParseMode::Html)
+                .await?;
+
+            let (html, keyboard) = build_deals_page(&conn, &config, &parser, "all", 0, false).await;
+            let _ = bot.delete_message(msg.chat.id, wait_msg.id).await;
+
+            bot.send_message(msg.chat.id, html)
+                .parse_mode(ParseMode::Html)
+                .link_preview_options(no_link_preview())
+                .reply_markup(keyboard)
                 .await?;
         }
 
@@ -310,6 +372,7 @@ pub async fn handle_command(
                  1️⃣ <b>Bước 1:</b> Vào App Shopee, Lazada, Tiki hoặc TikTok Shop chọn sản phẩm bạn muốn mua.\n\
                  2️⃣ <b>Bước 2:</b> Bấm nút <b>Chia sẻ</b> -&gt; chọn <b>Sao chép liên kết</b>.\n\
                  3️⃣ <b>Bước 3:</b> Dán đường link vào khung chat bot này. Bot sẽ trả về link mua hàng kèm cổng lưu mã.\n\n\
+                 🎟️ Ngoài ra, gõ <code>/deals</code> để lấy kho mã <b>giảm 20% - 35%+</b> và <b>mã độc quyền hợp tác</b> cập nhật liên tục!\n\n\
                  ⚠️ <b>MẸO ÁP MÃ THÀNH CÔNG 100%:</b>\n\
                  • Bấm vào link bot gửi để mở App sàn.\n\
                  • Xoá sản phẩm cũ trong giỏ hàng trước khi mua để mã không bị xung đột.\n\
@@ -365,23 +428,64 @@ pub async fn handle_callback(
     q: CallbackQuery,
     db: AppDb,
     config: Config,
+    parser: Arc<DealParser>,
 ) -> ResponseResult<()> {
     let data = match q.data.as_deref() {
         Some(d) => d,
         None => return Ok(()),
     };
 
-    let chat_id = match q.message {
-        Some(ref msg) => msg.chat().id,
+    let (chat_id, message_id) = match q.message {
+        Some(ref msg) => (msg.chat().id, msg.id()),
         None => return Ok(()),
     };
 
-    let _conn = match db.conn() {
+    let conn = match db.conn() {
         Ok(c) => c,
         Err(_) => return Ok(()),
     };
 
     let _ = bot.answer_callback_query(q.id).await;
+
+    if let Some(rest) = data.strip_prefix("deals_page:") {
+        let mut parts = rest.splitn(2, ':');
+        let filter = parts.next().unwrap_or("all");
+        let page = parts.next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+        let (html, keyboard) = build_deals_page(&conn, &config, &parser, filter, page, false).await;
+        if let Err(err) = bot
+            .edit_message_text(chat_id, message_id, &html)
+            .parse_mode(ParseMode::Html)
+            .link_preview_options(no_link_preview())
+            .reply_markup(keyboard.clone())
+            .await
+        {
+            // Nếu Telegram từ chối edit do quá hạn hoặc nội dung không đổi -> bỏ qua hoặc gửi mới
+            let err_str = err.to_string();
+            if !err_str.contains("message is not modified") {
+                let _ = bot
+                    .send_message(chat_id, html)
+                    .parse_mode(ParseMode::Html)
+                    .link_preview_options(no_link_preview())
+                    .reply_markup(keyboard)
+                    .await;
+            }
+        }
+        return Ok(());
+    }
+
+    if let Some(rest) = data.strip_prefix("deals_refresh:") {
+        let mut parts = rest.splitn(2, ':');
+        let filter = parts.next().unwrap_or("all");
+        let page = parts.next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+        let (html, keyboard) = build_deals_page(&conn, &config, &parser, filter, page, true).await;
+        let _ = bot
+            .edit_message_text(chat_id, message_id, html)
+            .parse_mode(ParseMode::Html)
+            .link_preview_options(no_link_preview())
+            .reply_markup(keyboard)
+            .await;
+        return Ok(());
+    }
 
     match data {
         "menu_guide" => {
@@ -404,4 +508,148 @@ pub async fn handle_callback(
     }
 
     Ok(())
+}
+
+enum DealDisplayItem<'a> {
+    Exclusive(&'a crate::db::models::DealItem),
+    ApiOffer(&'a crate::services::accesstrade::VoucherOffer),
+}
+
+/// Dựng giao diện trang danh sách Mã Độc Quyền + Kho Mã 20% - 35%+ thật từ ACCESSTRADE
+async fn build_deals_page(
+    conn: &libsql::Connection,
+    config: &Config,
+    parser: &DealParser,
+    filter: &str,
+    requested_page: usize,
+    force_refresh: bool,
+) -> (String, InlineKeyboardMarkup) {
+    const PAGE_SIZE: usize = 6;
+
+    let db_deals = Repository::get_active_deals(conn, None).await.unwrap_or_default();
+    let exclusive_deals: Vec<_> = db_deals.iter().filter(|d| d.is_exclusive).collect();
+
+    let token_opt = Repository::get_setting(conn, "accesstrade_api_token")
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| config.accesstrade_api_token.clone());
+
+    let at_client = parser.accesstrade();
+    let (approved, api_vouchers, api_err): (Option<ApprovedCampaigns>, Vec<_>, Option<String>) =
+        if let Some(ref tok) = token_opt {
+            let approved = at_client.get_approved_campaigns(tok, false).await.ok();
+            match at_client.fetch_high_discount_vouchers(tok, 20, force_refresh).await {
+                Ok(v) => (approved, v, None),
+                Err(err) => (approved, Vec::new(), Some(err)),
+            }
+        } else {
+            (None, Vec::new(), Some("Chưa cấu hình ACCESSTRADE Token".to_string()))
+        };
+
+    let mut entries: Vec<DealDisplayItem<'_>> = Vec::new();
+    match filter {
+        "exclusive" => {
+            for d in &exclusive_deals {
+                entries.push(DealDisplayItem::Exclusive(d));
+            }
+        }
+        "pct20" => {
+            for v in &api_vouchers {
+                entries.push(DealDisplayItem::ApiOffer(v));
+            }
+        }
+        _ => {
+            for d in &exclusive_deals {
+                entries.push(DealDisplayItem::Exclusive(d));
+            }
+            for v in &api_vouchers {
+                entries.push(DealDisplayItem::ApiOffer(v));
+            }
+        }
+    }
+
+    let total_items = entries.len();
+    let total_pages = total_items.div_ceil(PAGE_SIZE).max(1);
+    let page = requested_page.min(total_pages.saturating_sub(1));
+    let start = page * PAGE_SIZE;
+    let end = (start + PAGE_SIZE).min(total_items);
+
+    let vn_now = Utc::now() + chrono::Duration::hours(7);
+    let filter_label = match filter {
+        "exclusive" => "👑 Mã Độc Quyền Hợp Tác",
+        "pct20" => "🔥 Kho Mã Giảm 20% - 35%+",
+        _ => "🌟 Tất Cả Mã Hot (Độc Quyền + 20%-35%+)",
+    };
+
+    let mut html = format!(
+        "🎟️ <b>KHO MÃ GIẢM GIÁ THẬT — {}</b>\n\
+         👑 Độc quyền: <b>{}</b> | 🔥 Giảm 20%-35%+: <b>{}</b> | <i>{}</i>\n\
+         <i>(Chạm vào mã in đậm <code>CODE</code> để tự động sao chép)</i>\n",
+        filter_label,
+        exclusive_deals.len(),
+        api_vouchers.len(),
+        vn_now.format("%H:%M %d/%m")
+    );
+
+    if let Some(err) = api_err {
+        html.push_str(&format!("\n⚠️ <i>Lưu ý đồng bộ API: {}</i>\n", escape_html(&err)));
+    }
+
+    if total_items == 0 {
+        if filter == "exclusive" {
+            html.push_str(
+                "\n📭 <i>Chưa có Mã Độc Quyền Hợp Tác nào được nhập. Chủ bot có thể dán hàng loạt mã từ AM/MCN hoặc Shop hợp tác vào mục <b>Kho Mã Độc Quyền</b> trên Web Admin.</i>",
+            );
+        } else {
+            html.push_str("\n📭 <i>Hiện chưa quét được mã nào khớp bộ lọc. Hãy thử bấm 🔄 Cập nhật.</i>");
+        }
+    } else {
+        for (idx, item) in entries[start..end].iter().enumerate() {
+            let num = start + idx + 1;
+            match item {
+                DealDisplayItem::Exclusive(d) => {
+                    let code_str = d
+                        .coupon_code
+                        .as_deref()
+                        .filter(|c| !c.trim().is_empty())
+                        .map(|c| format!(" · Mã: <code>{}</code>", escape_html(c)))
+                        .unwrap_or_default();
+                    let min_str = if d.min_spend > 0.0 {
+                        format!(" · Đơn từ {}", escape_html(&format_vnd(d.min_spend)))
+                    } else {
+                        String::new()
+                    };
+                    html.push_str(&format!(
+                        "\n{}. 👑 <b>[ĐỘC QUYỀN · {}] {}</b>{}\n   💬 {}{}\n   👉 <a href=\"{}\">Mở &amp; Áp Mã Ngay ↗</a>\n",
+                        num,
+                        escape_html(&d.platform),
+                        escape_html(&d.title),
+                        code_str,
+                        escape_html(&d.discount_desc),
+                        min_str,
+                        escape_html(&d.deal_url)
+                    ));
+                }
+                DealDisplayItem::ApiOffer(v) => {
+                    let target_url = v.best_target_url(approved.as_ref());
+                    html.push_str(&format!(
+                        "\n{}. 🔥 <b>[-{}% · {}] {}</b>\n   🎟️ Mã: <code>{}</code> · HSD: {}\n   💬 {}\n   👉 <a href=\"{}\">Mở Gian Hàng &amp; Áp Mã ↗</a>\n",
+                        num,
+                        v.discount_percent,
+                        escape_html(&v.platform),
+                        escape_html(&v.shop_name),
+                        escape_html(&v.coupon_code),
+                        escape_html(&v.end_time),
+                        escape_html(&v.discount_desc),
+                        escape_html(target_url)
+                    ));
+                }
+            }
+        }
+    }
+
+    let keyboard = deals_pagination_keyboard(filter, page, total_pages);
+    (html, keyboard)
 }

@@ -69,6 +69,9 @@ async fn main() -> anyhow::Result<()> {
                 if let Err(err) = warmup_at.get_approved_campaigns(&tok, true).await {
                     warn!("Không thể đồng bộ sẵn ACCESSTRADE khi khởi động: {}", err);
                 }
+                if let Err(err) = warmup_at.fetch_high_discount_vouchers(&tok, 20, true).await {
+                    warn!("Không thể nạp sẵn kho mã >=20% ACCESSTRADE khi khởi động: {}", err);
+                }
             } else {
                 warn!("⚠️ Chưa tìm thấy ACCESSTRADE_API_TOKEN trong Environment hoặc DB.");
             }

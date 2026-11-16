@@ -7,6 +7,33 @@ use uuid::Uuid;
 use super::models::{AdminStats, CashbackOrder, ClickRecord, DealItem, User, WalletSummary, Withdrawal};
 use crate::utils::generate_referral_code;
 
+#[derive(Clone, Debug)]
+pub struct NewDealInput {
+    pub platform: String,
+    pub title: String,
+    pub coupon_code: Option<String>,
+    pub discount_desc: String,
+    pub min_spend: f64,
+    pub deal_url: String,
+    pub expire_at: Option<String>,
+    pub is_exclusive: bool,
+}
+
+fn row_to_deal_item(row: &libsql::Row) -> Result<DealItem> {
+    Ok(DealItem {
+        id: row.get(0)?,
+        platform: row.get(1)?,
+        title: row.get(2)?,
+        coupon_code: row.get(3)?,
+        discount_desc: row.get(4)?,
+        min_spend: row.get(5)?,
+        deal_url: row.get(6)?,
+        expire_at: row.get(7)?,
+        is_active: row.get::<i64>(8)? == 1,
+        is_exclusive: row.get::<i64>(9).unwrap_or(0) == 1,
+    })
+}
+
 pub struct Repository;
 
 impl Repository {
@@ -434,41 +461,29 @@ impl Repository {
         Ok(list)
     }
 
-    /// Lấy danh sách các mã giảm giá và deal hot
+    /// Lấy danh sách các mã giảm giá đang bật (ưu tiên mã độc quyền hợp tác lên đầu)
     pub async fn get_active_deals(conn: &Connection, platform_filter: Option<&str>) -> Result<Vec<DealItem>> {
-        let (sql, params_vec) = if let Some(platform) = platform_filter {
-            (
-                "SELECT id, platform, title, coupon_code, discount_desc, min_spend, deal_url, expire_at, is_active
-                 FROM deals WHERE is_active = 1 AND LOWER(platform) = LOWER(?1) ORDER BY min_spend ASC",
-                vec![platform.to_string()],
+        let mut rows = if let Some(platform) = platform_filter {
+            conn.query(
+                "SELECT id, platform, title, coupon_code, discount_desc, min_spend, deal_url, expire_at, is_active, is_exclusive
+                 FROM deals WHERE is_active = 1 AND LOWER(platform) = LOWER(?1)
+                 ORDER BY is_exclusive DESC, min_spend ASC, id DESC",
+                params![platform.to_string()],
             )
+            .await?
         } else {
-            (
-                "SELECT id, platform, title, coupon_code, discount_desc, min_spend, deal_url, expire_at, is_active
-                 FROM deals WHERE is_active = 1 ORDER BY platform, min_spend ASC",
-                vec![],
+            conn.query(
+                "SELECT id, platform, title, coupon_code, discount_desc, min_spend, deal_url, expire_at, is_active, is_exclusive
+                 FROM deals WHERE is_active = 1
+                 ORDER BY is_exclusive DESC, platform, min_spend ASC, id DESC",
+                (),
             )
-        };
-
-        let mut rows = if params_vec.is_empty() {
-            conn.query(sql, ()).await?
-        } else {
-            conn.query(sql, params![params_vec[0].clone()]).await?
+            .await?
         };
 
         let mut list = Vec::new();
         while let Some(row) = rows.next().await? {
-            list.push(DealItem {
-                id: row.get(0)?,
-                platform: row.get(1)?,
-                title: row.get(2)?,
-                coupon_code: row.get(3)?,
-                discount_desc: row.get(4)?,
-                min_spend: row.get(5)?,
-                deal_url: row.get(6)?,
-                expire_at: row.get(7)?,
-                is_active: row.get::<i64>(8)? == 1,
-            });
+            list.push(row_to_deal_item(&row)?);
         }
         Ok(list)
     }
@@ -567,59 +582,88 @@ impl Repository {
         })
     }
 
-    /// Lấy toàn bộ danh sách deal cho admin (bao gồm cả deal đang tắt)
+    /// Lấy toàn bộ danh sách deal cho admin (bao gồm cả deal đang tắt, ưu tiên mã độc quyền)
     pub async fn get_all_deals_for_admin(conn: &Connection) -> Result<Vec<DealItem>> {
         let mut rows = conn
             .query(
-                "SELECT id, platform, title, coupon_code, discount_desc, min_spend, deal_url, expire_at, is_active
-                 FROM deals ORDER BY id DESC",
+                "SELECT id, platform, title, coupon_code, discount_desc, min_spend, deal_url, expire_at, is_active, is_exclusive
+                 FROM deals ORDER BY is_exclusive DESC, id DESC LIMIT 200",
                 (),
             )
             .await?;
 
         let mut list = Vec::new();
         while let Some(row) = rows.next().await? {
-            list.push(DealItem {
-                id: row.get(0)?,
-                platform: row.get(1)?,
-                title: row.get(2)?,
-                coupon_code: row.get(3)?,
-                discount_desc: row.get(4)?,
-                min_spend: row.get(5)?,
-                deal_url: row.get(6)?,
-                expire_at: row.get(7)?,
-                is_active: row.get::<i64>(8)? == 1,
-            });
+            list.push(row_to_deal_item(&row)?);
         }
         Ok(list)
     }
 
-    /// Thêm mã giảm giá mới từ Web Admin
-    pub async fn add_deal(
-        conn: &Connection,
-        platform: &str,
-        title: &str,
-        coupon_code: Option<&str>,
-        discount_desc: &str,
-        min_spend: f64,
-        deal_url: &str,
-    ) -> Result<()> {
+    /// Thêm hoặc cập nhật mã giảm giá mới từ Web Admin (chống trùng theo platform + coupon_code)
+    pub async fn add_deal(conn: &Connection, input: &NewDealInput) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
+        let exclusive_flag = if input.is_exclusive { 1i64 } else { 0i64 };
+
+        if let Some(ref code) = input.coupon_code {
+            let trimmed_code = code.trim();
+            if !trimmed_code.is_empty() {
+                let mut existing = conn
+                    .query(
+                        "SELECT id FROM deals WHERE LOWER(platform) = LOWER(?1) AND UPPER(coupon_code) = UPPER(?2) LIMIT 1",
+                        params![input.platform.clone(), trimmed_code.to_string()],
+                    )
+                    .await?;
+                if let Some(row) = existing.next().await? {
+                    let deal_id: i64 = row.get(0)?;
+                    conn.execute(
+                        "UPDATE deals SET title = ?1, discount_desc = ?2, min_spend = ?3, deal_url = ?4, expire_at = ?5, is_active = 1, is_exclusive = ?6 WHERE id = ?7",
+                        params![
+                            input.title.clone(),
+                            input.discount_desc.clone(),
+                            input.min_spend,
+                            input.deal_url.clone(),
+                            input.expire_at.clone(),
+                            exclusive_flag,
+                            deal_id
+                        ],
+                    )
+                    .await?;
+                    return Ok(false);
+                }
+            }
+        }
+
         conn.execute(
-            "INSERT INTO deals (platform, title, coupon_code, discount_desc, min_spend, deal_url, is_active, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)",
+            "INSERT INTO deals (platform, title, coupon_code, discount_desc, min_spend, deal_url, expire_at, is_active, is_exclusive, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9)",
             params![
-                platform.to_string(),
-                title.to_string(),
-                coupon_code.map(|s| s.to_string()),
-                discount_desc.to_string(),
-                min_spend,
-                deal_url.to_string(),
+                input.platform.clone(),
+                input.title.clone(),
+                input.coupon_code.clone(),
+                input.discount_desc.clone(),
+                input.min_spend,
+                input.deal_url.clone(),
+                input.expire_at.clone(),
+                exclusive_flag,
                 now
             ],
         )
         .await?;
-        Ok(())
+        Ok(true)
+    }
+
+    /// Nhập hàng loạt nhiều mã độc quyền / hợp tác từ Web Admin, trả về (thêm_mới, cập_nhật)
+    pub async fn add_deals_batch(conn: &Connection, items: &[NewDealInput]) -> Result<(usize, usize)> {
+        let mut inserted = 0usize;
+        let mut updated = 0usize;
+        for item in items {
+            if Self::add_deal(conn, item).await? {
+                inserted += 1;
+            } else {
+                updated += 1;
+            }
+        }
+        Ok((inserted, updated))
     }
 
     /// Bật/Tắt trạng thái hoạt động của Deal
@@ -685,5 +729,75 @@ impl Repository {
         )
         .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::db::AppDb;
+
+    #[tokio::test]
+    async fn test_exclusive_deals_batch_and_priority() {
+        let test_db_path = format!("target/test_repo_{}.db", Uuid::new_v4().simple());
+        let config = Config {
+            telegram_token: "test".to_string(),
+            bot_username: "test_bot".to_string(),
+            database_path: test_db_path.clone(),
+            turso_url: None,
+            turso_auth_token: None,
+            default_cashback_rate: 70.0,
+            default_referral_bonus_rate: 10.0,
+            min_withdrawal_vnd: 50000.0,
+            accesstrade_deeplink_template: String::new(),
+            accesstrade_api_token: None,
+            admin_username: "admin".to_string(),
+            admin_password: "pass".to_string(),
+            port: 10000,
+            public_base_url: None,
+            telegram_webhook_secret: "secret".to_string(),
+        };
+        let db = AppDb::init(&config).await.unwrap();
+        let conn = db.conn().unwrap();
+
+        let items = vec![
+            NewDealInput {
+                platform: "Shopee".to_string(),
+                title: "Deal Thuong".to_string(),
+                coupon_code: Some("NORM10".to_string()),
+                discount_desc: "Giam 10%".to_string(),
+                min_spend: 50000.0,
+                deal_url: "https://shopee.vn".to_string(),
+                expire_at: None,
+                is_exclusive: false,
+            },
+            NewDealInput {
+                platform: "Shopee".to_string(),
+                title: "Deal Doc Quyen".to_string(),
+                coupon_code: Some("VIP35".to_string()),
+                discount_desc: "Giam 35% doc quyen".to_string(),
+                min_spend: 100000.0,
+                deal_url: "https://shopee.vn".to_string(),
+                expire_at: Some("2026-12-31".to_string()),
+                is_exclusive: true,
+            },
+        ];
+
+        let (ins1, upd1) = Repository::add_deals_batch(&conn, &items).await.unwrap();
+        assert_eq!((ins1, upd1), (2, 0));
+
+        // Nhập lại cùng mã -> phải update chứ không nhân đôi
+        let (ins2, upd2) = Repository::add_deals_batch(&conn, &items).await.unwrap();
+        assert_eq!((ins2, upd2), (0, 2));
+
+        let active = Repository::get_active_deals(&conn, None).await.unwrap();
+        assert_eq!(active.len(), 2);
+        assert!(active[0].is_exclusive); // Mã độc quyền phải đứng đầu tiên
+        assert_eq!(active[0].coupon_code.as_deref(), Some("VIP35"));
+
+        drop(conn);
+        drop(db);
+        let _ = std::fs::remove_file(&test_db_path);
     }
 }

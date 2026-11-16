@@ -64,6 +64,7 @@ pub struct DealItem {
     pub deal_url: String,
     pub expire_at: Option<String>,
     pub is_active: bool,
+    pub is_exclusive: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
