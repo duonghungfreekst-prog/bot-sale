@@ -320,6 +320,29 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
         .filter(|s| !s.trim().is_empty())
         .or_else(|| state.config.accesstrade_api_token.clone());
 
+    let has_turso = state.config.turso_url.is_some() && state.config.turso_auth_token.is_some();
+    let has_env_token = state.config.accesstrade_api_token.is_some();
+    let persistence_banner = if !has_env_token || !has_turso {
+        let mut notes = Vec::new();
+        if !has_env_token {
+            notes.push("Chưa đặt <code>ACCESSTRADE_API_TOKEN</code> trong Render Environment — Token nhập trên web sẽ mất khi Render deploy lại.");
+        }
+        if !has_turso {
+            notes.push("Đang dùng SQLite cục bộ (gói Free của Render làm mới ổ đĩa khi build lại). Nên gắn <code>TURSO_DATABASE_URL</code> &amp; <code>TURSO_AUTH_TOKEN</code> để lưu vĩnh viễn.");
+        }
+        format!(
+            r#"<div class="bg-yellow-500/10 border border-yellow-500/40 rounded-2xl p-4 text-xs text-yellow-200 space-y-1">
+                <div class="font-bold text-yellow-400">⚠️ Cảnh Báo Lưu Trữ Tạm Thời Trên Render Free</div>
+                {}
+            </div>"#,
+            notes.into_iter().map(|n| format!("<div>• {}</div>", n)).collect::<Vec<_>>().join("")
+        )
+    } else {
+        r#"<div class="bg-green-500/10 border border-green-500/30 rounded-2xl px-4 py-3 text-xs text-green-300">
+            🟢 <b>Lưu trữ bền vững:</b> Đã cố định <code>ACCESSTRADE_API_TOKEN</code> qua Environment &amp; kết nối Turso Cloud Database.
+        </div>"#.to_string()
+    };
+
     let camp_shopee = Repository::get_setting(&conn, "campaign_shopee").await.ok().flatten().unwrap_or_default();
     let camp_lazada = Repository::get_setting(&conn, "campaign_lazada").await.ok().flatten().unwrap_or_default();
     let camp_tiki = Repository::get_setting(&conn, "campaign_tiki").await.ok().flatten().unwrap_or_default();
@@ -423,6 +446,7 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
     </header>
 
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        {}
         <!-- Thống kê tổng quan -->
         <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             <div class="bg-gray-900 border border-gray-800 p-5 rounded-2xl shadow-lg">
@@ -569,6 +593,7 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
         escape_html(&state.config.admin_username),
         escape_html(&state.config.bot_username),
         escape_html(&state.config.bot_username),
+        persistence_banner,
         stats.total_users,
         stats.total_clicks,
         stats.shopee_clicks,

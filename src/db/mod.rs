@@ -34,7 +34,6 @@ impl AppDb {
         };
 
         app_db.migrate().await?;
-        app_db.seed_deals().await?;
 
         Ok(app_db)
     }
@@ -146,40 +145,6 @@ impl AppDb {
         .context("Tạo bảng settings thất bại")?;
 
         info!("LibSQL schema migration thành công.");
-        Ok(())
-    }
-
-    async fn seed_deals(&self) -> Result<()> {
-        let conn = self.conn()?;
-        let mut rows = conn.query("SELECT COUNT(*) FROM deals", ()).await?;
-        let count: i64 = if let Some(row) = rows.next().await? {
-            row.get(0)?
-        } else {
-            0
-        };
-
-        if count == 0 {
-            info!("Nạp danh sách mã giảm giá và deals ban đầu...");
-            let initial_deals = [
-                ("Shopee", "Mã Giảm 50K Toàn Sàn", Some("SHOPEE50K"), "Giảm 50,000₫ cho đơn từ 250k", 250000.0, "https://shopee.vn/m/ma-giam-gia"),
-                ("Shopee", "Freeship Xtra Giảm 30K", Some("FREESHIP30"), "Miễn phí vận chuyển tới 30,000₫", 99000.0, "https://shopee.vn/m/mien-phi-van-chuyen"),
-                ("Lazada", "Voucher Tích Lũy 100K", Some("LAZADA100"), "Giảm 10k mỗi 150k, tối đa 100k", 150000.0, "https://www.lazada.vn/voucher"),
-                ("Lazada", "Hoàn Tiền Max 12%", None, "Tự động hoàn tối đa 50,000 xu", 0.0, "https://www.lazada.vn/hoan-tien-max"),
-                ("Tiki", "TikiNOW Giảm 20K Giao 2H", Some("TIKINOW20"), "Giảm 20,000₫ phí giao siêu tốc", 100000.0, "https://tiki.vn/khuyen-mai/ma-giam-gia"),
-                ("TikTokShop", "Flash Sale Trợ Giá 30%", Some("TTSALE30"), "Giảm trực tiếp 30k trên live", 120000.0, "https://www.tiktok.com"),
-            ];
-
-            for (platform, title, code, desc, min_spend, url) in initial_deals {
-                conn.execute(
-                    "INSERT INTO deals (platform, title, coupon_code, discount_desc, min_spend, deal_url, is_active)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)",
-                    libsql::params![platform, title, code, desc, min_spend, url],
-                )
-                .await?;
-            }
-            info!("Đã nạp xong 6 deals khuyến mãi mẫu.");
-        }
-
         Ok(())
     }
 }

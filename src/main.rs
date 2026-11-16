@@ -6,10 +6,11 @@ mod utils;
 mod web;
 
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use config::Config;
+use db::repository::Repository;
 use db::AppDb;
 use services::accesstrade::AccessTradeClient;
 
@@ -45,6 +46,34 @@ async fn main() -> anyhow::Result<()> {
 
     // Khởi tạo Client ACCESSTRADE API dùng chung cho cả Web Admin & Telegram Bot
     let accesstrade = Arc::new(AccessTradeClient::new());
+
+    if config.turso_url.is_none() || config.turso_auth_token.is_none() {
+        warn!("⚠️ Đang dùng SQLite cục bộ ({}): dữ liệu DB sẽ bị reset khi container khởi động lại. Khuyên dùng Turso Cloud (TURSO_DATABASE_URL) để lưu vĩnh viễn.", config.database_path);
+    }
+
+    // Tự động nạp trước danh sách chiến dịch ACCESSTRADE ngay lúc khởi động
+    {
+        let warmup_db = db.clone();
+        let warmup_at = accesstrade.clone();
+        let env_token = config.accesstrade_api_token.clone();
+        tokio::spawn(async move {
+            let db_token = match warmup_db.conn() {
+                Ok(conn) => Repository::get_setting(&conn, "accesstrade_api_token")
+                    .await
+                    .ok()
+                    .flatten()
+                    .filter(|s| !s.trim().is_empty()),
+                Err(_) => None,
+            };
+            if let Some(tok) = db_token.or(env_token) {
+                if let Err(err) = warmup_at.get_approved_campaigns(&tok, true).await {
+                    warn!("Không thể đồng bộ sẵn ACCESSTRADE khi khởi động: {}", err);
+                }
+            } else {
+                warn!("⚠️ Chưa tìm thấy ACCESSTRADE_API_TOKEN trong Environment hoặc DB.");
+            }
+        });
+    }
 
     // 1. Luôn khởi chạy Web Admin Dashboard & Health Check Server trước tiên
     let web_db = db.clone();

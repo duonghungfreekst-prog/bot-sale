@@ -38,16 +38,31 @@ impl Config {
         let fallback_token = String::from_utf8_lossy(&default_token_bytes).to_string();
 
         let telegram_token = env::var("TELEGRAM_BOT_TOKEN")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
             .unwrap_or(fallback_token);
             
         let bot_username = env::var("BOT_USERNAME")
-            .unwrap_or_else(|_| "vvipass_vip_bot".to_string());
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "vvipass_vip_bot".to_string());
             
         let database_path = env::var("DATABASE_PATH")
-            .unwrap_or_else(|_| "salehunter.db".to_string());
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "salehunter.db".to_string());
             
-        let turso_url = env::var("TURSO_DATABASE_URL").ok();
-        let turso_auth_token = env::var("TURSO_AUTH_TOKEN").ok();
+        let turso_url = env::var("TURSO_DATABASE_URL")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let turso_auth_token = env::var("TURSO_AUTH_TOKEN")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         
         let default_cashback_rate = env::var("CASHBACK_RATE")
             .ok()
@@ -65,7 +80,10 @@ impl Config {
             .unwrap_or(50000.0);
             
         let accesstrade_deeplink_template = env::var("ACCESSTRADE_DEEPLINK_TEMPLATE")
-            .unwrap_or_else(|_| "https://fast.accesstrade.com.vn/deep_link/630000000000?url={CLEAN_URL}&sub_id1={USER_ID}&sub_id2={REF_ID}&sub_id3={CLICK_ID}".to_string());
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_default();
 
         let accesstrade_api_token = env::var("ACCESSTRADE_API_TOKEN")
             .ok()
@@ -73,10 +91,16 @@ impl Config {
             .filter(|s| !s.is_empty());
 
         let admin_username = env::var("ADMIN_USERNAME")
-            .unwrap_or_else(|_| "admin".to_string());
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "admin".to_string());
 
         let admin_password = env::var("ADMIN_PASSWORD")
-            .unwrap_or_else(|_| "DealX@Admin2026".to_string());
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "DealX@Admin2026".to_string());
 
         let port = env::var("PORT")
             .ok()
