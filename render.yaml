@@ -5,6 +5,7 @@ services:
     dockerfilePath: Dockerfile
     plan: free
     region: singapore
+    healthCheckPath: /health
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false

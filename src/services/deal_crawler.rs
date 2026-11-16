@@ -206,6 +206,8 @@ mod tests {
             admin_username: "admin".to_string(),
             admin_password: "password".to_string(),
             port: 10000,
+            public_base_url: None,
+            telegram_webhook_secret: "test_secret".to_string(),
         };
 
         let db = AppDb::init(&config).await.unwrap();

@@ -109,15 +109,11 @@ ACCESSTRADE_DEEPLINK_TEMPLATE=https://fast.accesstrade.com.vn/deep_link/63000000
 ```
 
 ### Bước 3: Chạy Bot
-- **Cách 1: Nhấp đúp vào file `run_salehunter_bot.bat`** trên Windows.
-- **Cách 2: Sử dụng Cargo trong Terminal:**
-  ```bash
-  cargo run --release
-  ```
-- **Cách 3: Chạy qua Makefile:**
-  ```bash
-  make run
-  ```
+- **Chạy trên Render (24/7 tự động Webhook + Keep-Alive):**
+  - Hệ thống tự động nhận diện `RENDER_EXTERNAL_URL` để bật **Telegram Webhook** tại `/telegram/webhook` (xác thực header `X-Telegram-Bot-Api-Secret-Token`) kết hợp vòng lặp self-ping `/health` mỗi 9 phút và workflow GitHub Actions tại `.github/workflows/keep-alive.yml` để giữ container hoạt động liên tục 24/7.
+- **Chạy trên máy cá nhân (Long Polling):**
+  - **Cách 1:** Nhấp đúp vào file `run_salehunter_bot.bat` trên Windows.
+  - **Cách 2:** Chạy lệnh `cargo run --release` hoặc `make run`.
 
 ---
 
@@ -133,7 +129,7 @@ ACCESSTRADE_DEEPLINK_TEMPLATE=https://fast.accesstrade.com.vn/deep_link/63000000
 | `/history` | Xem 5 đơn hoàn tiền gần nhất và 5 lượt tạo link |
 | `/withdraw <tiền> <ngân_hàng> <stk> <tên>` | Tạo yêu cầu rút tiền về tài khoản ngân hàng |
 
-*(Ngoài ra người dùng chỉ cần **dán trực tiếp link sản phẩm Shopee/Lazada/Tiki** vào khung chat, Bot sẽ tự động phân tích và tạo nút mua hoàn tiền).*
+*(Ngoài ra người dùng chỉ cần **dán trực tiếp link sản phẩm Shopee/Lazada/Tiki/TikTok Shop** vào khung chat, Bot sẽ tự động phân tích và tạo nút mua hoàn tiền).*
 
 ---
 
@@ -143,7 +139,7 @@ Chạy bộ kiểm thử tự động của Rust:
 ```bash
 cargo test
 ```
-Tất cả 7 test case (kiểm tra phân tích URL, bóc tách link sàn, làm sạch tracking, tính toán tỉ lệ chia sẻ hoa hồng, định dạng tiền tệ VND, sinh mã giới thiệu) đều đạt 100%.
+Kiểm tra toàn bộ luồng nghiệp vụ: phân tích URL, bóc tách link sàn, làm sạch tracking, tính toán hoa hồng, cấu hình fallback, xác thực Telegram Webhook và xây dựng Web Admin Router.
 
 ---
 

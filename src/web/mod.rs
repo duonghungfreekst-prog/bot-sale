@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 use axum::{
@@ -10,8 +11,9 @@ use axum::{
     Router,
 };
 use subtle::ConstantTimeEq;
-use tokio::sync::RwLock;
-use tracing::{error, info};
+use teloxide::types::{Update, UpdateKind};
+use tokio::sync::{mpsc, oneshot, RwLock};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -20,32 +22,41 @@ use crate::db::AppDb;
 use crate::services::accesstrade::{mask_token, AccessTradeClient};
 use crate::utils::escape_html;
 
+pub type WebhookUpdateSender = mpsc::UnboundedSender<Result<Update, Infallible>>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: AppDb,
     pub config: Config,
     pub accesstrade: Arc<AccessTradeClient>,
     pub sessions: Arc<RwLock<HashSet<String>>>,
+    pub webhook_tx: Option<WebhookUpdateSender>,
 }
 
-/// Khởi chạy Web Admin Dashboard Server
+/// Khởi chạy Web Admin Dashboard Server & Telegram Webhook Endpoint
 pub async fn start_web_server(
     port: u16,
     db: AppDb,
     config: Config,
     accesstrade: Arc<AccessTradeClient>,
+    webhook_tx: Option<WebhookUpdateSender>,
+    ready_tx: Option<oneshot::Sender<()>>,
 ) -> anyhow::Result<()> {
     let state = AppState {
         db,
         config,
         accesstrade,
         sessions: Arc::new(RwLock::new(HashSet::new())),
+        webhook_tx,
     };
 
     let app = build_router(state);
 
     let addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    if let Some(tx) = ready_tx {
+        let _ = tx.send(());
+    }
     info!("🚀 Web Admin Dashboard DealX đang chạy tại: http://{}", addr);
 
     axum::serve(listener, app).await?;
@@ -57,6 +68,7 @@ fn build_router(state: AppState) -> Router {
         // Các route công khai
         .route("/", get(handle_root))
         .route("/health", get(handle_health))
+        .route("/telegram/webhook", post(handle_telegram_webhook))
         .route("/admin/login", get(handle_login_page).post(handle_login_submit))
         .route("/admin/logout", get(handle_logout))
         // Các route quản trị (chỉ 1 tài khoản Admin duy nhất)
@@ -66,6 +78,49 @@ fn build_router(state: AppState) -> Router {
         .route("/admin/settings/affiliate", post(handle_update_affiliate_settings))
         .layer(middleware::from_fn(security_headers_middleware))
         .with_state(state)
+}
+
+/// Xác thực chữ ký header Telegram Webhook theo thời gian hằng số và đẩy Update vào Dispatcher
+async fn handle_telegram_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: String,
+) -> StatusCode {
+    let Some(tx) = state.webhook_tx.as_ref() else {
+        return StatusCode::NOT_FOUND;
+    };
+
+    let provided_secret = headers
+        .get("x-telegram-bot-api-secret-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let expected_secret = state.config.telegram_webhook_secret.as_str();
+
+    let is_valid: bool = provided_secret
+        .as_bytes()
+        .ct_eq(expected_secret.as_bytes())
+        .into();
+    if !is_valid {
+        warn!("[WEB] Từ chối yêu cầu Telegram Webhook do sai secret token.");
+        return StatusCode::UNAUTHORIZED;
+    }
+
+    match serde_json::from_str::<Update>(&body) {
+        Ok(mut update) => {
+            if let UpdateKind::Error(value) = &mut update.kind {
+                *value = serde_json::from_str(&body).unwrap_or_default();
+            }
+            if let Err(err) = tx.send(Ok(update)) {
+                error!("[WEB] Không thể gửi Update từ Webhook vào hàng đợi bot: {}", err);
+                return StatusCode::SERVICE_UNAVAILABLE;
+            }
+        }
+        Err(err) => {
+            warn!("[WEB] Không thể giải mã JSON Telegram Webhook: {}", err);
+        }
+    }
+
+    StatusCode::OK
 }
 
 /// Bổ sung các HTTP Security Headers bắt buộc cho mọi phản hồi Web Admin
@@ -405,6 +460,12 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
         clicks_rows = r#"<tr><td colspan="5" class="py-8 text-center text-gray-500">Chưa có lượt dán link nào từ khách hàng.</td></tr>"#.to_string();
     }
 
+    let bot_mode_badge = if state.webhook_tx.is_some() {
+        r#"<span class="text-green-400 font-semibold">🟢 Webhook 24/7</span>"#
+    } else {
+        r#"<span class="text-blue-400 font-semibold">🔵 Polling</span>"#
+    };
+
     let dashboard_html = format!(
         r#"<!DOCTYPE html>
 <html lang="vi">
@@ -437,6 +498,8 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
                     <span>Admin: <strong class="text-white">{}</strong></span>
                     <span class="text-gray-600">|</span>
                     <span>Bot: <a href="https://t.me/{}" target="_blank" rel="noopener noreferrer" class="text-yellow-400 hover:underline">@{}</a></span>
+                    <span class="text-gray-600">|</span>
+                    {}
                 </div>
                 <a href="/admin/logout" class="px-3.5 py-1.5 bg-red-600/80 hover:bg-red-600 text-white rounded-xl text-xs font-semibold transition">
                     Đăng Xuất
@@ -593,6 +656,7 @@ async fn handle_dashboard(headers: HeaderMap, State(state): State<AppState>) -> 
         escape_html(&state.config.admin_username),
         escape_html(&state.config.bot_username),
         escape_html(&state.config.bot_username),
+        bot_mode_badge,
         persistence_banner,
         stats.total_users,
         stats.total_clicks,
@@ -732,16 +796,82 @@ mod tests {
             admin_username: "admin".to_string(),
             admin_password: "password".to_string(),
             port: 10000,
+            public_base_url: Some("https://bot-sale.onrender.com".to_string()),
+            telegram_webhook_secret: "secret_token_test_123".to_string(),
         };
         let db = AppDb::init(&config).await.unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
         let state = AppState {
             db,
             config,
             accesstrade: Arc::new(AccessTradeClient::new()),
             sessions: Arc::new(RwLock::new(HashSet::new())),
+            webhook_tx: Some(tx),
         };
 
         let _app: Router = build_router(state);
+        let _ = std::fs::remove_file(&test_db_path);
+    }
+
+    #[tokio::test]
+    async fn test_webhook_secret_verification_and_dispatch() {
+        let test_db_path = format!("target/test_wh_{}.db", uuid::Uuid::new_v4().simple());
+        let config = Config {
+            telegram_token: "test".to_string(),
+            bot_username: "test_bot".to_string(),
+            database_path: test_db_path.clone(),
+            turso_url: None,
+            turso_auth_token: None,
+            default_cashback_rate: 70.0,
+            default_referral_bonus_rate: 10.0,
+            min_withdrawal_vnd: 50000.0,
+            accesstrade_deeplink_template: "template".to_string(),
+            accesstrade_api_token: None,
+            admin_username: "admin".to_string(),
+            admin_password: "password".to_string(),
+            port: 10000,
+            public_base_url: Some("https://bot-sale.onrender.com".to_string()),
+            telegram_webhook_secret: "valid_secret_xyz".to_string(),
+        };
+        let db = AppDb::init(&config).await.unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let state = AppState {
+            db,
+            config,
+            accesstrade: Arc::new(AccessTradeClient::new()),
+            sessions: Arc::new(RwLock::new(HashSet::new())),
+            webhook_tx: Some(tx),
+        };
+
+        // 1. Sai secret header phải bị từ chối 401
+        let mut bad_headers = HeaderMap::new();
+        bad_headers.insert("x-telegram-bot-api-secret-token", "wrong".parse().unwrap());
+        let status_bad = handle_telegram_webhook(
+            State(state.clone()),
+            bad_headers,
+            "{}".to_string(),
+        )
+        .await;
+        assert_eq!(status_bad, StatusCode::UNAUTHORIZED);
+        assert!(rx.try_recv().is_err());
+
+        // 2. Đúng secret header + Update JSON hợp lệ phải nhận 200 và đẩy vào channel
+        let mut good_headers = HeaderMap::new();
+        good_headers.insert(
+            "x-telegram-bot-api-secret-token",
+            "valid_secret_xyz".parse().unwrap(),
+        );
+        let sample_update = r#"{"update_id":123456,"message":{"message_id":1,"date":1700000000,"chat":{"id":1001,"type":"private","first_name":"Test"},"text":"/start"}}"#;
+        let status_ok = handle_telegram_webhook(
+            State(state),
+            good_headers,
+            sample_update.to_string(),
+        )
+        .await;
+        assert_eq!(status_ok, StatusCode::OK);
+        let received = rx.try_recv().expect("Must receive dispatched update");
+        assert_eq!(received.unwrap().id.0, 123456);
+
         let _ = std::fs::remove_file(&test_db_path);
     }
 }

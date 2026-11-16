@@ -76,17 +76,39 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 1. Luôn khởi chạy Web Admin Dashboard & Health Check Server trước tiên
+    let (webhook_tx, webhook_rx) = if config.public_base_url.is_some() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+
     let web_db = db.clone();
     let web_config = config.clone();
     let web_at = accesstrade.clone();
     let web_port = web_config.port;
     let web_handle = tokio::spawn(async move {
-        if let Err(err) = web::start_web_server(web_config.port, web_db, web_config, web_at).await {
+        if let Err(err) = web::start_web_server(
+            web_config.port,
+            web_db,
+            web_config,
+            web_at,
+            webhook_tx,
+            Some(ready_tx),
+        )
+        .await
+        {
             error!("Lỗi khi khởi chạy Web Admin Server: {}", err);
         }
     });
 
     info!("🌐 Web Admin Dashboard & Health Check đang lắng nghe tại cổng {}", web_port);
+
+    // 1.5 Nếu chạy trên Render/Cloud có public_base_url: bật self-ping giữ ấm mỗi 9 phút
+    if let Some(base_url) = config.public_base_url.clone() {
+        spawn_keepalive_task(base_url);
+    }
 
     // 2. Kiểm tra xem token Telegram đã được cấu hình chưa
     if config.telegram_token.contains("DEMO_TOKEN") || config.telegram_token.trim().is_empty() {
@@ -108,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
         _ = web_handle => {
             error!("Web Server đã dừng.");
         }
-        res = bot::run_bot(config, db, accesstrade) => {
+        res = bot::run_bot(config, db, accesstrade, webhook_rx, Some(ready_rx)) => {
             if let Err(err) = res {
                 error!("Lỗi khi chạy Telegram bot: {}", err);
             }
@@ -116,6 +138,32 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Gửi HTTP GET định kỳ tới /health mỗi 9 phút để giữ container Cloud luôn sẵn sàng
+fn spawn_keepalive_task(base_url: String) {
+    let health_url = format!("{}/health", base_url);
+    tokio::spawn(async move {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .user_agent("DealX-KeepAlive/1.0")
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
+        tokio::time::sleep(std::time::Duration::from_secs(45)).await;
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(540));
+        loop {
+            ticker.tick().await;
+            match client.get(&health_url).send().await {
+                Ok(resp) => {
+                    info!("[KEEPALIVE] Ping {} -> HTTP {}", health_url, resp.status());
+                }
+                Err(err) => {
+                    warn!("[KEEPALIVE] Không thể ping {}: {}", health_url, err);
+                }
+            }
+        }
+    });
 }
 
 /// Chạy tự kiểm tra toàn bộ luồng nghiệp vụ khi chưa cắm token Telegram

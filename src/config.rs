@@ -23,6 +23,10 @@ pub struct Config {
     pub admin_username: String,
     pub admin_password: String,
     pub port: u16,
+
+    // Cấu hình Webhook & Keep-Alive khi chạy trên Cloud (tự động nhận diện RENDER_EXTERNAL_URL)
+    pub public_base_url: Option<String>,
+    pub telegram_webhook_secret: String,
 }
 
 impl Config {
@@ -115,6 +119,9 @@ impl Config {
             .and_then(|p| p.parse::<u16>().ok())
             .unwrap_or(10000);
 
+        let public_base_url = resolve_public_base_url();
+        let telegram_webhook_secret = resolve_webhook_secret(&telegram_token, &admin_password);
+
         Ok(Self {
             telegram_token,
             bot_username,
@@ -129,8 +136,66 @@ impl Config {
             admin_username,
             admin_password,
             port,
+            public_base_url,
+            telegram_webhook_secret,
         })
     }
+}
+
+/// Đọc biến môi trường và loại bỏ khoảng trắng / chuỗi rỗng.
+fn read_env_non_empty(key: &str) -> Option<String> {
+    env::var(key)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Xác định URL công khai HTTPS của dịch vụ (ưu tiên WEBHOOK_BASE_URL, sau đó RENDER_EXTERNAL_URL).
+fn resolve_public_base_url() -> Option<String> {
+    let raw = read_env_non_empty("WEBHOOK_BASE_URL")
+        .or_else(|| read_env_non_empty("RENDER_EXTERNAL_URL"))?;
+    let normalized = raw.trim_end_matches('/').to_string();
+    if normalized.starts_with("https://") {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+/// Kiểm tra chuỗi secret token hợp lệ theo chuẩn Telegram Bot API (1-256 ký tự [A-Za-z0-9_-]).
+fn is_valid_telegram_secret(secret: &str) -> bool {
+    !secret.is_empty()
+        && secret.len() <= 256
+        && secret
+            .bytes()
+            .all(|b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-'))
+}
+
+/// Tạo khóa bí mật ổn định giữa các lần restart để xác thực Webhook từ Telegram.
+fn resolve_webhook_secret(telegram_token: &str, admin_password: &str) -> String {
+    if let Some(env_secret) = read_env_non_empty("TELEGRAM_WEBHOOK_SECRET") {
+        if is_valid_telegram_secret(&env_secret) {
+            return env_secret;
+        }
+    }
+    derive_deterministic_secret(telegram_token, admin_password)
+}
+
+/// Dẫn xuất chuỗi hex 32 ký tự cố định từ thông số hệ thống mà không làm lộ dữ liệu gốc.
+fn derive_deterministic_secret(part_a: &str, part_b: &str) -> String {
+    let mut h1: u64 = 0xcbf29ce484222325;
+    let mut h2: u64 = 0x84222325cbf29ce4;
+    for &b in part_a
+        .as_bytes()
+        .iter()
+        .chain(b":dealx_wh_v1:".iter())
+        .chain(part_b.as_bytes().iter())
+    {
+        h1 ^= b as u64;
+        h1 = h1.wrapping_mul(0x100000001b3);
+        h2 = h2.wrapping_mul(0x100000001b3) ^ ((b as u64).rotate_left(13));
+    }
+    format!("{:016x}{:016x}", h1, h2)
 }
 
 #[cfg(test)]
@@ -144,5 +209,16 @@ mod tests {
         let token = config.accesstrade_api_token.unwrap();
         assert!(token.starts_with("XcsOD"));
         assert!(token.ends_with("9N_6"));
+    }
+
+    #[test]
+    fn test_webhook_secret_deterministic_and_valid() {
+        let s1 = derive_deterministic_secret("token-a", "pass-b");
+        let s2 = derive_deterministic_secret("token-a", "pass-b");
+        let s3 = derive_deterministic_secret("token-x", "pass-b");
+        assert_eq!(s1, s2);
+        assert_ne!(s1, s3);
+        assert_eq!(s1.len(), 32);
+        assert!(is_valid_telegram_secret(&s1));
     }
 }

@@ -1,0 +1,17 @@
+name: DealX Render Keep-Alive
+
+on:
+  schedule:
+    # Ping mỗi 8 phút vào các phút lẻ để tránh nghẽn hàng đợi giờ tròn của GitHub Actions
+    - cron: '2,10,18,26,34,42,50,58 * * * *'
+  workflow_dispatch:
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping Render Health Check
+        run: |
+          curl -fsS --retry 2 --retry-delay 5 --max-time 60 "https://bot-sale.onrender.com/health"
+          echo ""
