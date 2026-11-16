@@ -134,11 +134,11 @@ impl DealParser {
         let lower = url_str.to_lowercase();
         if lower.contains("shopee.vn") || lower.contains("shope.ee") || lower.contains("shp.ee") {
             Platform::Shopee
-        } else if lower.contains("lazada.vn") || lower.contains("s.lazada.vn") {
+        } else if lower.contains("lazada.vn") || lower.contains("s.lazada.vn") || lower.contains("lzd.co") {
             Platform::Lazada
         } else if lower.contains("tiki.vn") || lower.contains("ti.ki") {
             Platform::Tiki
-        } else if lower.contains("tiktok.com") || lower.contains("vt.tiktok.com") {
+        } else if lower.contains("tiktok.com") {
             Platform::TikTokShop
         } else {
             Platform::Unknown
@@ -150,9 +150,13 @@ impl DealParser {
         let lower = url_str.to_lowercase();
         lower.contains("shope.ee")
             || lower.contains("shp.ee")
+            || lower.contains("s.shopee.vn")
             || lower.contains("s.lazada.vn")
+            || lower.contains("c.lazada.vn")
+            || lower.contains("lzd.co")
             || lower.contains("ti.ki")
             || lower.contains("vt.tiktok.com")
+            || lower.contains("vm.tiktok.com")
     }
 
     /// Resolve link rút gọn đến link đích thực tế

@@ -191,10 +191,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_realtime_deals() {
+        let test_db_path = format!("target/test_crawler_{}.db", uuid::Uuid::new_v4().simple());
         let config = Config {
             telegram_token: "test".to_string(),
             bot_username: "test_bot".to_string(),
-            database_path: "salehunter.db".to_string(),
+            database_path: test_db_path.clone(),
             turso_url: None,
             turso_auth_token: None,
             default_cashback_rate: 70.0,
@@ -209,6 +210,8 @@ mod tests {
 
         let db = AppDb::init(&config).await.unwrap();
         let res = update_realtime_deals(&db).await;
+        drop(db);
+        let _ = std::fs::remove_file(&test_db_path);
         assert!(res.is_ok());
     }
 }

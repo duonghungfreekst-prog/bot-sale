@@ -142,26 +142,44 @@ impl AccessTradeClient {
             }
         }
 
-        let url = "https://api.accesstrade.vn/v1/campaigns?approval=successful&limit=100";
-        let resp = self
-            .http
-            .get(url)
-            .header("Authorization", format!("Token {}", token))
-            .header("Content-Type", "application/json")
-            .send()
-            .await
-            .map_err(|e| format!("Lỗi kết nối ACCESSTRADE API: {}", e))?;
+        let mut combined = ApprovedCampaigns {
+            fetched_at_epoch: now,
+            ..Default::default()
+        };
 
-        if !resp.status().is_success() {
-            return Err(format!("ACCESSTRADE trả về mã lỗi HTTP {}", resp.status()));
+        // ACCESSTRADE API giới hạn tối đa 50 bản ghi mỗi trang (limit <= 50)
+        for page in 1..=10 {
+            let url = format!(
+                "https://api.accesstrade.vn/v1/campaigns?approval=successful&limit=50&page={}",
+                page
+            );
+            let resp = self
+                .http
+                .get(&url)
+                .header("Authorization", format!("Token {}", token))
+                .header("Content-Type", "application/json")
+                .send()
+                .await
+                .map_err(|e| format!("Lỗi kết nối ACCESSTRADE API: {}", e))?;
+
+            if !resp.status().is_success() {
+                return Err(format!("ACCESSTRADE trả về mã lỗi HTTP {}", resp.status()));
+            }
+
+            let body_text = resp
+                .text()
+                .await
+                .map_err(|e| format!("Không thể đọc phản hồi từ ACCESSTRADE: {}", e))?;
+
+            let (page_res, raw_count) = parse_approved_campaigns_page(&body_text, now)?;
+            merge_approved_campaigns(&mut combined, page_res);
+
+            if raw_count < 50 {
+                break;
+            }
         }
 
-        let body_text = resp
-            .text()
-            .await
-            .map_err(|e| format!("Không thể đọc phản hồi từ ACCESSTRADE: {}", e))?;
-
-        let parsed = parse_approved_campaigns_json(&body_text, now)?;
+        let parsed = combined;
         {
             let mut guard = self.cache.write().await;
             *guard = Some((token.to_string(), parsed.clone()));
@@ -344,8 +362,8 @@ impl AccessTradeClient {
     }
 }
 
-/// Phân tích JSON danh sách chiến dịch đã duyệt và chọn chiến dịch ưu tiên cho từng sàn
-pub fn parse_approved_campaigns_json(json_str: &str, now_epoch: i64) -> Result<ApprovedCampaigns, String> {
+/// Phân tích 1 trang JSON danh sách chiến dịch đã duyệt và trả về (Kết quả, tổng số item thô trong trang)
+pub fn parse_approved_campaigns_page(json_str: &str, now_epoch: i64) -> Result<(ApprovedCampaigns, usize), String> {
     let resp: CampaignsApiResponse =
         serde_json::from_str(json_str).map_err(|e| format!("Lỗi phân tích JSON chiến dịch: {}", e))?;
 
@@ -355,6 +373,8 @@ pub fn parse_approved_campaigns_json(json_str: &str, now_epoch: i64) -> Result<A
     };
 
     let items = resp.data.unwrap_or_default();
+    let raw_count = items.len();
+
     for item in items {
         let approval = item.approval.as_deref().unwrap_or("");
         let status = item.status.unwrap_or(0);
@@ -404,34 +424,46 @@ pub fn parse_approved_campaigns_json(json_str: &str, now_epoch: i64) -> Result<A
         });
     }
 
-    Ok(result)
+    Ok((result, raw_count))
 }
 
-fn is_shopee_campaign(merchant: &str, name: &str) -> bool {
-    (merchant == "shopee"
-        || merchant == "shopee_kolnew"
-        || merchant == "shopee_mcn"
-        || merchant == "shopee_addlostvn08"
-        || (merchant.contains("shopee") && !merchant.contains("food") && !merchant.contains("pay")))
-        && !name.contains("shopeepay")
-        && !name.contains("shopeefood")
+fn merge_approved_campaigns(target: &mut ApprovedCampaigns, mut page: ApprovedCampaigns) {
+    if target.shopee.is_none() {
+        target.shopee = page.shopee.take();
+    }
+    if target.lazada.is_none() {
+        target.lazada = page.lazada.take();
+    }
+    if target.tiki.is_none() {
+        target.tiki = page.tiki.take();
+    }
+    if target.tiktok.is_none() {
+        target.tiktok = page.tiktok.take();
+    }
+    target.all_approved.append(&mut page.all_approved);
 }
 
-fn is_lazada_campaign(merchant: &str, name: &str) -> bool {
-    (merchant == "lazada_kol" || merchant == "lazada_cashback" || merchant == "lazada")
-        || ((merchant.contains("lazada") || name.contains("lazada việt nam"))
-            && !merchant.ends_with("_ph")
-            && !merchant.ends_with("_malay")
-            && !merchant.ends_with("_sing")
-            && !merchant.contains("mgm"))
+fn is_shopee_campaign(merchant: &str, _name: &str) -> bool {
+    matches!(
+        merchant,
+        "shopee" | "shopee_kolnew" | "shopee_mcn" | "shopee_addlostvn08" | "shopee_kol" | "shopee_cps" | "shopee_smartlink"
+    )
+}
+
+fn is_lazada_campaign(merchant: &str, _name: &str) -> bool {
+    matches!(
+        merchant,
+        "lazada_kol" | "lazada_cashback" | "lazada" | "lazada_cps" | "lazada_vn"
+    )
 }
 
 fn is_tiki_campaign(merchant: &str, _name: &str) -> bool {
-    merchant == "tikivn" || merchant == "tiki_creator" || merchant == "tiki_cashback"
+    matches!(merchant, "tikivn" | "tiki_creator" | "tiki_cashback" | "tiki")
 }
 
 fn is_tiktok_campaign(merchant: &str, name: &str) -> bool {
-    merchant == "tiktok_cps" || (merchant.contains("tiktok") && !merchant.contains("business") && name.contains("shop"))
+    matches!(merchant, "tiktok_cps" | "tiktokshop_cps" | "tiktok_shop")
+        || (merchant.contains("tiktok") && !merchant.contains("business") && name.contains("shop"))
 }
 
 /// Che giấu API Token khi hiển thị trên giao diện Web Admin (chỉ hiện 4 ký tự đầu + cuối)
@@ -455,15 +487,17 @@ mod tests {
             "data": [
                 {"id": 6648523843406889655, "merchant": "tiktok_cps", "name": "TIKTOK SHOP CPS", "approval": "successful", "status": 1},
                 {"id": "4751584435713464237", "merchant": "shopee", "name": "Shopee Việt Nam", "approval": "unregistered", "status": 1},
+                {"id": "7105125015509882615", "merchant": "romand_shopee", "name": "Romand Shopee PUB", "approval": "successful", "status": 1},
                 {"id": "5087153089503673507", "merchant": "lazada_kol", "name": "Lazada Việt Nam", "approval": "successful", "status": 1}
             ]
         }"#;
 
-        let parsed = parse_approved_campaigns_json(sample, 1000).unwrap();
+        let (parsed, count) = parse_approved_campaigns_page(sample, 1000).unwrap();
+        assert_eq!(count, 4);
         assert_eq!(parsed.tiktok.as_ref().unwrap().0, "6648523843406889655");
-        assert!(parsed.shopee.is_none()); // unregistered should not be selected
+        assert!(parsed.shopee.is_none()); // unregistered & brand-only shopee must NOT match
         assert_eq!(parsed.lazada.as_ref().unwrap().0, "5087153089503673507");
-        assert_eq!(parsed.all_approved.len(), 2);
+        assert_eq!(parsed.all_approved.len(), 3);
     }
 
     #[test]
