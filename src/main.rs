@@ -53,7 +53,13 @@ async fn main() -> anyhow::Result<()> {
 
     info!("🌐 Web Admin Dashboard & Health Check đang lắng nghe tại cổng {}", web_port);
 
-    // 2. Kiểm tra xem token Telegram đã được cấu hình chưa
+    // 2. Khởi chạy Bộ quét & cập nhật mã giảm giá tự động đa sàn thời gian thực (Mỗi 60 giây đồng bộ 1 lần)
+    let crawler_db = db.clone();
+    tokio::spawn(async move {
+        services::deal_crawler::run_deal_crawler(crawler_db, 60).await;
+    });
+
+    // 3. Kiểm tra xem token Telegram đã được cấu hình chưa
     if config.telegram_token.contains("DEMO_TOKEN") || config.telegram_token.trim().is_empty() {
         info!("-------------------------------------------------------");
         info!("⚠️ CHÚ Ý: Chưa tìm thấy TELEGRAM_BOT_TOKEN trong biến môi trường!");
