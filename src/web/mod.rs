@@ -468,18 +468,18 @@ async fn handle_dashboard(
     // Kho mã giảm 20% - 35%+ đang cache từ ACCESSTRADE API
     let cached_vouchers = state.accesstrade.peek_cached_high_discount_vouchers().await;
     let mut voucher_rows = String::new();
-    for v in cached_vouchers.iter().take(10) {
+    for v in cached_vouchers.iter().take(20) {
         let target_url = v.best_target_url(approved_opt.as_ref());
         voucher_rows.push_str(&format!(
             r#"<tr class="border-b border-gray-800/80 hover:bg-gray-800/40">
-                <td class="py-2.5 px-3 text-xs font-bold text-orange-400">-{}%</td>
+                <td class="py-2.5 px-3 text-xs font-bold text-orange-400">{}</td>
                 <td class="py-2.5 px-3 text-xs text-white font-semibold">{}</td>
                 <td class="py-2.5 px-3 text-xs font-mono text-yellow-300">{}</td>
                 <td class="py-2.5 px-3 text-xs text-gray-300">{}</td>
                 <td class="py-2.5 px-3 text-xs text-gray-400">{}</td>
                 <td class="py-2.5 px-3 text-xs"><a href="{}" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">Mở ↗</a></td>
             </tr>"#,
-            v.discount_percent,
+            escape_html(&v.discount_badge()),
             escape_html(&v.platform),
             escape_html(&v.coupon_code),
             escape_html(&v.shop_name),
@@ -488,7 +488,7 @@ async fn handle_dashboard(
         ));
     }
     if voucher_rows.is_empty() {
-        voucher_rows = r#"<tr><td colspan="6" class="py-6 text-center text-xs text-gray-500">Chưa nạp cache kho mã 20%-35%+. Bấm nút <b>Quét Ngay Kho Mã 20%-35%+</b> để đồng bộ từ ACCESSTRADE API.</td></tr>"#.to_string();
+        voucher_rows = r#"<tr><td colspan="6" class="py-6 text-center text-xs text-gray-500">Chưa nạp cache kho mã thị trường. Bấm nút <b>Quét Ngay Toàn Bộ Kho Mã</b> để đồng bộ 100% mã từ ACCESSTRADE API.</td></tr>"#.to_string();
     }
 
     // Bảng danh sách Mã Độc Quyền Hợp Tác & Deals trong DB
@@ -972,9 +972,9 @@ async fn handle_sync_vouchers(headers: HeaderMap, State(state): State<AppState>)
         return redirect_with_notice("Chưa cấu hình ACCESSTRADE API Token.");
     };
 
-    match state.accesstrade.fetch_high_discount_vouchers(&token, 20, true).await {
+    match state.accesstrade.fetch_high_discount_vouchers(&token, 0, true).await {
         Ok(list) => redirect_with_notice(&format!(
-            "Đã đồng bộ thành công {} mã giảm giá 20% - 35%+ thật từ ACCESSTRADE!",
+            "Đã đồng bộ thành công tổng cộng {} mã giảm giá toàn thị trường từ ACCESSTRADE (không bỏ sót mã nào)!",
             list.len()
         )),
         Err(err) => redirect_with_notice(&format!("Lỗi đồng bộ kho mã: {}", err)),

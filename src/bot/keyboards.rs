@@ -43,24 +43,39 @@ pub fn main_menu_keyboard(bot_username: &str) -> InlineKeyboardMarkup {
     ])
 }
 
-/// Bàn phím lọc & phân trang cho Kho Mã Giảm Giá (/deals)
+/// Bàn phím lọc & phân trang cho Kho Mã Giảm Giá (/deals) — hiển thị toàn bộ mã trên thị trường
 pub fn deals_pagination_keyboard(filter: &str, page: usize, total_pages: usize) -> InlineKeyboardMarkup {
-    let filter_row = vec![
+    let filter_row_1 = vec![
         InlineKeyboardButton::callback(
             if filter == "all" { "• 🌟 Tất Cả •" } else { "🌟 Tất Cả" },
             "deals_page:all:0",
         ),
         InlineKeyboardButton::callback(
+            if filter == "pct20" { "• 🔥 20%-35%+ •" } else { "🔥 20%-35%+" },
+            "deals_page:pct20:0",
+        ),
+        InlineKeyboardButton::callback(
+            if filter == "other" { "• 💸 Giảm Tiền/Khác •" } else { "💸 Giảm Tiền/Khác" },
+            "deals_page:other:0",
+        ),
+    ];
+
+    let filter_row_2 = vec![
+        InlineKeyboardButton::callback(
             if filter == "exclusive" { "• 👑 Độc Quyền •" } else { "👑 Độc Quyền" },
             "deals_page:exclusive:0",
         ),
         InlineKeyboardButton::callback(
-            if filter == "pct20" { "• 🔥 20%-35%+ •" } else { "🔥 20%-35%+" },
-            "deals_page:pct20:0",
+            if filter == "shopee" { "• 🟠 Shopee •" } else { "🟠 Shopee" },
+            "deals_page:shopee:0",
+        ),
+        InlineKeyboardButton::callback(
+            if filter == "tiki" { "• 🔹 Tiki •" } else { "🔹 Tiki" },
+            "deals_page:tiki:0",
         ),
     ];
 
-    let mut rows = vec![filter_row];
+    let mut rows = vec![filter_row_1, filter_row_2];
 
     if total_pages > 1 {
         let mut nav_row = Vec::new();

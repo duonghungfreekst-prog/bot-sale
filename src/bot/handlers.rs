@@ -77,6 +77,26 @@ pub async fn handle_message(
         return handle_command(bot, msg, cmd, db, config, parser).await;
     }
 
+    // Hỗ trợ gõ '/deals <từ khóa>' hoặc '/ma <từ khóa>' để lọc/tìm kiếm trong toàn bộ kho mã
+    let lower_text = text.to_lowercase();
+    if let Some(kw) = lower_text
+        .strip_prefix("/deals ")
+        .or_else(|| lower_text.strip_prefix("/ma "))
+    {
+        let kw = kw.trim();
+        if !kw.is_empty() {
+            if let Ok(conn) = db.conn() {
+                let (html, keyboard) = build_deals_page(&conn, &config, &parser, kw, 0, false).await;
+                bot.send_message(msg.chat.id, html)
+                    .parse_mode(ParseMode::Html)
+                    .link_preview_options(no_link_preview())
+                    .reply_markup(keyboard)
+                    .await?;
+                return Ok(());
+            }
+        }
+    }
+
     // Nếu tin nhắn bắt đầu bằng lệnh '/'
     if text.starts_with('/') {
         if let Ok(cmd) = Command::parse(text, &config.bot_username) {
@@ -205,10 +225,10 @@ pub async fn handle_message(
                     _ => String::new(),
                 };
 
-                // Kiểm tra xem sàn này có mã độc quyền hợp tác đang bật trong DB không
-                let exclusive_block = match Repository::get_active_deals(&conn, Some(parsed.platform.as_str())).await {
+                // Kiểm tra xem sàn này có mã độc quyền hợp tác hoặc mã thị trường khớp sản phẩm/sàn không
+                let mut extra_vouchers_block = match Repository::get_active_deals(&conn, Some(parsed.platform.as_str())).await {
                     Ok(deals) => {
-                        let ex_list: Vec<_> = deals.into_iter().filter(|d| d.is_exclusive).take(2).collect();
+                        let ex_list: Vec<_> = deals.into_iter().take(2).collect();
                         if ex_list.is_empty() {
                             String::new()
                         } else {
@@ -233,6 +253,28 @@ pub async fn handle_message(
                     Err(_) => String::new(),
                 };
 
+                let matched_market = parser
+                    .accesstrade()
+                    .search_matching_vouchers_for_deal(
+                        parsed.platform.as_str(),
+                        &parsed.product_title,
+                        &parsed.clean_url,
+                        3,
+                    )
+                    .await;
+                if !matched_market.is_empty() {
+                    extra_vouchers_block.push_str("\n\n🎟️ <b>MÃ GIẢM GIÁ THỊ TRƯỜNG ĐANG CÓ TRÊN SÀN:</b>");
+                    for mv in matched_market {
+                        extra_vouchers_block.push_str(&format!(
+                            "\n• <b>[{}] {}</b> · Mã: <code>{}</code> ({})",
+                            escape_html(&mv.discount_badge()),
+                            escape_html(&mv.shop_name),
+                            escape_html(&mv.coupon_code),
+                            escape_html(&mv.discount_desc)
+                        ));
+                    }
+                }
+
                 let reply_html = format!(
                     "📦 <b>{}</b>\n\
                      {}\
@@ -246,7 +288,7 @@ pub async fn handle_message(
                     price_line,
                     escape_html(&parsed.original_url),
                     header_line,
-                    exclusive_block,
+                    extra_vouchers_block,
                     escape_html(&parsed.primary_voucher.back_hours),
                     tips_text.trim_end()
                 );
@@ -515,7 +557,7 @@ enum DealDisplayItem<'a> {
     ApiOffer(&'a crate::services::accesstrade::VoucherOffer),
 }
 
-/// Dựng giao diện trang danh sách Mã Độc Quyền + Kho Mã 20% - 35%+ thật từ ACCESSTRADE
+/// Dựng giao diện trang danh sách Toàn Bộ Mã Giảm Giá Trên Thị Trường (Độc quyền + 20%-35%+ + Giảm tiền/Khác)
 async fn build_deals_page(
     conn: &libsql::Connection,
     config: &Config,
@@ -527,7 +569,6 @@ async fn build_deals_page(
     const PAGE_SIZE: usize = 6;
 
     let db_deals = Repository::get_active_deals(conn, None).await.unwrap_or_default();
-    let exclusive_deals: Vec<_> = db_deals.iter().filter(|d| d.is_exclusive).collect();
 
     let token_opt = Repository::get_setting(conn, "accesstrade_api_token")
         .await
@@ -537,10 +578,11 @@ async fn build_deals_page(
         .or_else(|| config.accesstrade_api_token.clone());
 
     let at_client = parser.accesstrade();
-    let (approved, api_vouchers, api_err): (Option<ApprovedCampaigns>, Vec<_>, Option<String>) =
+    // Luôn lấy với min_discount_pct = 0 để thu thập 100% mã trên thị trường không bỏ sót bất kỳ mã nào
+    let (approved, all_api_vouchers, api_err): (Option<ApprovedCampaigns>, Vec<_>, Option<String>) =
         if let Some(ref tok) = token_opt {
             let approved = at_client.get_approved_campaigns(tok, false).await.ok();
-            match at_client.fetch_high_discount_vouchers(tok, 20, force_refresh).await {
+            match at_client.fetch_high_discount_vouchers(tok, 0, force_refresh).await {
                 Ok(v) => (approved, v, None),
                 Err(err) => (approved, Vec::new(), Some(err)),
             }
@@ -548,23 +590,66 @@ async fn build_deals_page(
             (None, Vec::new(), Some("Chưa cấu hình ACCESSTRADE Token".to_string()))
         };
 
+    let high_pct_count = all_api_vouchers.iter().filter(|v| v.discount_percent >= 20).count();
+    let other_count = all_api_vouchers.len().saturating_sub(high_pct_count);
+
     let mut entries: Vec<DealDisplayItem<'_>> = Vec::new();
-    match filter {
+    let filter_norm = filter.trim().to_lowercase();
+    match filter_norm.as_str() {
         "exclusive" => {
-            for d in &exclusive_deals {
+            for d in &db_deals {
                 entries.push(DealDisplayItem::Exclusive(d));
             }
         }
         "pct20" => {
-            for v in &api_vouchers {
+            for v in all_api_vouchers.iter().filter(|v| v.discount_percent >= 20) {
                 entries.push(DealDisplayItem::ApiOffer(v));
             }
         }
-        _ => {
-            for d in &exclusive_deals {
+        "other" => {
+            for v in all_api_vouchers.iter().filter(|v| v.discount_percent < 20) {
+                entries.push(DealDisplayItem::ApiOffer(v));
+            }
+        }
+        "shopee" => {
+            for d in db_deals.iter().filter(|d| d.platform.eq_ignore_ascii_case("Shopee")) {
                 entries.push(DealDisplayItem::Exclusive(d));
             }
-            for v in &api_vouchers {
+            for v in all_api_vouchers.iter().filter(|v| v.platform.eq_ignore_ascii_case("Shopee")) {
+                entries.push(DealDisplayItem::ApiOffer(v));
+            }
+        }
+        "tiki" => {
+            for d in db_deals.iter().filter(|d| d.platform.eq_ignore_ascii_case("Tiki")) {
+                entries.push(DealDisplayItem::Exclusive(d));
+            }
+            for v in all_api_vouchers.iter().filter(|v| v.platform.eq_ignore_ascii_case("Tiki")) {
+                entries.push(DealDisplayItem::ApiOffer(v));
+            }
+        }
+        "all" | "" => {
+            for d in &db_deals {
+                entries.push(DealDisplayItem::Exclusive(d));
+            }
+            for v in &all_api_vouchers {
+                entries.push(DealDisplayItem::ApiOffer(v));
+            }
+        }
+        kw => {
+            for d in db_deals.iter().filter(|d| {
+                d.title.to_lowercase().contains(kw)
+                    || d.platform.to_lowercase().contains(kw)
+                    || d.discount_desc.to_lowercase().contains(kw)
+                    || d.coupon_code.as_deref().unwrap_or("").to_lowercase().contains(kw)
+            }) {
+                entries.push(DealDisplayItem::Exclusive(d));
+            }
+            for v in all_api_vouchers.iter().filter(|v| {
+                v.shop_name.to_lowercase().contains(kw)
+                    || v.platform.to_lowercase().contains(kw)
+                    || v.discount_desc.to_lowercase().contains(kw)
+                    || v.coupon_code.to_lowercase().contains(kw)
+            }) {
                 entries.push(DealDisplayItem::ApiOffer(v));
             }
         }
@@ -577,19 +662,25 @@ async fn build_deals_page(
     let end = (start + PAGE_SIZE).min(total_items);
 
     let vn_now = Utc::now() + chrono::Duration::hours(7);
-    let filter_label = match filter {
-        "exclusive" => "👑 Mã Độc Quyền Hợp Tác",
-        "pct20" => "🔥 Kho Mã Giảm 20% - 35%+",
-        _ => "🌟 Tất Cả Mã Hot (Độc Quyền + 20%-35%+)",
+    let filter_label = match filter_norm.as_str() {
+        "exclusive" => "👑 Mã Độc Quyền Hợp Tác".to_string(),
+        "pct20" => "🔥 Kho Mã Giảm Sâu 20% - 35%+".to_string(),
+        "other" => "💸 Mã Giảm Tiền Mặt & 1% - 19%".to_string(),
+        "shopee" => "🟠 Toàn Bộ Mã Shopee".to_string(),
+        "tiki" => "🔹 Toàn Bộ Mã Tiki".to_string(),
+        "all" | "" => "🌟 Toàn Bộ Mã Trên Thị Trường (Không Bỏ Sót)".to_string(),
+        kw => format!("🔍 Tìm kiếm: \"{}\"", escape_html(kw)),
     };
 
     let mut html = format!(
-        "🎟️ <b>KHO MÃ GIẢM GIÁ THẬT — {}</b>\n\
-         👑 Độc quyền: <b>{}</b> | 🔥 Giảm 20%-35%+: <b>{}</b> | <i>{}</i>\n\
-         <i>(Chạm vào mã in đậm <code>CODE</code> để tự động sao chép)</i>\n",
+        "🎟️ <b>KHO MÃ GIẢM GIÁ TOÀN THỊ TRƯỜNG — {}</b>\n\
+         👑 Độc quyền: <b>{}</b> | 🔥 &gt;=20%: <b>{}</b> | 💸 Mã khác: <b>{}</b> | Tổng: <b>{}</b> (<i>{}</i>)\n\
+         <i>(Chạm vào <code>MÃ CODE</code> để sao chép · Gõ <code>/deals từ_khóa</code> để tìm shop)</i>\n",
         filter_label,
-        exclusive_deals.len(),
-        api_vouchers.len(),
+        db_deals.len(),
+        high_pct_count,
+        other_count,
+        db_deals.len() + all_api_vouchers.len(),
         vn_now.format("%H:%M %d/%m")
     );
 
@@ -598,12 +689,12 @@ async fn build_deals_page(
     }
 
     if total_items == 0 {
-        if filter == "exclusive" {
+        if filter_norm == "exclusive" {
             html.push_str(
                 "\n📭 <i>Chưa có Mã Độc Quyền Hợp Tác nào được nhập. Chủ bot có thể dán hàng loạt mã từ AM/MCN hoặc Shop hợp tác vào mục <b>Kho Mã Độc Quyền</b> trên Web Admin.</i>",
             );
         } else {
-            html.push_str("\n📭 <i>Hiện chưa quét được mã nào khớp bộ lọc. Hãy thử bấm 🔄 Cập nhật.</i>");
+            html.push_str("\n📭 <i>Không tìm thấy mã nào khớp bộ lọc. Hãy thử bấm 🌟 Tất Cả hoặc 🔄 Cập Nhật.</i>");
         }
     } else {
         for (idx, item) in entries[start..end].iter().enumerate() {
@@ -621,9 +712,11 @@ async fn build_deals_page(
                     } else {
                         String::new()
                     };
+                    let tag = if d.is_exclusive { "ĐỘC QUYỀN" } else { "DEAL HOT" };
                     html.push_str(&format!(
-                        "\n{}. 👑 <b>[ĐỘC QUYỀN · {}] {}</b>{}\n   💬 {}{}\n   👉 <a href=\"{}\">Mở &amp; Áp Mã Ngay ↗</a>\n",
+                        "\n{}. 👑 <b>[{} · {}] {}</b>{}\n   💬 {}{}\n   👉 <a href=\"{}\">Mở &amp; Áp Mã Ngay ↗</a>\n",
                         num,
+                        tag,
                         escape_html(&d.platform),
                         escape_html(&d.title),
                         code_str,
@@ -634,10 +727,11 @@ async fn build_deals_page(
                 }
                 DealDisplayItem::ApiOffer(v) => {
                     let target_url = v.best_target_url(approved.as_ref());
+                    let badge = v.discount_badge();
                     html.push_str(&format!(
-                        "\n{}. 🔥 <b>[-{}% · {}] {}</b>\n   🎟️ Mã: <code>{}</code> · HSD: {}\n   💬 {}\n   👉 <a href=\"{}\">Mở Gian Hàng &amp; Áp Mã ↗</a>\n",
+                        "\n{}. 🔥 <b>[{} · {}] {}</b>\n   🎟️ Mã: <code>{}</code> · HSD: {}\n   💬 {}\n   👉 <a href=\"{}\">Mở Gian Hàng &amp; Áp Mã ↗</a>\n",
                         num,
-                        v.discount_percent,
+                        escape_html(&badge),
                         escape_html(&v.platform),
                         escape_html(&v.shop_name),
                         escape_html(&v.coupon_code),
@@ -650,6 +744,10 @@ async fn build_deals_page(
         }
     }
 
-    let keyboard = deals_pagination_keyboard(filter, page, total_pages);
+    let kb_filter = match filter_norm.as_str() {
+        "exclusive" | "pct20" | "other" | "shopee" | "tiki" | "all" => filter_norm.as_str(),
+        _ => "all",
+    };
+    let keyboard = deals_pagination_keyboard(kb_filter, page, total_pages);
     (html, keyboard)
 }

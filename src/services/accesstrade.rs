@@ -20,6 +20,7 @@ pub struct VoucherOffer {
     pub title: String,
     pub coupon_code: String,
     pub discount_percent: u32,
+    pub discount_amount: f64,
     pub discount_desc: String,
     pub min_spend: f64,
     pub raw_url: String,
@@ -46,6 +47,20 @@ impl VoucherOffer {
         }
         &self.raw_url
     }
+
+    /// Nhãn hiển thị mức giảm (ví dụ: "-35%", "-300K", "-45K", hoặc "ƯU ĐÃI")
+    pub fn discount_badge(&self) -> String {
+        if self.discount_percent > 0 {
+            format!("-{}%", self.discount_percent)
+        } else if self.discount_amount >= 1000.0 {
+            let k = (self.discount_amount / 1000.0).round() as i64;
+            format!("-{}K", k)
+        } else if self.discount_amount > 0.0 {
+            format!("-{}đ", self.discount_amount as i64)
+        } else {
+            "ƯU ĐÃI".to_string()
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -56,12 +71,15 @@ struct OffersApiResponse {
 #[derive(Deserialize, Debug)]
 struct OfferRaw {
     name: Option<String>,
+    content: Option<String>,
     merchant: Option<String>,
     domain: Option<String>,
     link: Option<String>,
     aff_link: Option<String>,
     end_time: Option<String>,
     discount_percentage: Option<serde_json::Value>,
+    discount_value: Option<serde_json::Value>,
+    min_spend: Option<serde_json::Value>,
     coupons: Option<Vec<OfferCouponRaw>>,
 }
 
@@ -472,7 +490,7 @@ impl AccessTradeClient {
         Err("Sản phẩm không thuộc danh sách TikTok Product Feed".to_string())
     }
 
-    /// Xem nhanh số lượng voucher giảm sâu đang nằm sẵn trong RAM cache (không gọi mạng)
+    /// Xem nhanh toàn bộ kho voucher thị trường đang nằm sẵn trong RAM cache (không gọi mạng)
     pub async fn peek_cached_high_discount_vouchers(&self) -> Vec<VoucherOffer> {
         let guard = self.voucher_cache.read().await;
         guard
@@ -481,7 +499,50 @@ impl AccessTradeClient {
             .unwrap_or_default()
     }
 
-    /// Quét danh sách mã giảm giá thật >= min_discount_pct% từ ACCESSTRADE v1/offers_informations (có cache 10 phút)
+    /// Tìm các mã giảm giá trong kho khớp với tên sản phẩm / shop hoặc sàn khi khách dán link
+    pub async fn search_matching_vouchers_for_deal(
+        &self,
+        platform: &str,
+        product_title: &str,
+        clean_url: &str,
+        max_items: usize,
+    ) -> Vec<VoucherOffer> {
+        let all = self.peek_cached_high_discount_vouchers().await;
+        if all.is_empty() {
+            return Vec::new();
+        }
+
+        let title_lower = product_title.to_lowercase();
+        let url_lower = clean_url.to_lowercase();
+        let mut exact_shop_matches = Vec::new();
+        let mut top_platform_matches = Vec::new();
+
+        for v in all {
+            if !v.platform.eq_ignore_ascii_case(platform) {
+                continue;
+            }
+            let shop_lower = v.shop_name.to_lowercase();
+            let is_shop_match = shop_lower.len() >= 3
+                && !shop_lower.eq_ignore_ascii_case(platform)
+                && (title_lower.contains(&shop_lower) || url_lower.contains(&shop_lower.replace(' ', "")));
+
+            if is_shop_match {
+                exact_shop_matches.push(v);
+            } else if top_platform_matches.len() < max_items {
+                top_platform_matches.push(v);
+            }
+        }
+
+        if !exact_shop_matches.is_empty() {
+            exact_shop_matches.truncate(max_items);
+            exact_shop_matches
+        } else {
+            top_platform_matches.truncate(max_items);
+            top_platform_matches
+        }
+    }
+
+    /// Quét toàn bộ mã giảm giá trên thị trường từ tất cả các cổng ACCESSTRADE (không bỏ sót bất kỳ mã nào)
     pub async fn fetch_high_discount_vouchers(
         &self,
         api_token: &str,
@@ -501,11 +562,14 @@ impl AccessTradeClient {
                     && *cached_min <= min_discount_pct
                     && (now - *fetched_at) < VOUCHER_CACHE_TTL_SECS
                 {
-                    let filtered: Vec<VoucherOffer> = list
-                        .iter()
-                        .filter(|v| v.discount_percent >= min_discount_pct)
-                        .cloned()
-                        .collect();
+                    let filtered: Vec<VoucherOffer> = if min_discount_pct == 0 {
+                        list.clone()
+                    } else {
+                        list.iter()
+                            .filter(|v| v.discount_percent >= min_discount_pct)
+                            .cloned()
+                            .collect()
+                    };
                     return Ok(filtered);
                 }
             }
@@ -515,70 +579,98 @@ impl AccessTradeClient {
         let today_ymd = vn_now.format("%Y-%m-%d").to_string();
 
         let mut collected: Vec<VoucherOffer> = Vec::new();
-        let mut seen_codes: HashSet<(String, String)> = HashSet::new();
+        let mut seen_keys: HashSet<(String, String, String)> = HashSet::new();
 
-        // Quét tối đa 12 trang (600 offers mới nhất), có tự động nghỉ nhẹ chống Rate Limit HTTP 429
-        for page in 1..=12 {
-            let url = format!(
-                "https://api.accesstrade.vn/v1/offers_informations?status=1&limit=50&page={}",
-                page
-            );
-            let mut body_text_opt = None;
-            for attempt in 1..=2 {
-                let resp = self
-                    .http
-                    .get(&url)
-                    .header("Authorization", format!("Token {}", token))
-                    .header("Content-Type", "application/json")
-                    .send()
-                    .await
-                    .map_err(|e| format!("Lỗi kết nối kho mã ACCESSTRADE: {}", e))?;
+        // Danh sách toàn bộ các nguồn endpoint cần quét để không bỏ sót bất kỳ sàn / nhóm mã nào
+        let endpoint_groups: &[(&str, usize)] = &[
+            ("https://api.accesstrade.vn/v1/offers_informations/coupon?limit=50", 3),
+            ("https://api.accesstrade.vn/v1/offers_informations?status=1&is_hot=1&limit=50", 2),
+            ("https://api.accesstrade.vn/v1/offers_informations?status=1&scope=expiring&limit=50", 2),
+            ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=tiki.vn&limit=50", 3),
+            ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=lazada.vn&limit=50", 2),
+            ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=tiktok.com&limit=50", 2),
+            ("https://api.accesstrade.vn/v1/offers_informations?status=1&limit=50", 10),
+        ];
 
-                if resp.status().as_u16() == 429 && attempt == 1 {
-                    tokio::time::sleep(Duration::from_millis(1200)).await;
-                    continue;
-                }
+        for &(base_endpoint, max_pages) in endpoint_groups {
+            for page in 1..=max_pages {
+                let url = format!("{}&page={}", base_endpoint, page);
+                let mut body_text_opt = None;
 
-                if !resp.status().is_success() {
-                    return Err(format!(
-                        "ACCESSTRADE Offers API trả về lỗi HTTP {}",
-                        resp.status()
-                    ));
-                }
-
-                body_text_opt = Some(
-                    resp.text()
+                for attempt in 1..=2 {
+                    let resp = match self
+                        .http
+                        .get(&url)
+                        .header("Authorization", format!("Token {}", token))
+                        .header("Content-Type", "application/json")
+                        .send()
                         .await
-                        .map_err(|e| format!("Không thể đọc JSON offers: {}", e))?,
-                );
-                break;
-            }
+                    {
+                        Ok(r) => r,
+                        Err(e) => {
+                            warn!("Lỗi kết nối endpoint {}: {}", url, e);
+                            break;
+                        }
+                    };
 
-            let Some(body_text) = body_text_opt else {
-                break;
-            };
+                    if resp.status().as_u16() == 429 && attempt == 1 {
+                        tokio::time::sleep(Duration::from_millis(1200)).await;
+                        continue;
+                    }
 
-            let (page_offers, raw_count) =
-                parse_offers_informations_page(&body_text, &today_ymd, min_discount_pct)?;
+                    if !resp.status().is_success() {
+                        break;
+                    }
 
-            for offer in page_offers {
-                let key = (offer.platform.clone(), offer.coupon_code.to_uppercase());
-                if seen_codes.insert(key) {
-                    collected.push(offer);
+                    body_text_opt = resp.text().await.ok();
+                    break;
                 }
-            }
 
-            if raw_count < 50 || collected.len() >= 100 {
+                let Some(body_text) = body_text_opt else {
+                    break;
+                };
+
+                // Luôn parse với ngưỡng 0% để thu thập 100% mã (cả % nhỏ, giảm tiền mặt K/VNĐ và deal trực tiếp)
+                let Ok((page_offers, raw_count)) =
+                    parse_offers_informations_page(&body_text, &today_ymd, 0)
+                else {
+                    break;
+                };
+
+                for offer in page_offers {
+                    let key = (
+                        offer.platform.to_lowercase(),
+                        offer.coupon_code.to_uppercase(),
+                        offer.shop_name.to_lowercase(),
+                    );
+                    if seen_keys.insert(key) {
+                        collected.push(offer);
+                    }
+                }
+
+                if raw_count < 50 || collected.len() >= 1500 {
+                    break;
+                }
+
+                tokio::time::sleep(Duration::from_millis(350)).await;
+            }
+            if collected.len() >= 1500 {
                 break;
             }
-
-            tokio::time::sleep(Duration::from_millis(350)).await;
         }
 
-        // Sắp xếp % giảm cao -> đơn tối thiểu thấp -> tên shop
+        // Sắp xếp ưu tiên: mã có % giảm sâu (>=20%) -> % giảm -> số tiền giảm VNĐ -> đơn tối thiểu thấp
         collected.sort_by(|a, b| {
-            b.discount_percent
-                .cmp(&a.discount_percent)
+            let a_tier = if a.discount_percent >= 20 { 2 } else if a.discount_percent > 0 { 1 } else { 0 };
+            let b_tier = if b.discount_percent >= 20 { 2 } else if b.discount_percent > 0 { 1 } else { 0 };
+            b_tier
+                .cmp(&a_tier)
+                .then_with(|| b.discount_percent.cmp(&a.discount_percent))
+                .then_with(|| {
+                    b.discount_amount
+                        .partial_cmp(&a.discount_amount)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
                 .then_with(|| {
                     a.min_spend
                         .partial_cmp(&b.min_spend)
@@ -587,20 +679,28 @@ impl AccessTradeClient {
                 .then_with(|| a.shop_name.cmp(&b.shop_name))
         });
 
-        collected.truncate(100);
+        collected.truncate(1500);
 
         {
             let mut guard = self.voucher_cache.write().await;
-            *guard = Some((token.to_string(), now, min_discount_pct, collected.clone()));
+            *guard = Some((token.to_string(), now, 0, collected.clone()));
         }
 
         info!(
-            "🎟️ Đã đồng bộ kho {} mã giảm giá >={}% thật từ ACCESSTRADE API",
-            collected.len(),
-            min_discount_pct
+            "🎟️ Đã đồng bộ tổng cộng {} mã giảm giá toàn thị trường từ ACCESSTRADE API (không bỏ sót mã nào)",
+            collected.len()
         );
 
-        Ok(collected)
+        let result = if min_discount_pct == 0 {
+            collected
+        } else {
+            collected
+                .into_iter()
+                .filter(|v| v.discount_percent >= min_discount_pct)
+                .collect()
+        };
+
+        Ok(result)
     }
 }
 
@@ -811,10 +911,14 @@ mod tests {
         assert_eq!(offers[1].platform, "Tiki");
         assert_eq!(offers[1].discount_percent, 25);
         assert_eq!(offers[1].end_time, "2026-12-31");
+
+        // Khi min_discount_pct = 0: giữ lại toàn bộ mã còn hạn (kể cả mã 10% SMALL10)
+        let (all_active, _) = parse_offers_informations_page(sample, "2026-11-16", 0).unwrap();
+        assert_eq!(all_active.len(), 3);
     }
 }
 
-/// Phân tích 1 trang JSON từ ACCESSTRADE v1/offers_informations, giữ các mã còn hạn >= min_discount_pct%
+/// Phân tích 1 trang JSON từ ACCESSTRADE v1/offers_informations hoặc /coupon (khi min_discount_pct = 0 sẽ lấy 100% mã còn hạn)
 pub fn parse_offers_informations_page(
     json_str: &str,
     today_ymd: &str,
@@ -856,17 +960,74 @@ pub fn parse_offers_informations_page(
             &raw_url,
         );
         let raw_name = item.name.as_deref().unwrap_or("").trim();
+        let raw_content = item.content.as_deref().unwrap_or("").trim();
         let (shop_name, clean_desc) = split_shop_and_desc(raw_name, &platform);
         let api_pct = parse_json_f64(item.discount_percentage.as_ref())
             .map(|v| v.round() as u32)
             .unwrap_or(0);
+        let api_disc_val = parse_json_f64(item.discount_value.as_ref()).unwrap_or(0.0);
+        let api_min_spend = parse_json_f64(item.min_spend.as_ref()).unwrap_or(0.0);
+
+        let end_label = if end_date_prefix.is_empty() {
+            "Đang hoạt động".to_string()
+        } else {
+            end_date_prefix.to_string()
+        };
 
         let coupons = item.coupons.unwrap_or_default();
-        for c in coupons {
-            let code = c.coupon_code.unwrap_or_default().trim().to_string();
-            if code.is_empty() {
-                continue;
+        if coupons.is_empty() {
+            // Không bỏ qua ưu đãi trực tiếp không cần nhập mã nếu min_discount_pct == 0
+            let pct = if (1..=100).contains(&api_pct) {
+                api_pct
+            } else {
+                extract_discount_percent(raw_name)
+                    .or_else(|| extract_discount_percent(raw_content))
+                    .unwrap_or(0)
+            };
+            if pct >= min_discount_pct {
+                let disc_amt = if api_disc_val > 0.0 {
+                    api_disc_val
+                } else {
+                    extract_discount_amount(raw_name)
+                        .or_else(|| extract_discount_amount(raw_content))
+                        .unwrap_or(0.0)
+                };
+                let min_spend = if api_min_spend > 0.0 {
+                    api_min_spend
+                } else {
+                    extract_min_spend(raw_name)
+                        .or_else(|| extract_min_spend(raw_content))
+                        .unwrap_or(0.0)
+                };
+                results.push(VoucherOffer {
+                    platform,
+                    shop_name,
+                    title: clean_desc.to_string(),
+                    coupon_code: "TỰ ĐỘNG ÁP".to_string(),
+                    discount_percent: pct,
+                    discount_amount: disc_amt,
+                    discount_desc: if clean_desc.is_empty() {
+                        raw_content.lines().next().unwrap_or("Ưu đãi trực tiếp").to_string()
+                    } else {
+                        clean_desc.to_string()
+                    },
+                    min_spend,
+                    raw_url,
+                    aff_url,
+                    end_time: end_label,
+                });
             }
+            continue;
+        }
+
+        for c in coupons {
+            let raw_code = c.coupon_code.unwrap_or_default();
+            let code = raw_code.trim();
+            let code_final = if code.is_empty() {
+                "TỰ ĐỘNG ÁP".to_string()
+            } else {
+                code.to_string()
+            };
             let desc_candidate = c
                 .coupon_desc
                 .as_deref()
@@ -879,6 +1040,7 @@ pub fn parse_offers_informations_page(
             } else {
                 extract_discount_percent(desc_candidate)
                     .or_else(|| extract_discount_percent(raw_name))
+                    .or_else(|| extract_discount_percent(raw_content))
                     .unwrap_or(0)
             };
 
@@ -886,25 +1048,36 @@ pub fn parse_offers_informations_page(
                 continue;
             }
 
-            let min_spend = extract_min_spend(raw_name)
-                .or_else(|| extract_min_spend(desc_candidate))
-                .unwrap_or(0.0);
+            let disc_amt = if api_disc_val > 0.0 {
+                api_disc_val
+            } else {
+                extract_discount_amount(desc_candidate)
+                    .or_else(|| extract_discount_amount(raw_name))
+                    .or_else(|| extract_discount_amount(raw_content))
+                    .unwrap_or(0.0)
+            };
+
+            let min_spend = if api_min_spend > 0.0 {
+                api_min_spend
+            } else {
+                extract_min_spend(raw_name)
+                    .or_else(|| extract_min_spend(desc_candidate))
+                    .or_else(|| extract_min_spend(raw_content))
+                    .unwrap_or(0.0)
+            };
 
             results.push(VoucherOffer {
                 platform: platform.clone(),
                 shop_name: shop_name.clone(),
                 title: clean_desc.to_string(),
-                coupon_code: code,
+                coupon_code: code_final,
                 discount_percent: pct,
+                discount_amount: disc_amt,
                 discount_desc: desc_candidate.to_string(),
                 min_spend,
                 raw_url: raw_url.clone(),
                 aff_url: aff_url.clone(),
-                end_time: if end_date_prefix.is_empty() {
-                    "Đang hoạt động".to_string()
-                } else {
-                    end_date_prefix.to_string()
-                },
+                end_time: end_label.clone(),
             });
         }
     }
@@ -949,15 +1122,34 @@ fn extract_discount_percent(text: &str) -> Option<u32> {
     caps.get(1)?.as_str().parse::<u32>().ok().filter(|&p| p <= 95)
 }
 
+fn extract_discount_amount(text: &str) -> Option<f64> {
+    static RE_AMT: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
+    let re = RE_AMT
+        .get_or_init(|| {
+            Regex::new(r"(?i)(?:giảm|trợ\s*giá)\s*(?:trực\s*tiếp\s*)?([\d,\.]+)\s*(k\b|triệu|tr\b|vnđ|đ\b)").ok()
+        })
+        .as_ref()?;
+    let caps = re.captures(text)?;
+    parse_money_with_unit(
+        caps.get(1)?.as_str(),
+        caps.get(2).map(|m| m.as_str()).unwrap_or(""),
+    )
+}
+
 fn extract_min_spend(text: &str) -> Option<f64> {
     static RE_MIN: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
     let re = RE_MIN
-        .get_or_init(|| Regex::new(r"(?i)(?:tối\s*thiểu|đơn\s*từ|từ)\s*([\d,\.]+)\s*(k\b|triệu|tr\b|vnđ|đ)?").ok())
+        .get_or_init(|| Regex::new(r"(?i)(?:tối\s*thiểu|đơn\s*từ|hàng\s*từ|từ)\s*([\d,\.]+)\s*(k\b|triệu|tr\b|vnđ|đ)?").ok())
         .as_ref()?;
     let caps = re.captures(text)?;
-    let num_str = caps.get(1)?.as_str();
-    let unit = caps.get(2).map(|m| m.as_str().to_lowercase()).unwrap_or_default();
+    parse_money_with_unit(
+        caps.get(1)?.as_str(),
+        caps.get(2).map(|m| m.as_str()).unwrap_or(""),
+    )
+}
 
+fn parse_money_with_unit(num_str: &str, raw_unit: &str) -> Option<f64> {
+    let unit = raw_unit.to_lowercase();
     if unit == "k" {
         let base = num_str.replace(',', ".").parse::<f64>().ok()?;
         return Some(base * 1000.0);

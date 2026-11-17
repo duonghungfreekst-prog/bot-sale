@@ -124,7 +124,7 @@ ACCESSTRADE_DEEPLINK_TEMPLATE=https://fast.accesstrade.com.vn/deep_link/63000000
 | `/start [ref_code]` | Bắt đầu sử dụng bot, liên kết mã giới thiệu bạn bè và mở Menu chính |
 | `/help` | Xem hướng dẫn quy trình săn sale & nhận hoàn tiền 3 bước |
 | `/wallet` hoặc `/vi` | Xem số dư khả dụng, số dư chờ duyệt, hoa hồng F1 và mã giới thiệu |
-| `/deals [sàn]` | Xem các mã giảm giá và voucher hot hôm nay (Shopee, Lazada, Tiki) |
+| `/deals [từ_khóa]` | Xem toàn bộ kho mã giảm giá trên thị trường (20%-35%+, giảm tiền K/VNĐ, mã độc quyền) hoặc tìm theo tên shop/sàn |
 | `/share` | Lấy link chia sẻ giới thiệu bạn bè nhận hoa hồng 10% trọn đời |
 | `/history` | Xem 5 đơn hoàn tiền gần nhất và 5 lượt tạo link |
 | `/withdraw <tiền> <ngân_hàng> <stk> <tên>` | Tạo yêu cầu rút tiền về tài khoản ngân hàng |

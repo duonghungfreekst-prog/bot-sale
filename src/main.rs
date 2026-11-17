@@ -51,29 +51,33 @@ async fn main() -> anyhow::Result<()> {
         warn!("⚠️ Đang dùng SQLite cục bộ ({}): dữ liệu DB sẽ bị reset khi container khởi động lại. Khuyên dùng Turso Cloud (TURSO_DATABASE_URL) để lưu vĩnh viễn.", config.database_path);
     }
 
-    // Tự động nạp trước danh sách chiến dịch ACCESSTRADE ngay lúc khởi động
+    // Tự động nạp trước và đồng bộ định kỳ 10 phút/lần toàn bộ chiến dịch & kho mã toàn thị trường ACCESSTRADE
     {
         let warmup_db = db.clone();
         let warmup_at = accesstrade.clone();
         let env_token = config.accesstrade_api_token.clone();
         tokio::spawn(async move {
-            let db_token = match warmup_db.conn() {
-                Ok(conn) => Repository::get_setting(&conn, "accesstrade_api_token")
-                    .await
-                    .ok()
-                    .flatten()
-                    .filter(|s| !s.trim().is_empty()),
-                Err(_) => None,
-            };
-            if let Some(tok) = db_token.or(env_token) {
-                if let Err(err) = warmup_at.get_approved_campaigns(&tok, true).await {
-                    warn!("Không thể đồng bộ sẵn ACCESSTRADE khi khởi động: {}", err);
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(600));
+            loop {
+                ticker.tick().await;
+                let db_token = match warmup_db.conn() {
+                    Ok(conn) => Repository::get_setting(&conn, "accesstrade_api_token")
+                        .await
+                        .ok()
+                        .flatten()
+                        .filter(|s| !s.trim().is_empty()),
+                    Err(_) => None,
+                };
+                if let Some(ref tok) = db_token.or_else(|| env_token.clone()) {
+                    if let Err(err) = warmup_at.get_approved_campaigns(tok, true).await {
+                        warn!("Không thể đồng bộ sẵn ACCESSTRADE khi khởi động/định kỳ: {}", err);
+                    }
+                    if let Err(err) = warmup_at.fetch_high_discount_vouchers(tok, 0, true).await {
+                        warn!("Không thể nạp sẵn toàn bộ kho mã ACCESSTRADE: {}", err);
+                    }
+                } else {
+                    warn!("⚠️ Chưa tìm thấy ACCESSTRADE_API_TOKEN trong Environment hoặc DB.");
                 }
-                if let Err(err) = warmup_at.fetch_high_discount_vouchers(&tok, 20, true).await {
-                    warn!("Không thể nạp sẵn kho mã >=20% ACCESSTRADE khi khởi động: {}", err);
-                }
-            } else {
-                warn!("⚠️ Chưa tìm thấy ACCESSTRADE_API_TOKEN trong Environment hoặc DB.");
             }
         });
     }
