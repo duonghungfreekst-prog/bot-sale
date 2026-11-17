@@ -73,7 +73,7 @@ pub async fn handle_message(
     {
         bot.send_message(
             msg.chat.id,
-            "ℹ️ <b>Bot chỉ gắn mã khớp trực tiếp cho từng sản phẩm bạn gửi</b> (đã tắt danh sách kho mã rời rạc).\n\n👉 Bạn hãy <b>dán trực tiếp link sản phẩm Shopee, Lazada, Tiki hoặc TikTok Shop</b> vào đây để bot tạo link mua kèm mã khớp riêng cho đúng sản phẩm đó nhé!",
+            "👉 Hãy <b>dán trực tiếp link sản phẩm Shopee, Lazada, Tiki hoặc TikTok Shop</b> vào đây để bot tạo link mua kèm mã khớp riêng cho đúng sản phẩm đó nhé!",
         )
         .parse_mode(ParseMode::Html)
         .reply_markup(persistent_reply_keyboard())
@@ -308,10 +308,6 @@ pub async fn handle_message(
                             ));
                         }
                     }
-                } else if extra_vouchers_block.is_empty() {
-                    extra_vouchers_block.push_str(
-                        "\n\nℹ️ <i>Chưa có mã riêng theo shop/thương hiệu cho sản phẩm này trên ACCESSTRADE. Hãy bấm nút Cổng Voucher sàn bên dưới để kiểm tra mã ví của bạn.</i>",
-                    );
                 }
 
                 let reply_html = format!(
@@ -514,7 +510,7 @@ pub async fn handle_callback(
     if data.starts_with("deals_page:") || data.starts_with("deals_refresh:") {
         bot.send_message(
             chat_id,
-            "ℹ️ <b>Bot đã tắt hiển thị kho mã rời rạc.</b> Hãy dán trực tiếp link sản phẩm vào chat để nhận link kèm mã khớp riêng cho sản phẩm đó!",
+            "👉 Hãy <b>dán trực tiếp link sản phẩm</b> vào chat để nhận link kèm mã khớp riêng cho sản phẩm đó!",
         )
         .parse_mode(ParseMode::Html)
         .await?;
