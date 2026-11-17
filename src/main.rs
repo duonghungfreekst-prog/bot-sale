@@ -51,13 +51,14 @@ async fn main() -> anyhow::Result<()> {
         warn!("⚠️ Đang dùng SQLite cục bộ ({}): dữ liệu DB sẽ bị reset khi container khởi động lại. Khuyên dùng Turso Cloud (TURSO_DATABASE_URL) để lưu vĩnh viễn.", config.database_path);
     }
 
-    // Tự động nạp trước và đồng bộ định kỳ 10 phút/lần toàn bộ chiến dịch & kho mã toàn thị trường ACCESSTRADE
+    // Tự động nạp trước và cập nhật ĐỊNH KỲ MỖI PHÚT (60s) chiến dịch & kho mã toàn thị trường ACCESSTRADE
     {
         let warmup_db = db.clone();
         let warmup_at = accesstrade.clone();
         let env_token = config.accesstrade_api_token.clone();
         tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(600));
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+            let mut cycle: u64 = 0;
             loop {
                 ticker.tick().await;
                 let db_token = match warmup_db.conn() {
@@ -69,15 +70,19 @@ async fn main() -> anyhow::Result<()> {
                     Err(_) => None,
                 };
                 if let Some(ref tok) = db_token.or_else(|| env_token.clone()) {
-                    if let Err(err) = warmup_at.get_approved_campaigns(tok, true).await {
-                        warn!("Không thể đồng bộ sẵn ACCESSTRADE khi khởi động/định kỳ: {}", err);
+                    let is_full = cycle % 5 == 0;
+                    if is_full {
+                        if let Err(err) = warmup_at.get_approved_campaigns(tok, true).await {
+                            warn!("Không thể đồng bộ sẵn ACCESSTRADE khi khởi động/định kỳ: {}", err);
+                        }
                     }
-                    if let Err(err) = warmup_at.fetch_high_discount_vouchers(tok, 0, true).await {
-                        warn!("Không thể nạp sẵn toàn bộ kho mã ACCESSTRADE: {}", err);
+                    if let Err(err) = warmup_at.sync_market_vouchers_tick(tok, is_full).await {
+                        warn!("Không thể cập nhật kho mã mỗi phút ACCESSTRADE: {}", err);
                     }
                 } else {
                     warn!("⚠️ Chưa tìm thấy ACCESSTRADE_API_TOKEN trong Environment hoặc DB.");
                 }
+                cycle = cycle.wrapping_add(1);
             }
         });
     }

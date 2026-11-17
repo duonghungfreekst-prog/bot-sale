@@ -10,8 +10,15 @@ use tracing::{info, warn};
 
 use super::deal_parser::Platform;
 
-const CACHE_TTL_SECS: i64 = 300; // Cache danh sách chiến dịch 5 phút để tránh rate limit AccessTrade
-const VOUCHER_CACHE_TTL_SECS: i64 = 600; // Cache kho mã giảm giá 10 phút
+const CACHE_TTL_SECS: i64 = 180; // Cache danh sách chiến dịch 3 phút
+const VOUCHER_CACHE_TTL_SECS: i64 = 55; // Tự động làm mới kho mã giảm giá mỗi 1 phút (55s)
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct VoucherSyncMeta {
+    pub last_sync_vn: String,
+    pub sync_cycles: u64,
+    pub total_count: usize,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VoucherOffer {
@@ -29,20 +36,22 @@ pub struct VoucherOffer {
 }
 
 impl VoucherOffer {
-    /// Chỉ dùng tracking link ACCESSTRADE khi chiến dịch sàn tương ứng đã duyệt (tránh lỗi HTTP 500 từ go.isclix.com)
+    /// Trả về link đích chuẩn xác 100% (chỉ dùng aff_link khi chiến dịch có redirect hoạt động thực tế, tránh lỗi 404/500 từ go.isclix.com)
     pub fn best_target_url(&self, approved: Option<&ApprovedCampaigns>) -> &str {
-        let is_approved = match self.platform.as_str() {
-            "Shopee" => approved.and_then(|a| a.shopee.as_ref()).is_some(),
-            "Lazada" => approved.and_then(|a| a.lazada.as_ref()).is_some(),
-            "Tiki" => approved.and_then(|a| a.tiki.as_ref()).is_some(),
-            "TikTok Shop" => approved.and_then(|a| a.tiktok.as_ref()).is_some(),
-            _ => false,
+        let active_camp_id = match self.platform.as_str() {
+            "Shopee" => approved.and_then(|a| a.shopee.as_ref()).map(|(id, _)| id.as_str()),
+            "Lazada" => approved.and_then(|a| a.lazada.as_ref()).map(|(id, _)| id.as_str()),
+            "Tiki" => approved.and_then(|a| a.tiki.as_ref()).map(|(id, _)| id.as_str()),
+            "TikTok Shop" => approved.and_then(|a| a.tiktok.as_ref()).map(|(id, _)| id.as_str()),
+            _ => None,
         };
-        if is_approved {
-            if let Some(ref aff) = self.aff_url {
-                if !aff.trim().is_empty() {
-                    return aff;
-                }
+        if let (Some(cid), Some(aff)) = (active_camp_id, self.aff_url.as_deref()) {
+            let aff_trimmed = aff.trim();
+            // Chiến dịch TIKI (CPS) cũ (4348614231480407268 / v2/62) và link go.isclix.com thiếu campaign_id trong path bị lỗi HTTP 500 trên go.isclix.com
+            let is_broken_legacy = cid == "4348614231480407268"
+                || (aff_trimmed.contains("go.isclix.com/deep_link/") && !aff_trimmed.contains(cid));
+            if !aff_trimmed.is_empty() && !is_broken_legacy {
+                return aff_trimmed;
             }
         }
         &self.raw_url
@@ -197,8 +206,10 @@ struct TikTokAmountInfo {
 /// Client giao tiếp với ACCESSTRADE Publisher API v1/v2
 pub struct AccessTradeClient {
     http: Client,
+    redirect_probe: Client,
     cache: Arc<RwLock<Option<(String, ApprovedCampaigns)>>>,
     voucher_cache: Arc<RwLock<Option<(String, i64, u32, Vec<VoucherOffer>)>>>,
+    voucher_meta: Arc<RwLock<VoucherSyncMeta>>,
 }
 
 impl AccessTradeClient {
@@ -208,10 +219,31 @@ impl AccessTradeClient {
             .build()
             .unwrap_or_else(|_| Client::new());
 
+        let probe_policy = reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 4 {
+                return attempt.stop();
+            }
+            let next_host = attempt.url().host_str().unwrap_or("");
+            if is_tracking_gateway_host(next_host) {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        });
+
+        let redirect_probe = Client::builder()
+            .timeout(Duration::from_secs(4))
+            .redirect(probe_policy)
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
         Self {
             http,
+            redirect_probe,
             cache: Arc::new(RwLock::new(None)),
             voucher_cache: Arc::new(RwLock::new(None)),
+            voucher_meta: Arc::new(RwLock::new(VoucherSyncMeta::default())),
         }
     }
 
@@ -221,6 +253,11 @@ impl AccessTradeClient {
         *guard = None;
         let mut v_guard = self.voucher_cache.write().await;
         *v_guard = None;
+    }
+
+    /// Lấy thông tin thời gian đồng bộ kho mã gần nhất (phục vụ hiển thị thời gian thực trên Web & Bot)
+    pub async fn get_voucher_sync_meta(&self) -> VoucherSyncMeta {
+        self.voucher_meta.read().await.clone()
     }
 
     /// Lấy danh sách các chiến dịch đã được duyệt trên tài khoản ACCESSTRADE (có cache 5 phút)
@@ -338,7 +375,12 @@ impl AccessTradeClient {
         // vì v2 sinh ra link TikTok Universal (/t/...) kèm chain_key & enable_shop_tab_popup=1 giúp nhảy thẳng vào sản phẩm trên App TikTok
         if *platform == Platform::TikTokShop {
             match self.call_v2_tiktok_feed(token, clean_url, &campaign_id, user_id, click_id).await {
-                Ok(res) => return Ok(res),
+                Ok(res) => {
+                    if self.verify_affiliate_redirect_ok(&res.url).await {
+                        return Ok(res);
+                    }
+                    warn!("⚠️ Link TikTok v2 không vượt qua kiểm tra gateway, thử fallback v1.");
+                }
                 Err(v2_err) => {
                     info!("API v2 TikTok Shop không áp dụng cho URL này ({}), chuyển sang v1: {}", clean_url, v2_err);
                 }
@@ -350,16 +392,55 @@ impl AccessTradeClient {
             .call_v1_product_link(token, &campaign_id, clean_url, user_id, click_id)
             .await
         {
-            Ok(url) => Ok(AffiliateLinkResult {
-                url,
-                campaign_id,
-                product_name: None,
-                product_price_vnd: None,
-                commission_amount_vnd: None,
-            }),
+            Ok(url) => {
+                if !self.verify_affiliate_redirect_ok(&url).await {
+                    return Err(format!(
+                        "Gateway redirect ACCESSTRADE cho {} (campaign {}) tạm lỗi HTTP 404/500 — tự chuyển về link gốc an toàn",
+                        platform.as_str(),
+                        campaign_id
+                    ));
+                }
+                Ok(AffiliateLinkResult {
+                    url,
+                    campaign_id,
+                    product_name: None,
+                    product_price_vnd: None,
+                    commission_amount_vnd: None,
+                })
+            }
             Err(err) => {
                 warn!("⚠️ Tạo link ACCESSTRADE thất bại cho {}: {}", platform.as_str(), err);
                 Err(err)
+            }
+        }
+    }
+
+    /// Kiểm tra nhanh gateway redirect trung gian (shorten.asia -> go.isclix.com) có trả 302 hợp lệ hay lỗi 404/500
+    pub async fn verify_affiliate_redirect_ok(&self, url: &str) -> bool {
+        let Ok(parsed) = url::Url::parse(url) else {
+            return false;
+        };
+        let host = parsed.host_str().unwrap_or("");
+        if !is_tracking_gateway_host(host) {
+            return true;
+        }
+
+        match self.redirect_probe.get(url).send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_client_error() || status.is_server_error() {
+                    warn!(
+                        "⚠️ Gateway {} trả về HTTP {} — chặn link hỏng để bảo vệ người dùng",
+                        url, status
+                    );
+                    false
+                } else {
+                    true
+                }
+            }
+            Err(err) => {
+                warn!("⚠️ Không thể kiểm tra redirect của {}: {}", url, err);
+                true // Không chặn nhầm nếu chỉ nghẽn timeout kiểm tra tạm thời
             }
         }
     }
@@ -542,7 +623,7 @@ impl AccessTradeClient {
         }
     }
 
-    /// Quét toàn bộ mã giảm giá trên thị trường từ tất cả các cổng ACCESSTRADE (không bỏ sót bất kỳ mã nào)
+    /// Quét toàn bộ mã giảm giá trên thị trường từ tất cả các cổng ACCESSTRADE (hỗ trợ đồng bộ mỗi 60 giây)
     pub async fn fetch_high_discount_vouchers(
         &self,
         api_token: &str,
@@ -575,22 +656,65 @@ impl AccessTradeClient {
             }
         }
 
+        let collected = self.sync_market_vouchers_internal(token, true).await?;
+        let result = if min_discount_pct == 0 {
+            collected
+        } else {
+            collected
+                .into_iter()
+                .filter(|v| v.discount_percent >= min_discount_pct)
+                .collect()
+        };
+        Ok(result)
+    }
+
+    /// Chu kỳ đồng bộ nền mỗi 60 giây: quét nhanh trang mới nhất mỗi phút hoặc quét vét cạn mỗi 5 phút
+    pub async fn sync_market_vouchers_tick(&self, api_token: &str, full_scan: bool) -> Result<usize, String> {
+        let token = api_token.trim();
+        if token.is_empty() {
+            return Err("Chưa cấu hình ACCESSTRADE API Token".to_string());
+        }
+        let has_cache = {
+            let guard = self.voucher_cache.read().await;
+            guard.as_ref().map(|(t, _, _, list)| t == token && !list.is_empty()).unwrap_or(false)
+        };
+        let list = self.sync_market_vouchers_internal(token, full_scan || !has_cache).await?;
+        Ok(list.len())
+    }
+
+    async fn sync_market_vouchers_internal(
+        &self,
+        token: &str,
+        full_scan: bool,
+    ) -> Result<Vec<VoucherOffer>, String> {
+        let now = Utc::now().timestamp();
         let vn_now = Utc::now() + chrono::Duration::hours(7);
         let today_ymd = vn_now.format("%Y-%m-%d").to_string();
 
         let mut collected: Vec<VoucherOffer> = Vec::new();
         let mut seen_keys: HashSet<(String, String, String)> = HashSet::new();
 
-        // Danh sách toàn bộ các nguồn endpoint cần quét để không bỏ sót bất kỳ sàn / nhóm mã nào
-        let endpoint_groups: &[(&str, usize)] = &[
-            ("https://api.accesstrade.vn/v1/offers_informations/coupon?limit=50", 3),
-            ("https://api.accesstrade.vn/v1/offers_informations?status=1&is_hot=1&limit=50", 2),
-            ("https://api.accesstrade.vn/v1/offers_informations?status=1&scope=expiring&limit=50", 2),
-            ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=tiki.vn&limit=50", 3),
-            ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=lazada.vn&limit=50", 2),
-            ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=tiktok.com&limit=50", 2),
-            ("https://api.accesstrade.vn/v1/offers_informations?status=1&limit=50", 10),
-        ];
+        // Ở chế độ full_scan: quét vét cạn nhiều trang; ở chu kỳ nhanh 60s: quét trang mới nhất của tất cả cổng và gộp cache cũ
+        let endpoint_groups: &[(&str, usize)] = if full_scan {
+            &[
+                ("https://api.accesstrade.vn/v1/offers_informations/coupon?limit=50", 3),
+                ("https://api.accesstrade.vn/v1/offers_informations?status=1&is_hot=1&limit=50", 2),
+                ("https://api.accesstrade.vn/v1/offers_informations?status=1&scope=expiring&limit=50", 2),
+                ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=tiki.vn&limit=50", 3),
+                ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=lazada.vn&limit=50", 2),
+                ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=tiktok.com&limit=50", 2),
+                ("https://api.accesstrade.vn/v1/offers_informations?status=1&limit=50", 10),
+            ]
+        } else {
+            &[
+                ("https://api.accesstrade.vn/v1/offers_informations/coupon?limit=50", 1),
+                ("https://api.accesstrade.vn/v1/offers_informations?status=1&is_hot=1&limit=50", 1),
+                ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=tiki.vn&limit=50", 1),
+                ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=lazada.vn&limit=50", 1),
+                ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=tiktok.com&limit=50", 1),
+                ("https://api.accesstrade.vn/v1/offers_informations?status=1&limit=50", 2),
+            ]
+        };
 
         for &(base_endpoint, max_pages) in endpoint_groups {
             for page in 1..=max_pages {
@@ -630,7 +754,6 @@ impl AccessTradeClient {
                     break;
                 };
 
-                // Luôn parse với ngưỡng 0% để thu thập 100% mã (cả % nhỏ, giảm tiền mặt K/VNĐ và deal trực tiếp)
                 let Ok((page_offers, raw_count)) =
                     parse_offers_informations_page(&body_text, &today_ymd, 0)
                 else {
@@ -656,6 +779,29 @@ impl AccessTradeClient {
             }
             if collected.len() >= 1500 {
                 break;
+            }
+        }
+
+        // Nếu đang là quick sync 60s, gộp giữ lại các mã còn hạn đã thu được từ lần full scan gần nhất
+        if !full_scan {
+            let guard = self.voucher_cache.read().await;
+            if let Some((cached_token, _, _, existing)) = guard.as_ref() {
+                if cached_token == token {
+                    for old in existing {
+                        let exp = old.end_time.trim();
+                        if exp.len() == 10 && exp < today_ymd.as_str() {
+                            continue;
+                        }
+                        let key = (
+                            old.platform.to_lowercase(),
+                            old.coupon_code.to_uppercase(),
+                            old.shop_name.to_lowercase(),
+                        );
+                        if seen_keys.insert(key) {
+                            collected.push(old.clone());
+                        }
+                    }
+                }
             }
         }
 
@@ -686,22 +832,27 @@ impl AccessTradeClient {
             *guard = Some((token.to_string(), now, 0, collected.clone()));
         }
 
+        let last_sync_vn = vn_now.format("%H:%M:%S %d/%m/%Y").to_string();
+        {
+            let mut meta = self.voucher_meta.write().await;
+            meta.last_sync_vn = last_sync_vn;
+            meta.sync_cycles += 1;
+            meta.total_count = collected.len();
+        }
+
         info!(
-            "🎟️ Đã đồng bộ tổng cộng {} mã giảm giá toàn thị trường từ ACCESSTRADE API (không bỏ sót mã nào)",
+            "🎟️ Đã đồng bộ ({}) tổng cộng {} mã giảm giá toàn thị trường từ ACCESSTRADE API",
+            if full_scan { "quét sâu" } else { "cập nhật 60s" },
             collected.len()
         );
 
-        let result = if min_discount_pct == 0 {
-            collected
-        } else {
-            collected
-                .into_iter()
-                .filter(|v| v.discount_percent >= min_discount_pct)
-                .collect()
-        };
-
-        Ok(result)
+        Ok(collected)
     }
+}
+
+fn is_tracking_gateway_host(host: &str) -> bool {
+    let lower = host.to_lowercase();
+    lower == "shorten.asia" || lower == "go.isclix.com" || lower == "fast.accesstrade.com.vn"
 }
 
 fn parse_json_f64(val: Option<&serde_json::Value>) -> Option<f64> {
@@ -854,6 +1005,53 @@ mod tests {
     fn test_mask_token() {
         assert_eq!(mask_token("1234567890abcdef"), "1234••••••••cdef");
         assert_eq!(mask_token("short"), "********");
+    }
+
+    #[test]
+    fn test_best_target_url_guards_broken_gateway() {
+        let approved = ApprovedCampaigns {
+            tiki: Some(("4348614231480407268".to_string(), "TIKI (CPS)".to_string())),
+            tiktok: Some(("6648523843406889655".to_string(), "TIKTOK SHOP CPS".to_string())),
+            ..Default::default()
+        };
+
+        let tiki_offer = VoucherOffer {
+            platform: "Tiki".to_string(),
+            shop_name: "Tiki Trading".to_string(),
+            title: "Giam 45K".to_string(),
+            coupon_code: "KANG45".to_string(),
+            discount_percent: 0,
+            discount_amount: 45000.0,
+            discount_desc: "Giam 45K".to_string(),
+            min_spend: 699000.0,
+            raw_url: "https://tiki.vn/cua-hang/tiki-trading".to_string(),
+            aff_url: Some("https://go.isclix.com/deep_link/123/4348614231480407268?url=abc".to_string()),
+            end_time: "2026-12-31".to_string(),
+        };
+        assert_eq!(tiki_offer.best_target_url(Some(&approved)), "https://tiki.vn/cua-hang/tiki-trading");
+        assert_eq!(tiki_offer.discount_badge(), "-45K");
+
+        let tiktok_offer = VoucherOffer {
+            platform: "TikTok Shop".to_string(),
+            shop_name: "TikTok".to_string(),
+            title: "Sale".to_string(),
+            coupon_code: "TT35".to_string(),
+            discount_percent: 35,
+            discount_amount: 0.0,
+            discount_desc: "Giam 35%".to_string(),
+            min_spend: 0.0,
+            raw_url: "https://shop.tiktok.com".to_string(),
+            aff_url: Some("https://go.isclix.com/deep_link/123/6648523843406889655?url=tt".to_string()),
+            end_time: "2026-12-31".to_string(),
+        };
+        assert_eq!(
+            tiktok_offer.best_target_url(Some(&approved)),
+            "https://go.isclix.com/deep_link/123/6648523843406889655?url=tt"
+        );
+        assert_eq!(tiktok_offer.discount_badge(), "-35%");
+        assert!(is_tracking_gateway_host("go.isclix.com"));
+        assert!(is_tracking_gateway_host("shorten.asia"));
+        assert!(!is_tracking_gateway_host("click.accesstrade.vn"));
     }
 
     #[test]

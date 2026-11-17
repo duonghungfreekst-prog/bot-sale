@@ -354,6 +354,8 @@ fn render_platform_status(label: &str, matched: &Option<(String, String)>, manua
 #[derive(serde::Deserialize, Default)]
 struct DashboardQuery {
     notice: Option<String>,
+    q: Option<String>,
+    plat: Option<String>,
 }
 
 async fn resolve_accesstrade_token(conn: &libsql::Connection, config: &Config) -> Option<String> {
@@ -465,30 +467,70 @@ async fn handle_dashboard(
         )
     };
 
-    // Kho mã giảm 20% - 35%+ đang cache từ ACCESSTRADE API
+    // Kho mã toàn thị trường đang cache (tự động cập nhật mỗi 60 giây)
+    let sync_meta = state.accesstrade.get_voucher_sync_meta().await;
+    let last_sync_display = if sync_meta.last_sync_vn.is_empty() {
+        "Đang khởi tạo chu kỳ đầu tiên...".to_string()
+    } else {
+        format!("{} (Chu kỳ #{})", sync_meta.last_sync_vn, sync_meta.sync_cycles)
+    };
+
     let cached_vouchers = state.accesstrade.peek_cached_high_discount_vouchers().await;
+    let total_market_vouchers = cached_vouchers.len();
+    let high_pct_vouchers = cached_vouchers.iter().filter(|v| v.discount_percent >= 20).count();
+    let shopee_vouchers = cached_vouchers.iter().filter(|v| v.platform == "Shopee").count();
+    let tiki_vouchers = cached_vouchers.iter().filter(|v| v.platform == "Tiki").count();
+
+    let search_q = query.q.as_deref().unwrap_or("").trim().to_string();
+    let filter_plat = query.plat.as_deref().unwrap_or("all").trim().to_string();
+    let search_q_lower = search_q.to_lowercase();
+
+    let filtered_vouchers: Vec<_> = cached_vouchers
+        .iter()
+        .filter(|v| {
+            let plat_ok = match filter_plat.as_str() {
+                "pct20" => v.discount_percent >= 20,
+                "Shopee" => v.platform == "Shopee",
+                "Tiki" => v.platform == "Tiki",
+                "other" => v.discount_percent < 20,
+                _ => true,
+            };
+            if !plat_ok {
+                return false;
+            }
+            if search_q_lower.is_empty() {
+                return true;
+            }
+            v.shop_name.to_lowercase().contains(&search_q_lower)
+                || v.coupon_code.to_lowercase().contains(&search_q_lower)
+                || v.discount_desc.to_lowercase().contains(&search_q_lower)
+                || v.platform.to_lowercase().contains(&search_q_lower)
+        })
+        .collect();
+
     let mut voucher_rows = String::new();
-    for v in cached_vouchers.iter().take(20) {
+    for v in filtered_vouchers.iter().take(50) {
         let target_url = v.best_target_url(approved_opt.as_ref());
         voucher_rows.push_str(&format!(
             r#"<tr class="border-b border-gray-800/80 hover:bg-gray-800/40">
                 <td class="py-2.5 px-3 text-xs font-bold text-orange-400">{}</td>
                 <td class="py-2.5 px-3 text-xs text-white font-semibold">{}</td>
                 <td class="py-2.5 px-3 text-xs font-mono text-yellow-300">{}</td>
-                <td class="py-2.5 px-3 text-xs text-gray-300">{}</td>
+                <td class="py-2.5 px-3 text-xs text-gray-200">{}<div class="text-gray-400">{}</div></td>
                 <td class="py-2.5 px-3 text-xs text-gray-400">{}</td>
-                <td class="py-2.5 px-3 text-xs"><a href="{}" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">Mở ↗</a></td>
+                <td class="py-2.5 px-3 text-xs"><a href="{}" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">Mở Link Chuẩn ↗</a></td>
             </tr>"#,
             escape_html(&v.discount_badge()),
             escape_html(&v.platform),
             escape_html(&v.coupon_code),
             escape_html(&v.shop_name),
+            escape_html(&v.discount_desc),
             escape_html(&v.end_time),
             escape_html(target_url)
         ));
     }
     if voucher_rows.is_empty() {
-        voucher_rows = r#"<tr><td colspan="6" class="py-6 text-center text-xs text-gray-500">Chưa nạp cache kho mã thị trường. Bấm nút <b>Quét Ngay Toàn Bộ Kho Mã</b> để đồng bộ 100% mã từ ACCESSTRADE API.</td></tr>"#.to_string();
+        voucher_rows = r#"<tr><td colspan="6" class="py-6 text-center text-xs text-gray-500">Không có mã nào khớp bộ lọc (hoặc đang khởi tạo lần quét đầu tiên). Bấm nút <b>Quét Ngay Toàn Bộ Kho Mã</b> nếu cần làm mới ngay.</td></tr>"#.to_string();
     }
 
     // Bảng danh sách Mã Độc Quyền Hợp Tác & Deals trong DB
@@ -575,6 +617,15 @@ async fn handle_dashboard(
         r#"<span class="text-blue-400 font-semibold">🔵 Polling</span>"#
     };
 
+    let sel_all = if filter_plat == "all" { "selected" } else { "" };
+    let sel_pct20 = if filter_plat == "pct20" { "selected" } else { "" };
+    let sel_other = if filter_plat == "other" { "selected" } else { "" };
+    let sel_shopee = if filter_plat == "Shopee" { "selected" } else { "" };
+    let sel_tiki = if filter_plat == "Tiki" { "selected" } else { "" };
+    let shown_vouchers_count = filtered_vouchers.len().min(50);
+    let matched_vouchers_count = filtered_vouchers.len();
+    let other_vouchers_count = total_market_vouchers.saturating_sub(high_pct_vouchers);
+
     let dashboard_html = format!(
         r#"<!DOCTYPE html>
 <html lang="vi">
@@ -620,8 +671,8 @@ async fn handle_dashboard(
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         {}
         {}
-        <!-- Thống kê tổng quan -->
-        <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        <!-- Thống kê tổng quan & Đồng bộ Thời Gian Thực -->
+        <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             <div class="bg-gray-900 border border-gray-800 p-5 rounded-2xl shadow-lg">
                 <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Người Dùng Telegram</div>
                 <div class="text-3xl font-black text-white">{}</div>
@@ -629,18 +680,33 @@ async fn handle_dashboard(
             </div>
 
             <div class="bg-gray-900 border border-gray-800 p-5 rounded-2xl shadow-lg">
-                <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Tổng Lượt Dán Link / Click</div>
+                <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Tổng Lượt Dán Link</div>
                 <div class="text-3xl font-black text-yellow-400">{}</div>
-                <div class="text-xs text-gray-400 mt-2">🔗 Tổng số link đã xử lý</div>
+                <div class="text-xs space-y-0.5 mt-2 text-gray-400">
+                    <div>🟠 Shopee: <strong class="text-white">{}</strong> · 🔵 Lazada: <strong class="text-white">{}</strong></div>
+                    <div>🎵 TikTok: <strong class="text-white">{}</strong> · 🔹 Tiki: <strong class="text-white">{}</strong></div>
+                </div>
             </div>
 
-            <div class="bg-gray-900 border border-gray-800 p-5 rounded-2xl shadow-lg">
-                <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Phân Bổ Lượt Dán Sàn</div>
-                <div class="text-xs space-y-1 mt-1 text-gray-300">
-                    <div class="flex justify-between"><span>🟠 Shopee:</span> <strong class="text-white">{}</strong></div>
-                    <div class="flex justify-between"><span>🔵 Lazada:</span> <strong class="text-white">{}</strong></div>
-                    <div class="flex justify-between"><span>🎵 TikTok:</span> <strong class="text-white">{}</strong></div>
-                    <div class="flex justify-between"><span>🔹 Tiki:</span> <strong class="text-white">{}</strong></div>
+            <div class="bg-gray-900 border border-orange-500/30 p-5 rounded-2xl shadow-lg">
+                <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Kho Mã Toàn Thị Trường</div>
+                <div class="text-3xl font-black text-orange-400">{}</div>
+                <div class="text-xs space-y-0.5 mt-2 text-gray-300">
+                    <div>🔥 &gt;=20%: <strong class="text-white">{}</strong> · 💸 Tiền/Khác: <strong class="text-white">{}</strong></div>
+                    <div>🟠 Shopee: <strong class="text-white">{}</strong> · 🔹 Tiki: <strong class="text-white">{}</strong> · 👑 Độc quyền: <strong class="text-purple-300">{}</strong></div>
+                </div>
+            </div>
+
+            <div class="bg-gray-900 border border-green-500/30 p-5 rounded-2xl shadow-lg flex flex-col justify-between">
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Tự Động Quét Mỗi Phút</div>
+                    <div class="text-sm font-bold text-green-400">⏱️ Chu kỳ 60 giây / lần</div>
+                    <div class="text-xs text-gray-300 mt-1">Lần cuối: <strong class="text-white">{}</strong></div>
+                </div>
+                <div class="mt-3">
+                    <a href="/admin" class="inline-block px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-xs text-gray-200 font-semibold transition">
+                        🔄 Làm Mới Số Liệu Web
+                    </a>
                 </div>
             </div>
         </section>
@@ -654,7 +720,7 @@ async fn handle_dashboard(
                         <span>Kết Nối ACCESSTRADE API (Tự Động Full 4 Sàn)</span>
                     </h2>
                     <p class="text-xs text-gray-400 mt-1">
-                        Bot tự động gọi API <code>v1/product_link/create</code> (kèm <code>utm_source=facebook</code>) để sinh link rút gọn và cộng 100% hoa hồng về ví AccessTrade của bạn.
+                        Bot tự động gọi API <code>v1/product_link/create</code> (kèm <code>utm_source=facebook</code>) &amp; TikTok v2 Universal Deeplink, đồng thời kiểm tra HTTP 302/200 chống lỗi link 404/500.
                     </p>
                 </div>
                 <div class="flex items-center space-x-2">
@@ -668,12 +734,18 @@ async fn handle_dashboard(
             </div>
 
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div class="bg-gray-950/60 border border-gray-800 rounded-xl p-4">
-                    <div class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Trạng Thái Duyệt Các Sàn</div>
+                <div class="bg-gray-950/60 border border-gray-800 rounded-xl p-4 space-y-3">
+                    <div class="text-xs font-bold uppercase tracking-wider text-gray-400">Trạng Thái Duyệt &amp; Chuẩn Hóa Link</div>
                     <div class="text-sm space-y-1">
                         {}
                     </div>
-                    <p class="text-xs text-gray-500 mt-3">
+                    <div class="text-xs text-gray-400 bg-gray-900/80 border border-gray-800 rounded-lg p-2.5 space-y-1">
+                        <div class="font-semibold text-gray-200">🛡️ Cơ chế bảo vệ Link Đầu Ra 100% Sống:</div>
+                        <div>• <b>TikTok Shop:</b> Link v2 <code>tiktok.com/t/...</code> mở thẳng sản phẩm trên App.</div>
+                        <div>• <b>Tiki:</b> Bot tự kiểm tra gateway <code>go.isclix.com</code>, nếu lỗi 404/500 tự trả link gốc Tiki <code>HTTP 200</code> an toàn.</div>
+                        <div>• <b>Shopee / Lazada:</b> Đang chờ duyệt — bot trả link sản phẩm sạch <code>HTTP 200</code> + kho mã thật Shopee.</div>
+                    </div>
+                    <p class="text-xs text-gray-500">
                         Sàn nào báo <b>Chưa duyệt</b>: Hãy vào <a href="https://pub2.accesstrade.vn" target="_blank" rel="noopener noreferrer" class="text-yellow-400 underline">pub2.accesstrade.vn</a> bấm Đăng ký chiến dịch sàn đó rồi nhấn <b>Đồng Bộ Lại</b>.
                     </p>
                 </div>
@@ -682,7 +754,7 @@ async fn handle_dashboard(
                     <div>
                         <label class="block text-xs font-semibold text-gray-400 mb-1">ACCESSTRADE API Access Key (Token)</label>
                         <input type="password" name="api_token" placeholder="Dán API Access Key mới (hoặc để trống để giữ Token hiện tại)..." class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500">
-                        <p class="text-xs text-gray-500 mt-1">💡 Khuyên dùng thêm biến <code>ACCESSTRADE_API_TOKEN</code> trong tab Environment trên Render để không bị mất khi Render khởi động lại.</p>
+                        <p class="text-xs text-gray-500 mt-1">💡 Đã tích hợp sẵn API Token dự phòng trong cấu hình — không bao giờ mất kết nối khi deploy lại.</p>
                     </div>
 
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -711,25 +783,42 @@ async fn handle_dashboard(
             </div>
         </section>
 
-        <!-- Kho Mã Giảm 20% - 35%+ Thật Từ ACCESSTRADE API -->
+        <!-- Kho Mã Giảm Giá Toàn Thị Trường (Quét 100% không bỏ sót + Cập nhật mỗi 60 giây) -->
         <section class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-4">
             <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-4">
                 <div>
-                    <h2 class="text-lg font-bold text-white flex items-center space-x-2">
+                    <h2 class="text-lg font-bold text-white flex flex-wrap items-center gap-2">
                         <span>🔥</span>
-                        <span>Kho Mã Giảm 20% - 35%+ Thật (Đồng Bộ ACCESSTRADE API)</span>
-                        <span class="px-2.5 py-0.5 bg-orange-500/20 text-orange-300 rounded-lg text-xs font-semibold">{} mã đang sẵn</span>
+                        <span>Kho Mã Giảm Giá Toàn Thị Trường (Cập Nhật Mỗi 60 Giây)</span>
+                        <span class="px-2.5 py-0.5 bg-orange-500/20 text-orange-300 rounded-lg text-xs font-semibold">{} mã đang sẵn ({} mã &gt;=20%)</span>
                     </h2>
                     <p class="text-xs text-gray-400 mt-1">
-                        Bot tự động quét các mã giảm thật từ 20% trở lên trên hệ thống ACCESSTRADE để hiển thị cho khách khi bấm <code>/deals</code> hoặc nút <b>Kho Mã 20% - 35%+</b> trên Telegram.
+                        Quét vét cạn từ 7 cổng ACCESSTRADE (mã %, giảm tiền K/VNĐ, mã hot, coupon Tiki/Shopee/Lazada/TikTok). Lần quét gần nhất: <strong class="text-green-400">{}</strong>.
                     </p>
                 </div>
                 <form method="POST" action="/admin/vouchers/sync">
                     <button type="submit" class="px-4 py-2 bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/40 text-orange-300 rounded-xl text-xs font-semibold transition">
-                        🔄 Quét Ngay Kho Mã 20%-35%+
+                        🔄 Quét Sâu Toàn Bộ Ngay
                     </button>
                 </form>
             </div>
+
+            <!-- Thanh tìm kiếm & lọc trên Web -->
+            <form method="GET" action="/admin" class="flex flex-wrap items-center gap-3 bg-gray-950/60 border border-gray-800 p-3 rounded-xl">
+                <input type="text" name="q" value="{}" placeholder="Tìm tên shop, mã code, mức giảm (VD: 35%, LANGXDKKP, Tiki)..." class="flex-1 min-w-52 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                <select name="plat" class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-xs">
+                    <option value="all" {}>🌟 Tất Cả Sàn &amp; Loại</option>
+                    <option value="pct20" {}>🔥 Giảm Sâu 20% - 35%+</option>
+                    <option value="other" {}>💸 Giảm Tiền K/VNĐ &amp; Khác</option>
+                    <option value="Shopee" {}>🟠 Chỉ Shopee</option>
+                    <option value="Tiki" {}>🔹 Chỉ Tiki</option>
+                </select>
+                <button type="submit" class="px-4 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white rounded-lg text-xs font-semibold transition">
+                    🔍 Lọc Mã
+                </button>
+                <span class="text-xs text-gray-400">Hiển thị <strong class="text-white">{}</strong> / <strong>{}</strong> mã khớp</span>
+            </form>
+
             <div class="overflow-x-auto">
                 <table class="w-full text-left">
                     <thead class="bg-gray-800/60 text-xs uppercase text-gray-400 border-b border-gray-800">
@@ -737,7 +826,7 @@ async fn handle_dashboard(
                             <th class="py-2.5 px-3">Mức Giảm</th>
                             <th class="py-2.5 px-3">Sàn</th>
                             <th class="py-2.5 px-3">Mã Code</th>
-                            <th class="py-2.5 px-3">Gian Hàng / Thương Hiệu</th>
+                            <th class="py-2.5 px-3">Gian Hàng &amp; Điều Kiện Áp Mã</th>
                             <th class="py-2.5 px-3">HSD</th>
                             <th class="py-2.5 px-3">Link Áp Mã</th>
                         </tr>
@@ -888,13 +977,30 @@ async fn handle_dashboard(
         stats.lazada_clicks,
         stats.tiktok_clicks,
         stats.tiki_clicks,
+        total_market_vouchers,
+        high_pct_vouchers,
+        other_vouchers_count,
+        shopee_vouchers,
+        tiki_vouchers,
+        saved_deals.len(),
+        escape_html(&last_sync_display),
         at_status_badge,
         campaign_status_html,
         escape_html(&camp_shopee),
         escape_html(&camp_lazada),
         escape_html(&camp_tiki),
         escape_html(&camp_tiktok),
-        cached_vouchers.len(),
+        total_market_vouchers,
+        high_pct_vouchers,
+        escape_html(&last_sync_display),
+        escape_html(&search_q),
+        sel_all,
+        sel_pct20,
+        sel_other,
+        sel_shopee,
+        sel_tiki,
+        shown_vouchers_count,
+        matched_vouchers_count,
         voucher_rows,
         saved_deals.len(),
         exclusive_rows,

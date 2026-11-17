@@ -662,6 +662,13 @@ async fn build_deals_page(
     let end = (start + PAGE_SIZE).min(total_items);
 
     let vn_now = Utc::now() + chrono::Duration::hours(7);
+    let sync_meta = at_client.get_voucher_sync_meta().await;
+    let sync_time_note = if sync_meta.last_sync_vn.is_empty() {
+        vn_now.format("%H:%M %d/%m").to_string()
+    } else {
+        sync_meta.last_sync_vn
+    };
+
     let filter_label = match filter_norm.as_str() {
         "exclusive" => "👑 Mã Độc Quyền Hợp Tác".to_string(),
         "pct20" => "🔥 Kho Mã Giảm Sâu 20% - 35%+".to_string(),
@@ -674,14 +681,15 @@ async fn build_deals_page(
 
     let mut html = format!(
         "🎟️ <b>KHO MÃ GIẢM GIÁ TOÀN THỊ TRƯỜNG — {}</b>\n\
-         👑 Độc quyền: <b>{}</b> | 🔥 &gt;=20%: <b>{}</b> | 💸 Mã khác: <b>{}</b> | Tổng: <b>{}</b> (<i>{}</i>)\n\
+         👑 Độc quyền: <b>{}</b> | 🔥 &gt;=20%: <b>{}</b> | 💸 Mã khác: <b>{}</b> | Tổng: <b>{}</b>\n\
+         ⏱️ <i>Tự cập nhật mỗi 60s · Quét gần nhất: {}</i>\n\
          <i>(Chạm vào <code>MÃ CODE</code> để sao chép · Gõ <code>/deals từ_khóa</code> để tìm shop)</i>\n",
         filter_label,
         db_deals.len(),
         high_pct_count,
         other_count,
         db_deals.len() + all_api_vouchers.len(),
-        vn_now.format("%H:%M %d/%m")
+        escape_html(&sync_time_note)
     );
 
     if let Some(err) = api_err {
