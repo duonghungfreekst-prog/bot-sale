@@ -572,6 +572,11 @@ impl AccessTradeClient {
     }
 
     /// Xem nhanh toàn bộ kho voucher thị trường đang nằm sẵn trong RAM cache (không gọi mạng)
+    /// Lấy danh sách các chiến dịch đã duyệt đang nằm trong RAM cache (không gọi mạng)
+    pub async fn peek_approved_campaigns(&self) -> Option<ApprovedCampaigns> {
+        self.cache.read().await.as_ref().map(|(_, c)| c.clone())
+    }
+
     pub async fn peek_cached_high_discount_vouchers(&self) -> Vec<VoucherOffer> {
         let guard = self.voucher_cache.read().await;
         guard
@@ -580,47 +585,44 @@ impl AccessTradeClient {
             .unwrap_or_default()
     }
 
-    /// Tìm các mã giảm giá trong kho khớp với tên sản phẩm / shop hoặc sàn khi khách dán link
+    /// Tìm các mã giảm giá trong kho khớp ĐÚNG với shop / thương hiệu / sản phẩm hoặc mã toàn sàn (tuyệt đối không nhét bừa mã shop khác)
     pub async fn search_matching_vouchers_for_deal(
         &self,
         platform: &str,
         product_title: &str,
         clean_url: &str,
+        shop_name: Option<&str>,
+        brand_name: Option<&str>,
+        price_vnd: Option<f64>,
         max_items: usize,
     ) -> Vec<VoucherOffer> {
         let all = self.peek_cached_high_discount_vouchers().await;
         if all.is_empty() {
             return Vec::new();
         }
+        match_vouchers_for_product(
+            &all,
+            platform,
+            product_title,
+            clean_url,
+            shop_name,
+            brand_name,
+            price_vnd,
+            max_items,
+        )
+    }
 
-        let title_lower = product_title.to_lowercase();
-        let url_lower = clean_url.to_lowercase();
-        let mut exact_shop_matches = Vec::new();
-        let mut top_platform_matches = Vec::new();
-
-        for v in all {
-            if !v.platform.eq_ignore_ascii_case(platform) {
-                continue;
-            }
-            let shop_lower = v.shop_name.to_lowercase();
-            let is_shop_match = shop_lower.len() >= 3
-                && !shop_lower.eq_ignore_ascii_case(platform)
-                && (title_lower.contains(&shop_lower) || url_lower.contains(&shop_lower.replace(' ', "")));
-
-            if is_shop_match {
-                exact_shop_matches.push(v);
-            } else if top_platform_matches.len() < max_items {
-                top_platform_matches.push(v);
-            }
+    /// Trả về link đích đã qua kiểm tra gateway redirect an toàn cho một mã giảm giá (không bao giờ đưa link chết 404/500)
+    pub async fn verified_offer_url(
+        &self,
+        offer: &VoucherOffer,
+        approved: Option<&ApprovedCampaigns>,
+    ) -> String {
+        let candidate = offer.best_target_url(approved);
+        if candidate != offer.raw_url && !self.verify_affiliate_redirect_ok(candidate).await {
+            return offer.raw_url.clone();
         }
-
-        if !exact_shop_matches.is_empty() {
-            exact_shop_matches.truncate(max_items);
-            exact_shop_matches
-        } else {
-            top_platform_matches.truncate(max_items);
-            top_platform_matches
-        }
+        candidate.to_string()
     }
 
     /// Quét toàn bộ mã giảm giá trên thị trường từ tất cả các cổng ACCESSTRADE (hỗ trợ đồng bộ mỗi 60 giây)
@@ -1114,6 +1116,179 @@ mod tests {
         let (all_active, _) = parse_offers_informations_page(sample, "2026-11-16", 0).unwrap();
         assert_eq!(all_active.len(), 3);
     }
+
+    #[test]
+    fn test_match_vouchers_for_product_strictly_avoids_unrelated_shops() {
+        let make_offer = |shop: &str, code: &str, pct: u32, amt: f64, min_sp: f64| VoucherOffer {
+            platform: "Tiki".to_string(),
+            shop_name: shop.to_string(),
+            title: format!("Ưu đãi {}", shop),
+            coupon_code: code.to_string(),
+            discount_percent: pct,
+            discount_amount: amt,
+            discount_desc: format!("Giảm {} đơn từ {}", code, min_sp),
+            min_spend: min_sp,
+            raw_url: "https://tiki.vn/cua-hang/test".to_string(),
+            aff_url: None,
+            end_time: "2026-12-31".to_string(),
+        };
+
+        let offers = vec![
+            make_offer("BG Việt Nam Official Store", "T102026", 18, 20000.0, 0.0),
+            make_offer("DONA Thời Trang", "DONAFLR22", 11, 22000.0, 200000.0),
+            make_offer("Tiki Trading", "KANG45NT1126", 0, 45000.0, 699000.0),
+            make_offer("Toàn sàn Tiki", "TIKIALL50", 0, 50000.0, 500000.0),
+        ];
+
+        let matched = match_vouchers_for_product(
+            &offers,
+            "Tiki",
+            "Sữa bột Enfagrow Enspire 3 850g",
+            "https://tiki.vn/product-p274504811.html",
+            Some("Tiki Trading"),
+            Some("Enfa"),
+            Some(822000.0),
+            3,
+        );
+
+        let codes: Vec<&str> = matched.iter().map(|v| v.coupon_code.as_str()).collect();
+        assert_eq!(codes, vec!["KANG45NT1126", "TIKIALL50"]);
+        assert!(!codes.contains(&"T102026"));
+        assert!(!codes.contains(&"DONAFLR22"));
+
+        // Khi sản phẩm từ shop chưa có mã riêng và không có mã toàn sàn -> trả về rỗng thay vì nhét mã shop khác
+        let only_other_shops = vec![
+            make_offer("BG Việt Nam Official Store", "T102026", 18, 20000.0, 0.0),
+            make_offer("DONA Thời Trang", "DONAFLR22", 11, 22000.0, 200000.0),
+        ];
+        let empty = match_vouchers_for_product(
+            &only_other_shops,
+            "Tiki",
+            "Sữa bột Enfagrow Enspire 3 850g",
+            "https://tiki.vn/product-p274504811.html",
+            Some("Enfa Store"),
+            Some("Enfa"),
+            Some(822000.0),
+            3,
+        );
+        assert!(empty.is_empty());
+    }
+}
+
+fn is_generic_platform_voucher_shop(shop_lower: &str, platform_lower: &str) -> bool {
+    let trimmed = shop_lower.trim();
+    if trimmed.is_empty() || trimmed == platform_lower {
+        return true;
+    }
+    matches!(
+        trimmed,
+        "tiki"
+            | "tikinow"
+            | "toàn sàn"
+            | "toàn sàn tiki"
+            | "toàn sàn shopee"
+            | "toàn sàn lazada"
+            | "shopee"
+            | "shopee mall"
+            | "lazada"
+            | "lazmall"
+            | "tiktok"
+            | "tiktok shop"
+            | "khác"
+    ) || trimmed.starts_with("toàn sàn ")
+}
+
+/// Lọc và xếp hạng mã khớp ĐÚNG shop / thương hiệu / toàn sàn của sản phẩm
+pub fn match_vouchers_for_product(
+    offers: &[VoucherOffer],
+    platform: &str,
+    product_title: &str,
+    clean_url: &str,
+    shop_name: Option<&str>,
+    brand_name: Option<&str>,
+    price_vnd: Option<f64>,
+    max_items: usize,
+) -> Vec<VoucherOffer> {
+    let platform_lower = platform.trim().to_lowercase();
+    let title_lower = product_title.trim().to_lowercase();
+    let url_lower = clean_url.trim().to_lowercase();
+    let prod_shop_lower = shop_name.unwrap_or("").trim().to_lowercase();
+    let prod_brand_lower = brand_name.unwrap_or("").trim().to_lowercase();
+
+    let mut ranked: Vec<(u8, bool, u32, i64, VoucherOffer)> = Vec::new();
+
+    for v in offers {
+        if !v.platform.eq_ignore_ascii_case(platform) {
+            continue;
+        }
+        let v_shop_lower = v.shop_name.trim().to_lowercase();
+        let v_title_lower = v.title.trim().to_lowercase();
+        let is_generic = is_generic_platform_voucher_shop(&v_shop_lower, &platform_lower);
+
+        let exact_shop_match = !is_generic
+            && !prod_shop_lower.is_empty()
+            && v_shop_lower.len() >= 3
+            && (v_shop_lower == prod_shop_lower
+                || prod_shop_lower.contains(&v_shop_lower)
+                || v_shop_lower.contains(&prod_shop_lower));
+
+        let brand_or_product_match = !is_generic
+            && ((!prod_brand_lower.is_empty()
+                && prod_brand_lower.len() >= 3
+                && (v_shop_lower.contains(&prod_brand_lower)
+                    || v_title_lower.contains(&prod_brand_lower)))
+                || (v_shop_lower.len() >= 4
+                    && (title_lower.contains(&v_shop_lower)
+                        || url_lower.contains(&v_shop_lower.replace(' ', "")))));
+
+        let tier = if exact_shop_match {
+            3
+        } else if brand_or_product_match {
+            2
+        } else if is_generic {
+            1
+        } else {
+            0
+        };
+
+        if tier == 0 {
+            continue;
+        }
+
+        let price_eligible = match price_vnd {
+            Some(price) if price > 0.0 && v.min_spend > 0.0 => price >= v.min_spend,
+            _ => true,
+        };
+
+        ranked.push((
+            tier,
+            price_eligible,
+            v.discount_percent,
+            v.discount_amount.round() as i64,
+            v.clone(),
+        ));
+    }
+
+    ranked.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.cmp(&a.1))
+            .then_with(|| b.2.cmp(&a.2))
+            .then_with(|| b.3.cmp(&a.3))
+    });
+
+    let mut seen_codes: HashSet<String> = HashSet::new();
+    let mut results = Vec::new();
+    for (_, _, _, _, offer) in ranked {
+        let code_key = offer.coupon_code.trim().to_uppercase();
+        if !code_key.is_empty() && !seen_codes.insert(code_key) {
+            continue;
+        }
+        results.push(offer);
+        if results.len() >= max_items {
+            break;
+        }
+    }
+    results
 }
 
 /// Phân tích 1 trang JSON từ ACCESSTRADE v1/offers_informations hoặc /coupon (khi min_discount_pct = 0 sẽ lấy 100% mã còn hạn)

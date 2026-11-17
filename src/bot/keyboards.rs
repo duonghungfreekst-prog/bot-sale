@@ -1,17 +1,12 @@
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, KeyboardMarkup};
 use url::Url;
 
-/// Bàn phím Reply Keyboard thường trực ở dưới khung chat (Tập trung săn sale)
+/// Bàn phím Reply Keyboard thường trực ở dưới khung chat (Tập trung dán link sản phẩm)
 pub fn persistent_reply_keyboard() -> KeyboardMarkup {
-    KeyboardMarkup::new(vec![
-        vec![
-            KeyboardButton::new("🎟️ Kho Mã 20% - 35%+"),
-        ],
-        vec![
-            KeyboardButton::new("📖 Hướng Dẫn Săn Sale"),
-            KeyboardButton::new("🚀 Chia Sẻ Cho Bạn Bè"),
-        ],
-    ])
+    KeyboardMarkup::new(vec![vec![
+        KeyboardButton::new("📖 Hướng Dẫn Săn Sale"),
+        KeyboardButton::new("🚀 Chia Sẻ Cho Bạn Bè"),
+    ]])
     .resize_keyboard()
     .persistent()
 }
@@ -19,7 +14,7 @@ pub fn persistent_reply_keyboard() -> KeyboardMarkup {
 /// Bàn phím Inline cho Menu chính
 pub fn main_menu_keyboard(bot_username: &str) -> InlineKeyboardMarkup {
     let share_text = format!(
-        "Dán link sản phẩm Shopee/Lazada vào bot này là tự động được gắn mã giảm giá 20% - 50k nè: https://t.me/{}",
+        "Dán link sản phẩm Shopee/Lazada/Tiki/TikTok vào bot này để lấy link mua kèm mã giảm giá phù hợp nè: https://t.me/{}",
         bot_username
     );
     let share_url_str = format!(
@@ -32,9 +27,6 @@ pub fn main_menu_keyboard(bot_username: &str) -> InlineKeyboardMarkup {
 
     InlineKeyboardMarkup::new(vec![
         vec![
-            InlineKeyboardButton::callback("🎟️ Kho Mã 20% - 35%+ & Độc Quyền", "deals_page:all:0"),
-        ],
-        vec![
             InlineKeyboardButton::callback("📖 Hướng Dẫn Áp Mã Thành Công 100%", "menu_guide"),
         ],
         vec![
@@ -43,78 +35,28 @@ pub fn main_menu_keyboard(bot_username: &str) -> InlineKeyboardMarkup {
     ])
 }
 
-/// Bàn phím lọc & phân trang cho Kho Mã Giảm Giá (/deals) — hiển thị toàn bộ mã trên thị trường
-pub fn deals_pagination_keyboard(filter: &str, page: usize, total_pages: usize) -> InlineKeyboardMarkup {
-    let filter_row_1 = vec![
-        InlineKeyboardButton::callback(
-            if filter == "all" { "• 🌟 Tất Cả •" } else { "🌟 Tất Cả" },
-            "deals_page:all:0",
-        ),
-        InlineKeyboardButton::callback(
-            if filter == "pct20" { "• 🔥 20%-35%+ •" } else { "🔥 20%-35%+" },
-            "deals_page:pct20:0",
-        ),
-        InlineKeyboardButton::callback(
-            if filter == "other" { "• 💸 Giảm Tiền/Khác •" } else { "💸 Giảm Tiền/Khác" },
-            "deals_page:other:0",
-        ),
-    ];
-
-    let filter_row_2 = vec![
-        InlineKeyboardButton::callback(
-            if filter == "exclusive" { "• 👑 Độc Quyền •" } else { "👑 Độc Quyền" },
-            "deals_page:exclusive:0",
-        ),
-        InlineKeyboardButton::callback(
-            if filter == "shopee" { "• 🟠 Shopee •" } else { "🟠 Shopee" },
-            "deals_page:shopee:0",
-        ),
-        InlineKeyboardButton::callback(
-            if filter == "tiki" { "• 🔹 Tiki •" } else { "🔹 Tiki" },
-            "deals_page:tiki:0",
-        ),
-    ];
-
-    let mut rows = vec![filter_row_1, filter_row_2];
-
-    if total_pages > 1 {
-        let mut nav_row = Vec::new();
-        if page > 0 {
-            nav_row.push(InlineKeyboardButton::callback(
-                "⬅️ Trang trước",
-                format!("deals_page:{}:{}", filter, page - 1),
-            ));
-        }
-        nav_row.push(InlineKeyboardButton::callback(
-            format!("📄 {}/{}", page + 1, total_pages),
-            format!("deals_page:{}:{}", filter, page),
-        ));
-        if page + 1 < total_pages {
-            nav_row.push(InlineKeyboardButton::callback(
-                "Trang sau ➡️",
-                format!("deals_page:{}:{}", filter, page + 1),
-            ));
-        }
-        rows.push(nav_row);
-    }
-
-    rows.push(vec![InlineKeyboardButton::callback(
-        "🔄 Cập Nhật Kho Mã Mới Nhất",
-        format!("deals_refresh:{}:{}", filter, page),
-    )]);
-
-    InlineKeyboardMarkup::new(rows)
-}
-
-/// Bàn phím hành động khi người dùng gửi link sản phẩm
-pub fn deal_action_keyboard(affiliate_url: &str, platform: &str) -> InlineKeyboardMarkup {
+/// Bàn phím hành động khi người dùng gửi link sản phẩm (đính link mua và các mã khớp trực tiếp)
+pub fn deal_action_keyboard(
+    affiliate_url: &str,
+    platform: &str,
+    voucher_links: &[(String, String)],
+) -> InlineKeyboardMarkup {
     let target_url = Url::parse(affiliate_url)
         .unwrap_or_else(|_| Url::parse("https://shopee.vn").unwrap());
 
     let mut rows = vec![vec![InlineKeyboardButton::url(
-        format!("🛍️ Mở {} & Mua Giá Giảm Ngay 🛍️", platform),
+        format!("🛍️ Mở {} & Mua Ngay 🛍️", platform),
         target_url,
     )]];
+
+    for (label, raw_voucher_url) in voucher_links.iter().take(2) {
+        if let Ok(parsed_voucher_url) = Url::parse(raw_voucher_url) {
+            rows.push(vec![InlineKeyboardButton::url(
+                label.clone(),
+                parsed_voucher_url,
+            )]);
+        }
+    }
 
     match platform.to_lowercase().as_str() {
         "shopee" => {
@@ -139,18 +81,13 @@ pub fn deal_action_keyboard(affiliate_url: &str, platform: &str) -> InlineKeyboa
         "tiki" => {
             if let Ok(voucher_url) = Url::parse("https://tiki.vn/khuyen-mai/ma-giam-gia") {
                 rows.push(vec![InlineKeyboardButton::url(
-                    "🎟️ Lưu Mã Giảm Giá Tiki",
+                    "🎟️ Cổng Voucher Tiki",
                     voucher_url,
                 )]);
             }
         }
         _ => {}
     }
-
-    rows.push(vec![InlineKeyboardButton::callback(
-        "🔥 Xem Kho Mã 20% - 35%+ & Độc Quyền",
-        "deals_page:all:0",
-    )]);
 
     InlineKeyboardMarkup::new(rows)
 }

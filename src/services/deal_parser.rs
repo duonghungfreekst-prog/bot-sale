@@ -3,6 +3,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use regex::Regex;
 use reqwest::{redirect, Client};
+use serde::Deserialize;
 use tracing::{info, warn};
 use url::Url;
 use uuid::Uuid;
@@ -55,6 +56,8 @@ pub struct ParsedDeal {
     pub platform: Platform,
     pub product_title: String,
     pub product_price_vnd: Option<f64>,
+    pub product_shop: Option<String>,
+    pub product_brand: Option<String>,
     pub original_url: String,
     #[allow(dead_code)]
     pub resolved_url: String,
@@ -556,6 +559,29 @@ impl DealParser {
 
         let mut affiliate_note: Option<String> = None;
         let mut product_price_vnd: Option<f64> = None;
+        let mut product_shop: Option<String> = None;
+        let mut product_brand: Option<String> = None;
+
+        if platform == Platform::Tiki {
+            let tiki_pid = self
+                .tiki_item_regex
+                .captures(&clean_url)
+                .or_else(|| self.tiki_item_regex.captures(&resolved_url))
+                .and_then(|c| c.get(1).map(|m| m.as_str().to_string()));
+
+            if let Some(pid) = tiki_pid {
+                if let Some((api_title, api_price, api_shop, api_brand)) = self.fetch_tiki_product_info(&pid).await {
+                    if user_text_title.is_none() && !api_title.is_empty() {
+                        product_title = api_title;
+                    }
+                    if api_price.is_some() {
+                        product_price_vnd = api_price;
+                    }
+                    product_shop = api_shop;
+                    product_brand = api_brand;
+                }
+            }
+        }
 
         let override_campaign_id = match platform {
             Platform::Shopee => settings.campaign_shopee,
@@ -585,7 +611,9 @@ impl DealParser {
                             product_title = api_name;
                         }
                     }
-                    product_price_vnd = res.product_price_vnd;
+                    if res.product_price_vnd.is_some() {
+                        product_price_vnd = res.product_price_vnd;
+                    }
                     (res.url, default_sub_id, true)
                 }
                 Err(err_msg) => {
@@ -626,6 +654,8 @@ impl DealParser {
             platform,
             product_title,
             product_price_vnd,
+            product_shop,
+            product_brand,
             original_url: raw_url,
             resolved_url,
             clean_url,
@@ -639,6 +669,64 @@ impl DealParser {
             tips,
         })
     }
+
+    /// Lấy tên sản phẩm, giá, shop bán và thương hiệu thật từ Tiki Public Product API v2
+    async fn fetch_tiki_product_info(
+        &self,
+        product_id: &str,
+    ) -> Option<(String, Option<f64>, Option<String>, Option<String>)> {
+        let api_url = format!("https://tiki.vn/api/v2/products/{}", product_id);
+        let resp = self.http_client.get(&api_url).send().await.ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let body = resp.text().await.ok()?;
+        parse_tiki_product_json(&body)
+    }
+}
+
+#[derive(Deserialize, Debug)]
+struct TikiProductApiResp {
+    name: Option<String>,
+    price: Option<serde_json::Value>,
+    current_seller: Option<TikiNamedField>,
+    brand: Option<TikiNamedField>,
+}
+
+#[derive(Deserialize, Debug)]
+struct TikiNamedField {
+    name: Option<String>,
+}
+
+/// Phân tích JSON phản hồi từ Tiki v2 product API thành (tên, giá VNĐ, tên shop, thương hiệu)
+pub fn parse_tiki_product_json(
+    body: &str,
+) -> Option<(String, Option<f64>, Option<String>, Option<String>)> {
+    let parsed: TikiProductApiResp = serde_json::from_str(body).ok()?;
+    let title = parsed
+        .name
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_default();
+    let price = parsed.price.and_then(|v| match v {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    }).filter(|&p| p > 0.0);
+    let shop = parsed
+        .current_seller
+        .and_then(|s| s.name)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let brand = parsed
+        .brand
+        .and_then(|b| b.name)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if title.is_empty() && price.is_none() && shop.is_none() && brand.is_none() {
+        return None;
+    }
+    Some((title, price, shop, brand))
 }
 
 fn html_escape_decode(s: &str) -> String {
@@ -749,5 +837,20 @@ mod tests {
             parser.extract_title_from_html("<html><head><title>Gạt mưa Bosch | Lazada Việt Nam</title></head></html>"),
             Some("Gạt mưa Bosch".to_string())
         );
+    }
+
+    #[test]
+    fn test_parse_tiki_product_api_json() {
+        let json = r#"{
+            "name": "Sữa bột Enfagrow Enspire 3 850g hỗ trợ đề kháng",
+            "price": 822000,
+            "current_seller": {"name": "Tiki Trading"},
+            "brand": {"name": "Enfa"}
+        }"#;
+        let (title, price, shop, brand) = parse_tiki_product_json(json).unwrap();
+        assert!(title.contains("Enfagrow"));
+        assert_eq!(price, Some(822000.0));
+        assert_eq!(shop.as_deref(), Some("Tiki Trading"));
+        assert_eq!(brand.as_deref(), Some("Enfa"));
     }
 }
