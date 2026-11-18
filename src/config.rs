@@ -28,6 +28,7 @@ pub struct Config {
     // Cấu hình tài khoản Quản trị viên (Chỉ 1 tài khoản Admin duy nhất)
     pub admin_username: String,
     pub admin_password: String,
+    pub admin_telegram_id: Option<i64>,
     pub port: u16,
 
     // Cấu hình Webhook, Shortlink bọc đầu ra & Keep-Alive khi chạy trên Cloud
@@ -126,6 +127,10 @@ impl Config {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "DealX@Admin2026".to_string());
 
+        let admin_telegram_id = read_env_non_empty("ADMIN_TELEGRAM_ID")
+            .and_then(|v| v.parse::<i64>().ok())
+            .filter(|&id| id != 0);
+
         let port = env::var("PORT")
             .ok()
             .and_then(|p| p.parse::<u16>().ok())
@@ -155,6 +160,7 @@ impl Config {
             shopee_social_params,
             admin_username,
             admin_password,
+            admin_telegram_id,
             port,
             public_base_url,
             shortlink_base_url,

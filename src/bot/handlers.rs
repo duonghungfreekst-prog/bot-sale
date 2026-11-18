@@ -7,7 +7,9 @@ use teloxide::{
 };
 use tracing::{error, warn};
 
-use super::keyboards::{deal_action_keyboard, main_menu_keyboard, persistent_reply_keyboard};
+use super::keyboards::{
+    batch_action_keyboard, deal_action_keyboard, main_menu_keyboard, persistent_reply_keyboard,
+};
 use crate::config::Config;
 use crate::db::models::ClickRecord;
 use crate::db::repository::Repository;
@@ -28,7 +30,95 @@ pub enum Command {
     Stats,
 }
 
-/// Xử lý tin nhắn văn bản thông thường
+/// Cấu hình Affiliate nạp từ DB (Web Admin) ưu tiên trước biến môi trường
+pub(crate) struct OwnedAffSettings {
+    pub deeplink_template: String,
+    pub accesstrade_token: Option<String>,
+    pub campaign_shopee: Option<String>,
+    pub campaign_lazada: Option<String>,
+    pub campaign_tiki: Option<String>,
+    pub campaign_tiktok: Option<String>,
+    pub shopee_affiliate_id: Option<String>,
+    pub shopee_app_id: Option<String>,
+    pub shopee_app_secret: Option<String>,
+    pub shopee_social_params: Option<String>,
+    pub shortlink_base: Option<String>,
+}
+
+impl OwnedAffSettings {
+    pub(crate) fn as_borrowed(&self) -> AffiliateSettings<'_> {
+        AffiliateSettings {
+            deeplink_template: &self.deeplink_template,
+            accesstrade_token: self.accesstrade_token.as_deref(),
+            campaign_shopee: self.campaign_shopee.as_deref(),
+            campaign_lazada: self.campaign_lazada.as_deref(),
+            campaign_tiki: self.campaign_tiki.as_deref(),
+            campaign_tiktok: self.campaign_tiktok.as_deref(),
+            shopee_affiliate_id: self.shopee_affiliate_id.as_deref(),
+            shopee_app_id: self.shopee_app_id.as_deref(),
+            shopee_app_secret: self.shopee_app_secret.as_deref(),
+            shopee_social_params: self.shopee_social_params.as_deref(),
+        }
+    }
+}
+
+pub(crate) async fn load_owned_aff_settings(
+    conn: &libsql::Connection,
+    config: &Config,
+) -> OwnedAffSettings {
+    let read_opt = |k: &'static str| async move {
+        Repository::get_setting(conn, k)
+            .await
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+    };
+
+    let deeplink_template = read_opt("affiliate_template")
+        .await
+        .unwrap_or_else(|| config.accesstrade_deeplink_template.clone());
+    let accesstrade_token = read_opt("accesstrade_api_token")
+        .await
+        .or_else(|| config.accesstrade_api_token.clone());
+    let campaign_shopee = read_opt("campaign_shopee").await;
+    let campaign_lazada = read_opt("campaign_lazada").await;
+    let campaign_tiki = read_opt("campaign_tiki").await;
+    let campaign_tiktok = read_opt("campaign_tiktok").await;
+    let shopee_affiliate_id = read_opt("shopee_affiliate_id")
+        .await
+        .or_else(|| config.shopee_affiliate_id.clone());
+    let shopee_app_id = read_opt("shopee_app_id")
+        .await
+        .or_else(|| config.shopee_app_id.clone());
+    let shopee_app_secret = read_opt("shopee_app_secret")
+        .await
+        .or_else(|| config.shopee_app_secret.clone());
+    let shopee_social_params = read_opt("shopee_social_params")
+        .await
+        .or_else(|| config.shopee_social_params.clone());
+    let shortlink_base = read_opt("shortlink_base_url")
+        .await
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
+        .or_else(|| config.shortlink_base_url.clone())
+        .or_else(|| config.public_base_url.clone());
+
+    OwnedAffSettings {
+        deeplink_template,
+        accesstrade_token,
+        campaign_shopee,
+        campaign_lazada,
+        campaign_tiki,
+        campaign_tiktok,
+        shopee_affiliate_id,
+        shopee_app_id,
+        shopee_app_secret,
+        shopee_social_params,
+        shortlink_base,
+    }
+}
+
+/// Xử lý tin nhắn văn bản hoặc bài đăng kèm Ảnh/Video có chứa link
 pub async fn handle_message(
     bot: Bot,
     msg: Message,
@@ -36,9 +126,9 @@ pub async fn handle_message(
     config: Config,
     parser: Arc<DealParser>,
 ) -> ResponseResult<()> {
-    let text = match msg.text() {
-        Some(t) => t.trim(),
-        None => return Ok(()),
+    let text = match msg.text().or_else(|| msg.caption()) {
+        Some(t) if !t.trim().is_empty() => t.trim(),
+        _ => return Ok(()),
     };
 
     let user_id = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
@@ -88,8 +178,9 @@ pub async fn handle_message(
         }
     }
 
-    // Kiểm tra xem tin nhắn có chứa URL link sản phẩm không
-    if parser.extract_first_url(text).is_some() {
+    // Kiểm tra xem tin nhắn có chứa 1 hay nhiều URL link sản phẩm không (hỗ trợ cả caption ảnh và tối đa 5 link/tin)
+    let extracted_urls = parser.extract_all_urls(text, 5);
+    if !extracted_urls.is_empty() {
         let conn = match db.conn() {
             Ok(c) => c,
             Err(e) => {
@@ -114,79 +205,167 @@ pub async fn handle_message(
             }
         };
 
-        // Gửi thông báo đang tìm và gắn mã giảm giá
+        let owned_aff = load_owned_aff_settings(&conn, &config).await;
+
+        if extracted_urls.len() >= 2 {
+            let wait_msg = bot
+                .send_message(
+                    msg.chat.id,
+                    format!(
+                        "🔍 <i>Đang phân tích và bọc hàng loạt {} link sản phẩm cho bạn...</i>",
+                        extracted_urls.len()
+                    ),
+                )
+                .parse_mode(ParseMode::Html)
+                .await?;
+
+            let active_deals = Repository::get_active_deals(&conn, None)
+                .await
+                .unwrap_or_default();
+            let mut summary_blocks = Vec::new();
+            let mut btn_items = Vec::new();
+            let mut rewritten_post = text.to_string();
+            let mut text_without_urls = text.to_string();
+
+            for (idx, raw_url) in extracted_urls.iter().enumerate() {
+                text_without_urls = text_without_urls.replace(raw_url, " ");
+                match parser
+                    .process_link(raw_url, user.telegram_id, None, owned_aff.as_borrowed())
+                    .await
+                {
+                    Ok(parsed) => {
+                        let click_record = ClickRecord {
+                            id: parsed.click_id.clone(),
+                            user_id: user.telegram_id,
+                            platform: parsed.platform.as_str().to_string(),
+                            original_url: parsed.original_url.clone(),
+                            clean_url: parsed.clean_url.clone(),
+                            affiliate_url: parsed.affiliate_url.clone(),
+                            sub_id: parsed.sub_id.clone(),
+                            created_at: Utc::now().to_rfc3339(),
+                        };
+                        if let Err(err) = Repository::record_click(&conn, &click_record).await {
+                            warn!("Không thể ghi log click batch vào LibSQL: {}", err);
+                        }
+
+                        let wrapped_url = Repository::wrap_url_if_public(
+                            &conn,
+                            owned_aff.shortlink_base.as_deref(),
+                            &parsed.affiliate_url,
+                            &parsed.product_title,
+                            parsed.platform.as_str(),
+                        )
+                        .await;
+                        rewritten_post = rewritten_post.replace(raw_url, &wrapped_url);
+
+                        let price_tag = parsed
+                            .product_price_vnd
+                            .filter(|&p| p > 0.0)
+                            .map(|p| format!(" · {}", format_vnd(p)))
+                            .unwrap_or_default();
+
+                        let mut voucher_hint = active_deals
+                            .iter()
+                            .find(|d| is_exclusive_deal_relevant(d, &parsed))
+                            .map(|d| {
+                                let code = d
+                                    .coupon_code
+                                    .as_deref()
+                                    .filter(|c| !c.trim().is_empty())
+                                    .map(|c| format!(" (Mã: <code>{}</code>)", escape_html(c)))
+                                    .unwrap_or_default();
+                                format!("\n   👑 {}{}", escape_html(&d.title), code)
+                            })
+                            .unwrap_or_default();
+
+                        if voucher_hint.is_empty() {
+                            let matched_mv = parser
+                                .accesstrade()
+                                .search_matching_vouchers_for_deal(
+                                    parsed.platform.as_str(),
+                                    &parsed.product_title,
+                                    &parsed.clean_url,
+                                    parsed.product_shop.as_deref(),
+                                    parsed.product_brand.as_deref(),
+                                    parsed.product_price_vnd,
+                                    1,
+                                )
+                                .await;
+                            if let Some(mv) = matched_mv.first() {
+                                voucher_hint = format!(
+                                    "\n   🎟️ <b>{}</b> · Mã: <code>{}</code>",
+                                    escape_html(&mv.discount_badge()),
+                                    escape_html(&mv.coupon_code)
+                                );
+                            }
+                        }
+
+                        summary_blocks.push(format!(
+                            "{}. <b>[{}] {}</b>{}\n   👉 {}{}",
+                            idx + 1,
+                            escape_html(parsed.platform.as_str()),
+                            escape_html(&parsed.product_title),
+                            escape_html(&price_tag),
+                            escape_html(&wrapped_url),
+                            voucher_hint
+                        ));
+                        btn_items.push((
+                            format!("🛒 Mở SP #{} ({})", idx + 1, parsed.platform.as_str()),
+                            wrapped_url,
+                        ));
+                    }
+                    Err(err) => {
+                        summary_blocks.push(format!(
+                            "{}. ⚠️ Không phân tích được link ({})",
+                            idx + 1,
+                            escape_html(&err.to_string())
+                        ));
+                    }
+                }
+            }
+
+            let extra_copy_block = if text_without_urls.trim().chars().count() >= 12 {
+                let preview_copy: String = rewritten_post.chars().take(1200).collect();
+                format!(
+                    "\n\n📋 <b>BÀI ĐÃ THAY SẠCH LINK BỌC (Copy đăng kênh/nhóm):</b>\n<pre>{}</pre>",
+                    escape_html(&preview_copy)
+                )
+            } else {
+                String::new()
+            };
+
+            let mut reply_html = format!(
+                "⚡ <b>ĐÃ BỌC HÀNG LOẠT {} LINK SẢN PHẨM</b>\n\n{}{}",
+                extracted_urls.len(),
+                summary_blocks.join("\n\n"),
+                extra_copy_block
+            );
+            if reply_html.chars().count() > 3800 {
+                reply_html = format!(
+                    "⚡ <b>ĐÃ BỌC HÀNG LOẠT {} LINK SẢN PHẨM</b>\n\n{}",
+                    extracted_urls.len(),
+                    summary_blocks.join("\n\n")
+                );
+            }
+
+            let _ = bot.delete_message(msg.chat.id, wait_msg.id).await;
+            bot.send_message(msg.chat.id, reply_html)
+                .parse_mode(ParseMode::Html)
+                .reply_markup(batch_action_keyboard(&btn_items))
+                .await?;
+            return Ok(());
+        }
+
+        // Gửi thông báo đang tìm và gắn mã giảm giá cho 1 sản phẩm
         let wait_msg = bot
             .send_message(msg.chat.id, "🔍 <i>Đang quét và gắn mã giảm giá tốt nhất cho sản phẩm này...</i>")
             .parse_mode(ParseMode::Html)
             .await?;
 
-        // Lấy cấu hình ACCESSTRADE API Token & Campaign ID từ Web Admin hoặc biến môi trường
-        let affiliate_template = Repository::get_setting(&conn, "affiliate_template")
-            .await
-            .ok()
-            .flatten()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| config.accesstrade_deeplink_template.clone());
+        let shortlink_base = owned_aff.shortlink_base.clone();
+        let aff_settings = owned_aff.as_borrowed();
 
-        let db_at_token = Repository::get_setting(&conn, "accesstrade_api_token")
-            .await
-            .ok()
-            .flatten()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| config.accesstrade_api_token.clone());
-
-        let campaign_shopee = Repository::get_setting(&conn, "campaign_shopee").await.ok().flatten().filter(|s| !s.trim().is_empty());
-        let campaign_lazada = Repository::get_setting(&conn, "campaign_lazada").await.ok().flatten().filter(|s| !s.trim().is_empty());
-        let campaign_tiki = Repository::get_setting(&conn, "campaign_tiki").await.ok().flatten().filter(|s| !s.trim().is_empty());
-        let campaign_tiktok = Repository::get_setting(&conn, "campaign_tiktok").await.ok().flatten().filter(|s| !s.trim().is_empty());
-
-        let shopee_affiliate_id = Repository::get_setting(&conn, "shopee_affiliate_id")
-            .await
-            .ok()
-            .flatten()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| config.shopee_affiliate_id.clone());
-        let shopee_app_id = Repository::get_setting(&conn, "shopee_app_id")
-            .await
-            .ok()
-            .flatten()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| config.shopee_app_id.clone());
-        let shopee_app_secret = Repository::get_setting(&conn, "shopee_app_secret")
-            .await
-            .ok()
-            .flatten()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| config.shopee_app_secret.clone());
-        let shopee_social_params = Repository::get_setting(&conn, "shopee_social_params")
-            .await
-            .ok()
-            .flatten()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| config.shopee_social_params.clone());
-        let shortlink_base = Repository::get_setting(&conn, "shortlink_base_url")
-            .await
-            .ok()
-            .flatten()
-            .map(|s| s.trim().trim_end_matches('/').to_string())
-            .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
-            .or_else(|| config.shortlink_base_url.clone())
-            .or_else(|| config.public_base_url.clone());
-
-        let aff_settings = AffiliateSettings {
-            deeplink_template: &affiliate_template,
-            accesstrade_token: db_at_token.as_deref(),
-            campaign_shopee: campaign_shopee.as_deref(),
-            campaign_lazada: campaign_lazada.as_deref(),
-            campaign_tiki: campaign_tiki.as_deref(),
-            campaign_tiktok: campaign_tiktok.as_deref(),
-            shopee_affiliate_id: shopee_affiliate_id.as_deref(),
-            shopee_app_id: shopee_app_id.as_deref(),
-            shopee_app_secret: shopee_app_secret.as_deref(),
-            shopee_social_params: shopee_social_params.as_deref(),
-        };
-
-        // Bóc tách link và gọi ACCESSTRADE API tạo link thực tế
+        // Bóc tách link và gọi API tạo link thực tế
         match parser
             .process_link(
                 text,
@@ -553,14 +732,19 @@ pub async fn handle_command(
 
         Command::Stats => {
             let stats = Repository::get_admin_dashboard_stats(&conn).await.unwrap_or_default();
+            let tracked_orders = Repository::get_recent_tracked_orders(&conn, 100)
+                .await
+                .unwrap_or_default();
 
             let stats_html = format!(
                 "📊 <b>BÁO CÁO HOẠT ĐỘNG BOT (DÀNH CHO CHỦ BOT)</b>\n\n\
+                 🆔 <b>Telegram ID của bạn:</b> <code>{}</code> <i>(Dùng để nhận báo đơn trên /admin)</i>\n\
                  👥 <b>Tổng số người dùng bot:</b> <b>{} người</b>\n\
-                 🔗 <b>Tổng số lượt dán link &amp; tạo mã:</b> <b>{} lượt</b>\n\n\
+                 🔗 <b>Tổng số lượt dán link &amp; tạo mã:</b> <b>{} lượt</b>\n\
+                 🧾 <b>Số đơn hàng đã đối soát gần đây:</b> <b>{} đơn</b>\n\n\
                  💰 <b>Hoa hồng tiếp thị:</b>\n\
-                 100% doanh thu chiết khấu từ các lượt click trên sẽ được sàn TMĐT đối soát và chuyển trực tiếp vào tài khoản AccessTrade của bạn!",
-                stats.total_users, stats.total_clicks
+                 100% doanh thu chiết khấu từ các lượt click trên sẽ được sàn TMĐT đối soát về tài khoản Affiliate của bạn!",
+                user_id, stats.total_users, stats.total_clicks, tracked_orders.len()
             );
 
             bot.send_message(msg.chat.id, stats_html)

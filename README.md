@@ -6,17 +6,18 @@ Hệ thống Bot Telegram săn sale đa sàn (**DealX - Trợ Lý Săn Mã & Ép
 
 ## 🌟 Tính Năng Nổi Bật
 
-### 1. Web Admin Dashboard Quản Trị Độc Quyền (Bảo Mật Tối Cao)
-- **Chỉ DUY NHẤT 1 tài khoản Admin:** Không cho phép bất kỳ ai đăng ký mới, chặn 100% truy cập trái phép.
-- **Bảo mật chuẩn:** Xác thực Cookie HTTP-only, chống Timing Attack với `subtle::ConstantTimeEq`.
-- **Thống kê thời gian thực:** Xem tổng số người dùng bot, tổng số link đã chuyển đổi, số lượt click theo từng sàn (Shopee, Lazada, TikTok, Tiki).
-- **Quản lý kho Mã Độc Quyền & Đồng Bộ Kho Mã 20% - 35%+:** Nhập lẻ hoặc dán hàng loạt mã độc quyền hợp tác từ AM/MCN/Shop (hỗ trợ cả dấu `|` hoặc copy từ Excel/Google Sheets), bật/tắt hoặc xoá mã; tự động quét kho mã 20%-35%+ thật từ ACCESSTRADE API qua lệnh `/deals`.
-- **Xem nhật ký dán link:** Theo dõi 50 link khách hàng vừa gửi vào bot gần nhất kèm link affiliate tương ứng.
+### 1. Web Portal & Admin Dashboard Quản Trị (Bảo Mật Tối Cao)
+- **Trang chủ công khai `/` + Đổi link trực tiếp (`POST /convert`):** Khách không dùng Telegram vẫn dán được link Shopee, Lazada, Tiki, TikTok Shop ngay trên web để nhận link bọc kèm mã khớp (có Rate Limit chống spam).
+- **Cầu nối Mobile & Bọc link 2 lớp (`/{code}`, `/go/{code}`, `/assets/bridge.js`):** Bọc 100% link đầu ra dạng 8 ký tự, chặn máy tính/giả lập PC 2 lớp (HTTP + `isRealMobile()` + mã hóa XOR payload) và tự mở nút giải cứu khi bị kẹt trình duyệt nhúng Zalo/Messenger.
+- **Chỉ DUY NHẤT 1 tài khoản Admin:** Không cho phép đăng ký mới; khóa Brute-force `POST /admin/login` (tối đa 5 lần sai/15 phút -> `HTTP 429`), lưu phiên băm SHA-256 vào `admin_sessions`, Cookie `HttpOnly; SameSite=Lax`, chống Timing Attack với `subtle::ConstantTimeEq`.
+- **Đối soát đơn hàng & Báo Telegram Admin tự động:** Quét định kỳ mỗi 10 phút từ ACCESSTRADE (`/v1/orders`) và Shopee Open API (`conversionReport`), chống trùng lặp (`tracked_orders`) và nhắn báo ngay về Telegram ID Admin.
+- **Quản lý kho Mã Độc Quyền & Đồng Bộ Kho Mã:** Nhập lẻ hoặc dán hàng loạt mã độc quyền hợp tác từ AM/MCN/Shop (hỗ trợ cả dấu `|` hoặc copy từ Excel/Google Sheets), tự động đồng bộ mã từ ACCESSTRADE API mỗi 60 giây.
+- **Xem nhật ký dán link:** Theo dõi 50 link khách hàng vừa gửi gần nhất kèm link affiliate tương ứng.
 
-### 2. Phân Tích & Làm Sạch Link Sản Phẩm Tự Động
-- **Đa sàn TMĐT:** Hỗ trợ Shopee (`shopee.vn`, `shope.ee`), Lazada (`lazada.vn`, `s.lazada.vn`), Tiki (`tiki.vn`), TikTok Shop.
-- **Giải mã shortlink:** Tự động resolve các đường link rút gọn dạng `shope.ee/...` hay `s.lazada.vn/...` để lấy URL sản phẩm gốc.
-- **Xóa tracking rác (Clean URL):** Loại bỏ toàn bộ tham số rác như `utm_source`, `utm_medium`, `spm`, `ex_tracking`,... để đưa về link chuẩn nhất (`/product/{shopid}/{itemid}`).
+### 2. Phân Tích & Đổi Nhiều Link Sản Phẩm (Bao Gồm Caption Ảnh/Video)
+- **Đa sàn TMĐT:** Hỗ trợ Shopee (`shopee.vn`, `shope.ee`, `s.shopee.vn`), Lazada (`lazada.vn`, `s.lazada.vn`), Tiki (`tiki.vn`), TikTok Shop (`tiktok.com`).
+- **Đọc `caption` Ảnh/Video & Batch Convert (tối đa 5 link/tin):** Hỗ trợ bài gom sale có ảnh kèm caption nhiều link sản phẩm, tự động bọc từng link và xuất sẵn bài mẫu đã thay sạch sang link bọc để copy đăng kênh/nhóm.
+- **Giải mã shortlink & Xóa tracking rác (Clean URL):** Tự động resolve `shope.ee`, `s.lazada.vn`, `vt.tiktok.com`... về link chuẩn sản phẩm trước khi gắn Affiliate.
 
 ### 2. Cơ Chế Hoàn Tiền Tương Tự Shopback (Cashback & Referral Tracking)
 - **Tạo Link Tiếp Thị Động (Dynamic Affiliate Deeplink):** Tự động gắn SubID định danh người dùng:
@@ -77,9 +78,14 @@ f:/bot sale/
     │   ├── mod.rs              # Khởi tạo LibSQL client và schema migration
     │   ├── models.rs           # Khai báo Struct User, Click, Order, Withdrawal
     │   └── repository.rs       # Tầng truy vấn dữ liệu chuẩn bị (Prepared Queries)
+    ├── web/
+    │   └── mod.rs              # Web Portal `/`, đổi link `/convert`, cầu nối Mobile & Admin Dashboard
     └── services/
         ├── mod.rs
-        ├── deal_parser.rs      # Bóc tách, giải mã shortlink & tạo affiliate URL
+        ├── accesstrade.rs      # Kết nối ACCESSTRADE API (chiến dịch, kho mã, đơn hàng)
+        ├── shopee_affiliate.rs # Ký Open API Shopee & xây dựng link an_redir / social params
+        ├── order_tracker.rs    # Đối soát đơn tự động mỗi 10 phút & báo Telegram Admin
+        ├── deal_parser.rs      # Bóc tách nhiều link, giải mã shortlink & tạo affiliate URL
         └── cashback_engine.rs  # Bộ máy phân chia hoa hồng & xử lý hoàn tiền
 ```
 
@@ -117,19 +123,16 @@ ACCESSTRADE_DEEPLINK_TEMPLATE=https://fast.accesstrade.com.vn/deep_link/63000000
 
 ---
 
-## 📱 Danh Sách Các Lệnh Người Dùng
+## 📱 Danh Sách Các Lệnh Telegram Hiện Tại
 
 | Lệnh | Ý nghĩa |
 | :--- | :--- |
-| `/start [ref_code]` | Bắt đầu sử dụng bot, liên kết mã giới thiệu bạn bè và mở Menu chính |
-| `/help` | Xem hướng dẫn quy trình săn sale & nhận hoàn tiền 3 bước |
-| `/wallet` hoặc `/vi` | Xem số dư khả dụng, số dư chờ duyệt, hoa hồng F1 và mã giới thiệu |
-| `/deals [từ_khóa]` | Xem toàn bộ kho mã giảm giá trên thị trường (20%-35%+, giảm tiền K/VNĐ, mã độc quyền) hoặc tìm theo tên shop/sàn |
-| `/share` | Lấy link chia sẻ giới thiệu bạn bè nhận hoa hồng 10% trọn đời |
-| `/history` | Xem 5 đơn hoàn tiền gần nhất và 5 lượt tạo link |
-| `/withdraw <tiền> <ngân_hàng> <stk> <tên>` | Tạo yêu cầu rút tiền về tài khoản ngân hàng |
+| `/start` | Bắt đầu sử dụng bot, bật menu nhanh và hướng dẫn dán link |
+| `/help` | Xem hướng dẫn 3 bước nhận link ưu đãi & mẹo áp mã |
+| `/share` | Lấy link chia sẻ bot cho bạn bè cùng săn sale |
+| `/stats` | Xem thống kê người dùng, lượt dán link, đơn đối soát và lấy **Telegram ID** |
 
-*(Ngoài ra người dùng chỉ cần **dán trực tiếp link sản phẩm Shopee/Lazada/Tiki/TikTok Shop** vào khung chat, Bot sẽ tự động phân tích và tạo nút mua hoàn tiền).*
+*(Ngoài ra người dùng chỉ cần **dán trực tiếp 1 hoặc tối đa 5 link sản phẩm — kể cả bài có ảnh/video kèm caption —** từ Shopee/Lazada/Tiki/TikTok Shop vào khung chat, Bot sẽ tự động phân tích, bọc link 8 ký tự và gắn mã khớp nếu có).*
 
 ---
 

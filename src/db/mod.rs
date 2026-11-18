@@ -181,6 +181,41 @@ impl AppDb {
             )
             .await;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS admin_sessions (
+                token_hash TEXT PRIMARY KEY,
+                expires_at INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );",
+            (),
+        )
+        .await
+        .context("Tạo bảng admin_sessions thất bại")?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS tracked_orders (
+                order_key TEXT PRIMARY KEY,
+                platform TEXT NOT NULL,
+                order_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                order_amount REAL NOT NULL DEFAULT 0.0,
+                commission REAL NOT NULL DEFAULT 0.0,
+                sub_id TEXT NOT NULL DEFAULT '',
+                order_time TEXT NOT NULL DEFAULT '',
+                notified_at TEXT NOT NULL
+            );",
+            (),
+        )
+        .await
+        .context("Tạo bảng tracked_orders thất bại")?;
+
+        let _ = conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_tracked_orders_notified ON tracked_orders(notified_at DESC);",
+                (),
+            )
+            .await;
+
         info!("LibSQL schema migration thành công.");
         Ok(())
     }

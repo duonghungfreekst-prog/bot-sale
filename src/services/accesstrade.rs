@@ -850,6 +850,169 @@ impl AccessTradeClient {
 
         Ok(collected)
     }
+
+    /// Lấy danh sách đơn hàng phát sinh gần đây từ ACCESSTRADE API (`/v1/orders`)
+    pub async fn fetch_recent_orders(
+        &self,
+        token: &str,
+        days_back: i64,
+    ) -> Result<Vec<crate::db::models::TrackedOrder>, String> {
+        let now = Utc::now();
+        let since = now - chrono::Duration::days(days_back.clamp(1, 30));
+        let since_iso: String = url::form_urlencoded::byte_serialize(
+            since.format("%Y-%m-%dT%H:%M:%SZ").to_string().as_bytes(),
+        )
+        .collect();
+        let until_iso: String = url::form_urlencoded::byte_serialize(
+            now.format("%Y-%m-%dT%H:%M:%SZ").to_string().as_bytes(),
+        )
+        .collect();
+        let orders_url = format!(
+            "https://api.accesstrade.vn/v1/orders?since={}&until={}&limit=50",
+            since_iso, until_iso
+        );
+
+        let resp = self
+            .http
+            .get(&orders_url)
+            .header("Authorization", format!("Token {}", token.trim()))
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .map_err(|e| format!("Lỗi kết nối ACCESSTRADE Orders API: {}", e))?;
+
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| format!("Lỗi đọc phản hồi Orders API: {}", e))?;
+
+        if !status.is_success() {
+            return Err(format!("ACCESSTRADE Orders API trả về HTTP {}", status));
+        }
+
+        parse_accesstrade_orders_json(&body)
+    }
+}
+
+/// Chuẩn hóa tên sàn từ merchant ACCESSTRADE
+fn normalize_order_platform(raw_merchant: &str) -> String {
+    let lower = raw_merchant.to_lowercase();
+    if lower.contains("shopee") {
+        "Shopee".to_string()
+    } else if lower.contains("tiktok") {
+        "TikTok Shop".to_string()
+    } else if lower.contains("lazada") {
+        "Lazada".to_string()
+    } else if lower.contains("tiki") {
+        "Tiki".to_string()
+    } else if raw_merchant.trim().is_empty() {
+        "ACCESSTRADE".to_string()
+    } else {
+        raw_merchant.trim().to_string()
+    }
+}
+
+fn normalize_order_status_val(val: Option<&serde_json::Value>) -> String {
+    match val {
+        Some(serde_json::Value::Number(n)) => match n.as_i64() {
+            Some(0) => "PENDING".to_string(),
+            Some(1) => "APPROVED".to_string(),
+            Some(2) => "REJECTED".to_string(),
+            Some(other) => format!("STATUS_{}", other),
+            None => "PENDING".to_string(),
+        },
+        Some(serde_json::Value::String(s)) => {
+            let trimmed = s.trim();
+            match trimmed.to_lowercase().as_str() {
+                "0" | "pending" | "processing" => "PENDING".to_string(),
+                "1" | "approved" | "completed" => "APPROVED".to_string(),
+                "2" | "rejected" | "cancelled" | "canceled" => "REJECTED".to_string(),
+                _ if trimmed.is_empty() => "PENDING".to_string(),
+                _ => trimmed.to_uppercase(),
+            }
+        }
+        _ => "PENDING".to_string(),
+    }
+}
+
+/// Giải mã JSON đơn hàng trả về từ `/v1/orders` của ACCESSTRADE
+pub fn parse_accesstrade_orders_json(
+    body: &str,
+) -> Result<Vec<crate::db::models::TrackedOrder>, String> {
+    let root: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("Lỗi parse JSON Orders API: {}", e))?;
+    let Some(arr) = root.get("data").and_then(|d| d.as_array()) else {
+        return Ok(Vec::new());
+    };
+
+    let now_rfc = Utc::now().to_rfc3339();
+    let mut orders = Vec::new();
+    for item in arr {
+        let order_id = item
+            .get("order_id")
+            .or_else(|| item.get("id"))
+            .and_then(|v| {
+                v.as_str()
+                    .map(|s| s.trim().to_string())
+                    .or_else(|| v.as_i64().map(|n| n.to_string()))
+            })
+            .filter(|s| !s.is_empty())
+            .unwrap_or_default();
+        if order_id.is_empty() {
+            continue;
+        }
+
+        let merchant_raw = item
+            .get("merchant")
+            .or_else(|| item.get("campaign_name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let platform = normalize_order_platform(merchant_raw);
+        let status = normalize_order_status_val(
+            item.get("status").or_else(|| item.get("order_status")),
+        );
+        let order_amount = parse_json_f64(
+            item.get("billing")
+                .or_else(|| item.get("total_amount"))
+                .or_else(|| item.get("amount")),
+        )
+        .unwrap_or(0.0);
+        let commission = parse_json_f64(
+            item.get("pub_commission").or_else(|| item.get("commission")),
+        )
+        .unwrap_or(0.0);
+        let sub_id = item
+            .get("utm_sub1")
+            .or_else(|| item.get("sub1"))
+            .or_else(|| item.get("utm_campaign"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let order_time = item
+            .get("sales_time")
+            .or_else(|| item.get("click_time"))
+            .or_else(|| item.get("confirmed_time"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        orders.push(crate::db::models::TrackedOrder {
+            order_key: format!("AT:{}", order_id),
+            platform,
+            order_id,
+            status,
+            order_amount,
+            commission,
+            sub_id,
+            order_time,
+            notified_at: now_rfc.clone(),
+        });
+    }
+
+    Ok(orders)
 }
 
 fn is_tracking_gateway_host(host: &str) -> bool {
@@ -1172,6 +1335,42 @@ mod tests {
             3,
         );
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_parse_accesstrade_orders_json() {
+        let raw = r#"{
+            "data": [
+                {
+                    "order_id": "TTS998877",
+                    "merchant": "tiktokshop_vn",
+                    "status": 0,
+                    "billing": 250000,
+                    "pub_commission": 18500,
+                    "utm_sub1": "u123_r0_abcd",
+                    "sales_time": "2026-11-18T12:00:00Z"
+                },
+                {
+                    "order_id": "TK112233",
+                    "merchant": "tikivn",
+                    "status": "approved",
+                    "amount": "500000",
+                    "commission": "25000",
+                    "sub1": "web01"
+                }
+            ]
+        }"#;
+        let orders = parse_accesstrade_orders_json(raw).unwrap();
+        assert_eq!(orders.len(), 2);
+        assert_eq!(orders[0].order_key, "AT:TTS998877");
+        assert_eq!(orders[0].platform, "TikTok Shop");
+        assert_eq!(orders[0].status, "PENDING");
+        assert_eq!(orders[0].order_amount, 250000.0);
+        assert_eq!(orders[0].commission, 18500.0);
+        assert_eq!(orders[1].order_key, "AT:TK112233");
+        assert_eq!(orders[1].platform, "Tiki");
+        assert_eq!(orders[1].status, "APPROVED");
+        assert_eq!(orders[1].commission, 25000.0);
     }
 }
 

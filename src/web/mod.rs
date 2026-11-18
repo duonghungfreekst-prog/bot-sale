@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,16 +10,22 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use chrono::Utc;
+use rand::RngExt;
 use subtle::ConstantTimeEq;
 use teloxide::types::{Update, UpdateKind};
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use crate::bot::handlers::{is_exclusive_deal_relevant, load_owned_aff_settings};
 use crate::config::Config;
+use crate::db::models::{ClickRecord, TrackedOrder};
 use crate::db::repository::{NewDealInput, Repository};
 use crate::db::AppDb;
 use crate::services::accesstrade::{mask_token, AccessTradeClient, ApprovedCampaigns, VoucherOffer};
+use crate::services::deal_parser::DealParser;
+use crate::services::order_tracker;
 use crate::services::shopee_affiliate::{
     extract_social_passthrough_params, is_valid_shopee_affiliate_id,
 };
@@ -32,7 +38,10 @@ pub struct AppState {
     pub db: AppDb,
     pub config: Config,
     pub accesstrade: Arc<AccessTradeClient>,
+    pub parser: Arc<DealParser>,
     pub sessions: Arc<RwLock<HashSet<String>>>,
+    pub login_limiter: Arc<RwLock<HashMap<String, (u32, i64)>>>,
+    pub convert_limiter: Arc<RwLock<HashMap<String, (u32, i64)>>>,
     pub webhook_tx: Option<WebhookUpdateSender>,
 }
 
@@ -45,11 +54,15 @@ pub async fn start_web_server(
     webhook_tx: Option<WebhookUpdateSender>,
     ready_tx: Option<oneshot::Sender<()>>,
 ) -> anyhow::Result<()> {
+    let parser = Arc::new(DealParser::with_accesstrade(accesstrade.clone()));
     let state = AppState {
         db,
         config,
         accesstrade,
+        parser,
         sessions: Arc::new(RwLock::new(HashSet::new())),
+        login_limiter: Arc::new(RwLock::new(HashMap::new())),
+        convert_limiter: Arc::new(RwLock::new(HashMap::new())),
         webhook_tx,
     };
 
@@ -70,6 +83,9 @@ fn build_router(state: AppState) -> Router {
     Router::new()
         // Các route công khai
         .route("/", get(handle_root))
+        .route("/convert", post(handle_public_convert).get(|| async { Redirect::to("/") }))
+        .route("/assets/bridge.js", get(handle_bridge_js))
+        .route("/assets/home.js", get(handle_home_js))
         .route("/health", get(handle_health))
         .route("/telegram/webhook", post(handle_telegram_webhook))
         .route("/admin/login", get(handle_login_page).post(handle_login_submit))
@@ -80,6 +96,8 @@ fn build_router(state: AppState) -> Router {
         .route("/admin/settings/accesstrade/sync", post(handle_sync_accesstrade))
         .route("/admin/settings/shopee", post(handle_update_shopee_settings))
         .route("/admin/settings/affiliate", post(handle_update_affiliate_settings))
+        .route("/admin/settings/notifications", post(handle_update_notifications))
+        .route("/admin/orders/sync", post(handle_sync_orders))
         .route("/admin/vouchers/sync", post(handle_sync_vouchers))
         .route("/admin/deals/add", post(handle_add_deal))
         .route("/admin/deals/import", post(handle_import_deals))
@@ -164,10 +182,234 @@ enum PublicDealCard<'a> {
     Api(&'a VoucherOffer),
 }
 
+#[derive(serde::Deserialize, Default)]
+pub struct PublicConvertForm {
+    pub url: String,
+}
+
 /// Trang chủ công khai tổng hợp mã giảm giá & gợi ý sản phẩm (phục vụ khách hàng & xét duyệt đối tác)
 async fn handle_root(
     Query(query): Query<PublicHomeQuery>,
     State(state): State<AppState>,
+) -> Response {
+    render_public_home(&state, query, "", "").await
+}
+
+/// Đổi link sản phẩm trực tiếp trên Trang chủ Web `/` (không cần Telegram)
+async fn handle_public_convert(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Form(form): Form<PublicConvertForm>,
+) -> Response {
+    let input_raw = form.url.trim().to_string();
+    let client_ip = extract_client_ip(&headers);
+
+    // Chống spam endpoint /convert theo IP (tối đa 20 lượt / 60 giây)
+    {
+        let now_ts = Utc::now().timestamp();
+        let mut limiter = state.convert_limiter.write().await;
+        if limiter.len() >= 4000 {
+            limiter.clear();
+        }
+        let entry = limiter.entry(client_ip).or_insert((0, now_ts));
+        if now_ts - entry.1 >= 60 {
+            *entry = (1, now_ts);
+        } else if entry.0 >= 20 {
+            let err_html = r#"<div class="convert-alert convert-alert--error" role="alert">⏳ Bạn đang gửi quá nhanh. Vui lòng chờ khoảng 1 phút rồi thử đổi link tiếp nhé!</div>"#;
+            return render_public_home(&state, PublicHomeQuery::default(), &input_raw, err_html)
+                .await;
+        } else {
+            entry.0 += 1;
+        }
+    }
+
+    if state.parser.extract_first_url(&input_raw).is_none() {
+        let err_html = r#"<div class="convert-alert convert-alert--error" role="alert">⚠️ Vui lòng dán đúng đường link sản phẩm bắt đầu bằng <code>https://</code> từ Shopee, Tiki, Lazada hoặc TikTok Shop.</div>"#;
+        return render_public_home(&state, PublicHomeQuery::default(), &input_raw, err_html).await;
+    }
+
+    let Ok(conn) = state.db.conn() else {
+        let err_html = r#"<div class="convert-alert convert-alert--error" role="alert">❌ Hệ thống cơ sở dữ liệu tạm bận, vui lòng thử lại sau ít giây.</div>"#;
+        return render_public_home(&state, PublicHomeQuery::default(), &input_raw, err_html).await;
+    };
+
+    // Đảm bảo tài khoản khách Web (user_id = 0) tồn tại để thỏa khóa ngoại bảng clicks
+    let _ = Repository::get_or_create_user(&conn, 0, Some("web_guest"), "Khách Web DealX", None)
+        .await;
+    let owned_aff = load_owned_aff_settings(&conn, &state.config).await;
+
+    match state
+        .parser
+        .process_link(&input_raw, 0, None, owned_aff.as_borrowed())
+        .await
+    {
+        Ok(parsed) => {
+            let click_record = ClickRecord {
+                id: parsed.click_id.clone(),
+                user_id: 0,
+                platform: parsed.platform.as_str().to_string(),
+                original_url: parsed.original_url.clone(),
+                clean_url: parsed.clean_url.clone(),
+                affiliate_url: parsed.affiliate_url.clone(),
+                sub_id: parsed.sub_id.clone(),
+                created_at: Utc::now().to_rfc3339(),
+            };
+            let _ = Repository::record_click(&conn, &click_record).await;
+
+            let wrapped_main = Repository::wrap_url_if_public(
+                &conn,
+                owned_aff.shortlink_base.as_deref(),
+                &parsed.affiliate_url,
+                &parsed.product_title,
+                parsed.platform.as_str(),
+            )
+            .await;
+
+            let mut meta_parts = Vec::new();
+            if let Some(ref shop) = parsed.product_shop {
+                meta_parts.push(format!("Shop: <strong>{}</strong>", escape_html(shop)));
+            }
+            if let Some(price) = parsed.product_price_vnd.filter(|&p| p > 0.0) {
+                meta_parts.push(format!("Giá tham khảo: <strong>{}</strong>", escape_html(&format_vnd(price))));
+            }
+            let meta_line = if meta_parts.is_empty() {
+                String::new()
+            } else {
+                format!(r#"<p class="convert-result__meta">{}</p>"#, meta_parts.join(" · "))
+            };
+
+            let mut matched_btns = String::new();
+            if let Ok(deals) = Repository::get_active_deals(&conn, Some(parsed.platform.as_str())).await {
+                for d in deals
+                    .into_iter()
+                    .filter(|d| is_exclusive_deal_relevant(d, &parsed))
+                    .take(2)
+                {
+                    let wrapped_ex = Repository::wrap_url_if_public(
+                        &conn,
+                        owned_aff.shortlink_base.as_deref(),
+                        &d.deal_url,
+                        &d.title,
+                        &d.platform,
+                    )
+                    .await;
+                    let code_label = d
+                        .coupon_code
+                        .as_deref()
+                        .filter(|c| !c.trim().is_empty())
+                        .map(|c| format!(" · {}", c))
+                        .unwrap_or_default();
+                    matched_btns.push_str(&format!(
+                        r#"<a class="btn btn--secondary" href="{}" target="_blank" rel="noopener noreferrer">👑 {}{} ↗</a>"#,
+                        escape_html(&wrapped_ex),
+                        escape_html(&d.title),
+                        escape_html(&code_label)
+                    ));
+                }
+            }
+
+            let approved_cached = state.accesstrade.peek_approved_campaigns().await;
+            let matched_market = state
+                .accesstrade
+                .search_matching_vouchers_for_deal(
+                    parsed.platform.as_str(),
+                    &parsed.product_title,
+                    &parsed.clean_url,
+                    parsed.product_shop.as_deref(),
+                    parsed.product_brand.as_deref(),
+                    parsed.product_price_vnd,
+                    2,
+                )
+                .await;
+            for mv in matched_market {
+                let raw_v_url = state
+                    .accesstrade
+                    .verified_offer_url(&mv, approved_cached.as_ref())
+                    .await;
+                let wrapped_v = Repository::wrap_url_if_public(
+                    &conn,
+                    owned_aff.shortlink_base.as_deref(),
+                    &raw_v_url,
+                    &mv.shop_name,
+                    &mv.platform,
+                )
+                .await;
+                matched_btns.push_str(&format!(
+                    r#"<a class="btn btn--secondary" href="{}" target="_blank" rel="noopener noreferrer">🎟️ Mã {} ({}) ↗</a>"#,
+                    escape_html(&wrapped_v),
+                    escape_html(&mv.coupon_code),
+                    escape_html(&mv.discount_badge())
+                ));
+            }
+
+            let result_html = format!(
+                r#"<div class="convert-result" aria-live="polite">
+                    <div class="convert-result__head">
+                        <span class="badge badge--platform">{}</span>
+                        <span class="badge badge--accent">Đã gắn link bọc ưu đãi</span>
+                    </div>
+                    <h2 class="convert-result__title">{}</h2>
+                    {}
+                    <div class="convert-result__url"><code>{}</code></div>
+                    <div class="convert-actions">
+                        <a class="btn btn--primary" href="{}" target="_blank" rel="noopener noreferrer">🚀 Mở Ứng Dụng &amp; Áp Mã Ngay ↗</a>
+                        <button type="button" class="btn btn--secondary js-copy-link" data-copy-url="{}">📋 Sao chép link ưu đãi</button>
+                        {}
+                    </div>
+                </div>"#,
+                escape_html(parsed.platform.as_str()),
+                escape_html(&parsed.product_title),
+                meta_line,
+                escape_html(&wrapped_main),
+                escape_html(&wrapped_main),
+                escape_html(&wrapped_main),
+                matched_btns
+            );
+
+            render_public_home(&state, PublicHomeQuery::default(), &input_raw, &result_html).await
+        }
+        Err(err) => {
+            let err_html = format!(
+                r#"<div class="convert-alert convert-alert--error" role="alert">⚠️ Không thể phân tích link này: {}</div>"#,
+                escape_html(&err.to_string())
+            );
+            render_public_home(&state, PublicHomeQuery::default(), &input_raw, &err_html).await
+        }
+    }
+}
+
+/// JS ngoài cho Trang Chủ (tuân thủ nghiêm ngặt CSP `default-src 'self'`)
+async fn handle_home_js() -> Response {
+    let js = r#"document.addEventListener("click", function (e) {
+    var btn = e.target.closest(".js-copy-link");
+    if (!btn) return;
+    var url = btn.getAttribute("data-copy-url");
+    if (!url) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(function () {
+            var old = btn.textContent;
+            btn.textContent = "✅ Đã sao chép link";
+            setTimeout(function () { btn.textContent = old; }, 2000);
+        });
+    }
+});"#;
+    let mut resp = (StatusCode::OK, js).into_response();
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/javascript; charset=utf-8"),
+    );
+    resp.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=300"),
+    );
+    resp
+}
+
+async fn render_public_home(
+    state: &AppState,
+    query: PublicHomeQuery,
+    convert_input_val: &str,
+    convert_result_html: &str,
 ) -> Response {
     let search_q = query.q.unwrap_or_default().trim().to_string();
     let filter_plat = query
@@ -566,6 +808,35 @@ async fn handle_root(
         }}
         .site-footer__links {{ display: flex; flex-wrap: wrap; gap: 16px; margin-top: 10px; }}
         .site-footer a {{ color: #fdba74; }}
+        .convert-panel {{
+            background: linear-gradient(135deg, rgba(249, 115, 22, 0.12), rgba(20, 25, 38, 0.96));
+            border: 1px solid rgba(249, 115, 22, 0.45);
+            border-radius: var(--radius-lg); padding: 18px; box-shadow: var(--shadow-md);
+            margin-bottom: 16px;
+        }}
+        .convert-panel__title {{
+            font-family: var(--font-display); font-size: 1.05rem; font-weight: 700;
+            margin: 0 0 10px; color: var(--color-text);
+        }}
+        .convert-result {{
+            margin-top: 14px; background: var(--color-bg); border: 1px solid var(--color-border);
+            border-radius: var(--radius-md); padding: 14px;
+        }}
+        .convert-result__head {{ display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }}
+        .convert-result__title {{ font-family: var(--font-display); font-size: 1rem; margin: 0 0 6px; }}
+        .convert-result__meta {{ margin: 0 0 8px; color: var(--color-text-muted); font-size: 0.9rem; }}
+        .convert-result__url {{
+            background: var(--color-surface); border: 1px dashed var(--color-border);
+            padding: 8px 10px; border-radius: var(--radius-sm); word-break: break-all;
+            font-size: 0.85rem; margin-bottom: 12px; color: #fdba74;
+        }}
+        .convert-actions {{ display: flex; flex-wrap: wrap; gap: 10px; }}
+        .convert-alert {{
+            margin-top: 12px; padding: 12px 14px; border-radius: var(--radius-md); font-size: 0.92rem;
+        }}
+        .convert-alert--error {{
+            background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.45); color: #fecaca;
+        }}
         @media (prefers-reduced-motion: reduce) {{
             *, *::before, *::after {{ transition: none !important; scroll-behavior: auto !important; }}
         }}
@@ -597,6 +868,16 @@ async fn handle_root(
             <div class="stats-bar">
                 <span>Đang hiển thị: <strong>{}</strong> / <strong>{}</strong> ưu đãi hoạt động</span>
                 <span>Lần đồng bộ gần nhất: <strong>{}</strong></span>
+            </div>
+
+            <div class="convert-panel">
+                <p class="convert-panel__title">⚡ Dán link sản phẩm để lấy link ưu đãi &amp; mã khớp ngay (không cần cài App)</p>
+                <form class="search-form" method="POST" action="/convert">
+                    <label class="sr-only" for="web-convert-url">Dán đường link sản phẩm cần săn mã</label>
+                    <input id="web-convert-url" class="search-input" type="url" name="url" required value="{}" placeholder="Dán link sản phẩm Shopee, Tiki, Lazada hoặc TikTok Shop vào đây...">
+                    <button class="btn btn--primary" type="submit">⚡ Lấy Link Ưu Đãi</button>
+                </form>
+                {}
             </div>
 
             <div class="search-panel">
@@ -653,6 +934,7 @@ async fn handle_root(
             </div>
         </div>
     </footer>
+    <script src="/assets/home.js" defer></script>
 </body>
 </html>"##,
         escape_html(&state.config.bot_username),
@@ -660,6 +942,8 @@ async fn handle_root(
         matched_count,
         total_available,
         escape_html(&last_sync_text),
+        escape_html(convert_input_val),
+        convert_result_html,
         escape_html(&search_q),
         escape_html(&filter_plat),
         filter_links,
@@ -727,7 +1011,138 @@ fn is_desktop_browser(headers: &HeaderMap) -> bool {
         && (ua.contains("windows nt") || ua.contains("macintosh") || ua.contains("x11; linux"))
 }
 
-/// Giải mã link bọc `/{code}` & `/go/{code}`: bảo vệ chống soi link trên PC và giữ referrer chuẩn sang App sàn
+/// Mã hóa XOR payload link đích bằng khóa ngẫu nhiên 8 byte để không lộ URL thô trong mã nguồn HTML
+fn encode_bridge_payload(url: &str) -> (String, String) {
+    let mut rng = rand::rng();
+    let mut key = [0u8; 8];
+    rng.fill(&mut key);
+
+    let key_hex: String = key.iter().map(|b| format!("{:02x}", b)).collect();
+    let mut payload_hex = String::with_capacity(url.len() * 2);
+    for (i, byte) in url.as_bytes().iter().enumerate() {
+        payload_hex.push_str(&format!("{:02x}", byte ^ key[i % key.len()]));
+    }
+    (payload_hex, key_hex)
+}
+
+#[allow(dead_code)]
+fn decode_bridge_payload(payload_hex: &str, key_hex: &str) -> Option<String> {
+    if payload_hex.is_empty()
+        || key_hex.is_empty()
+        || !payload_hex.len().is_multiple_of(2)
+        || !key_hex.len().is_multiple_of(2)
+    {
+        return None;
+    }
+    let key: Vec<u8> = (0..key_hex.len())
+        .step_by(2)
+        .filter_map(|i| u8::from_str_radix(&key_hex[i..i + 2], 16).ok())
+        .collect();
+    if key.len() * 2 != key_hex.len() || key.is_empty() {
+        return None;
+    }
+    let bytes: Vec<u8> = (0..payload_hex.len())
+        .step_by(2)
+        .enumerate()
+        .filter_map(|(idx, i)| {
+            u8::from_str_radix(&payload_hex[i..i + 2], 16)
+                .ok()
+                .map(|b| b ^ key[idx % key.len()])
+        })
+        .collect();
+    if bytes.len() * 2 != payload_hex.len() {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
+}
+
+/// JS ngoài cho Cầu nối Mobile (lớp 2 chống giả lập PC & chống kẹt trình duyệt nhúng Zalo/Messenger)
+async fn handle_bridge_js() -> Response {
+    let js = r#"function isRealMobile() {
+    if (navigator.webdriver) return false;
+    var uad = navigator.userAgentData;
+    if (uad) {
+        var uadPlat = (uad.platform || "").toLowerCase();
+        if (uad.mobile === false) return false;
+        if (/windows|macos|linux|chrome os/.test(uadPlat)) return false;
+    }
+    var plat = (navigator.platform || "").toLowerCase();
+    if (/^win|linux x86_64|linux i686/.test(plat)) return false;
+    if (plat === "macintel" && (navigator.maxTouchPoints || 0) <= 1) return false;
+    return true;
+}
+
+function decodeXorHex(pHex, kHex) {
+    if (!pHex || !kHex || pHex.length % 2 !== 0 || kHex.length % 2 !== 0) return "";
+    var key = new Uint8Array(kHex.length / 2);
+    var out = new Uint8Array(pHex.length / 2);
+    for (var i = 0; i < key.length; i++) key[i] = parseInt(kHex.substr(i * 2, 2), 16);
+    for (var j = 0; j < out.length; j++) {
+        out[j] = parseInt(pHex.substr(j * 2, 2), 16) ^ key[j % key.length];
+    }
+    return new TextDecoder("utf-8").decode(out);
+}
+
+(function () {
+    var body = document.body;
+    if (!body) return;
+    var mobileOnly = body.getAttribute("data-mobile-only") === "1";
+    if (mobileOnly && !isRealMobile()) {
+        var titleEl = document.getElementById("bridge-title");
+        var descEl = document.getElementById("bridge-desc");
+        var spinner = document.getElementById("bridge-spinner");
+        if (spinner) spinner.style.display = "none";
+        if (titleEl) titleEl.textContent = "📱 Link ưu đãi chỉ mở được trên Điện Thoại";
+        if (descEl) descEl.textContent = "Phát hiện trình duyệt máy tính đang bật giả lập. Vui lòng mở trực tiếp trên điện thoại iOS / Android!";
+        return;
+    }
+
+    var targetUrl = decodeXorHex(body.getAttribute("data-p") || "", body.getAttribute("data-k") || "");
+    if (!targetUrl || (!targetUrl.startsWith("https://") && !targetUrl.startsWith("http://"))) return;
+
+    var rescueBtn = document.getElementById("rescue-open-btn");
+    var copyBtn = document.getElementById("rescue-copy-btn");
+    var rescueBox = document.getElementById("rescue-box");
+    var webviewTip = document.getElementById("webview-tip");
+
+    if (rescueBtn) rescueBtn.setAttribute("href", targetUrl);
+    if (copyBtn) {
+        copyBtn.addEventListener("click", function () {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(targetUrl).then(function () {
+                    copyBtn.textContent = "✅ Đã sao chép link mở App";
+                });
+            }
+        });
+    }
+
+    var ua = navigator.userAgent || "";
+    var isEmbeddedWebView = /zalo|fban|fbav|fb_iab|messenger|instagram/i.test(ua);
+    if (isEmbeddedWebView && webviewTip) {
+        webviewTip.style.display = "block";
+    }
+
+    setTimeout(function () {
+        if (rescueBox) rescueBox.classList.remove("hidden");
+    }, isEmbeddedWebView ? 250 : 850);
+
+    try {
+        window.location.replace(targetUrl);
+    } catch (_) {}
+})();"#;
+    let mut resp = (StatusCode::OK, js).into_response();
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/javascript; charset=utf-8"),
+    );
+    resp.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=300"),
+    );
+    resp
+}
+
+/// Giải mã link bọc `/{code}` & `/go/{code}`: bảo vệ 2 lớp chống soi link trên PC & giữ referrer chuẩn sang App sàn
 async fn handle_shortlink_redirect(
     Path(code): Path<String>,
     headers: HeaderMap,
@@ -811,25 +1226,115 @@ async fn handle_shortlink_redirect(
 
     let _ = Repository::increment_short_link_click(&conn, code_trimmed).await;
 
-    let mut response = StatusCode::FOUND.into_response();
-    if let Ok(loc_val) = HeaderValue::from_str(&record.target_url) {
-        response.headers_mut().insert(header::LOCATION, loc_val);
-    } else {
-        return StatusCode::BAD_GATEWAY.into_response();
+    // Khi Admin tắt chặn máy tính (mobile_only = false), chuyển hướng 302 trực tiếp để test nhanh trên PC
+    if !mobile_only {
+        let mut response = StatusCode::FOUND.into_response();
+        if let Ok(loc_val) = HeaderValue::from_str(&record.target_url) {
+            response.headers_mut().insert(header::LOCATION, loc_val);
+        } else {
+            return StatusCode::BAD_GATEWAY.into_response();
+        }
+        response.headers_mut().insert(
+            HeaderName::from_static("referrer-policy"),
+            HeaderValue::from_static("unsafe-url"),
+        );
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store, no-cache, must-revalidate, private"),
+        );
+        response.headers_mut().insert(
+            HeaderName::from_static("x-robots-tag"),
+            HeaderValue::from_static("noindex, nofollow"),
+        );
+        return response;
     }
-    response.headers_mut().insert(
+
+    // Khi bật chặn máy tính: trả cầu nối Mobile thông minh lớp 2 (XOR payload + chống kẹt Zalo/Messenger)
+    let (payload_hex, key_hex) = encode_bridge_payload(&record.target_url);
+    let plat_label = if record.platform.trim().is_empty() {
+        "ứng dụng mua sắm".to_string()
+    } else {
+        record.platform.trim().to_string()
+    };
+    let bridge_html = format!(
+        r##"<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="referrer" content="unsafe-url">
+    <title>Đang chuyển sang {}...</title>
+    <style>
+        * {{ box-sizing: border-box; }}
+        body {{
+            margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            background: #0c0f17; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; padding: 20px;
+        }}
+        .card {{
+            width: 100%; max-width: 420px; background: #141926; border: 1px solid #263044;
+            border-radius: 18px; padding: 24px; text-align: center;
+        }}
+        .spinner {{
+            width: 34px; height: 34px; margin: 0 auto 14px; border: 3px solid #263044;
+            border-top-color: #f97316; border-radius: 50%; animation: spin 0.8s linear infinite;
+        }}
+        @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+        h1 {{ margin: 0 0 10px; font-size: 18px; line-height: 1.35; }}
+        p {{ margin: 0; color: #cbd5e1; font-size: 14px; line-height: 1.6; }}
+        .hidden {{ display: none; }}
+        .rescue {{ margin-top: 18px; display: flex; flex-direction: column; gap: 10px; }}
+        .btn-open {{
+            display: flex; align-items: center; justify-content: center; min-height: 48px;
+            background: #f97316; color: #0b0f19; font-weight: 700; text-decoration: none;
+            border-radius: 12px; padding: 12px 16px;
+        }}
+        .btn-copy {{
+            min-height: 44px; background: #1c2333; color: #f8fafc; border: 1px solid #263044;
+            border-radius: 12px; font-weight: 600; padding: 10px 14px; cursor: pointer;
+        }}
+        .tip {{
+            display: none; font-size: 12px; color: #fdba74; background: rgba(249, 115, 22, 0.12);
+            border: 1px solid rgba(249, 115, 22, 0.35); border-radius: 10px; padding: 10px; text-align: left;
+        }}
+    </style>
+</head>
+<body data-p="{}" data-k="{}" data-mobile-only="1">
+    <main class="card">
+        <div id="bridge-spinner" class="spinner" aria-hidden="true"></div>
+        <h1 id="bridge-title">🚀 Đang mở {}...</h1>
+        <p id="bridge-desc">Hệ thống đang chuyển bạn sang ứng dụng để kích hoạt mã giảm giá.</p>
+        <div id="rescue-box" class="rescue hidden">
+            <a id="rescue-open-btn" class="btn-open" href="#" rel="noopener">🛍️ Bấm Để Mở Ứng Dụng Ngay</a>
+            <button id="rescue-copy-btn" class="btn-copy" type="button">📋 Sao chép link mở bằng Safari/Chrome</button>
+            <div id="webview-tip" class="tip">
+                💡 <b>Mẹo nếu mở từ Zalo / Messenger:</b> Bấm dấu <b>⋮</b> (hoặc <b>⋯</b>) ở góc màn hình rồi chọn <b>“Mở bằng trình duyệt mặc định”</b> để tự động bật App sàn.
+            </div>
+        </div>
+    </main>
+    <script src="/assets/bridge.js" defer></script>
+</body>
+</html>"##,
+        escape_html(&plat_label),
+        escape_html(&payload_hex),
+        escape_html(&key_hex),
+        escape_html(&plat_label)
+    );
+
+    let mut resp = (StatusCode::OK, Html(bridge_html)).into_response();
+    resp.headers_mut().insert(
         HeaderName::from_static("referrer-policy"),
         HeaderValue::from_static("unsafe-url"),
     );
-    response.headers_mut().insert(
+    resp.headers_mut().insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("no-store, no-cache, must-revalidate, private"),
     );
-    response.headers_mut().insert(
+    resp.headers_mut().insert(
         HeaderName::from_static("x-robots-tag"),
         HeaderValue::from_static("noindex, nofollow"),
     );
-    response
+    resp
 }
 
 /// Health check cho Render Web Service
@@ -849,14 +1354,50 @@ fn extract_session_token(headers: &HeaderMap) -> Option<String> {
     None
 }
 
-/// Kiểm tra xem yêu cầu hiện tại có quyền Admin hay không
-async fn is_authenticated(state: &AppState, headers: &HeaderMap) -> bool {
-    if let Some(token) = extract_session_token(headers) {
-        let sessions = state.sessions.read().await;
-        sessions.contains(&token)
-    } else {
-        false
+/// Lấy địa chỉ IP gốc của client qua Cloudflare/Render proxy headers
+fn extract_client_ip(headers: &HeaderMap) -> String {
+    if let Some(ip) = headers
+        .get("cf-connecting-ip")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return ip.to_string();
     }
+    if let Some(xff) = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return xff.to_string();
+    }
+    "local".to_string()
+}
+
+/// Kiểm tra xem yêu cầu hiện tại có quyền Admin hay không (từ RAM cache hoặc DB băm SHA-256)
+async fn is_authenticated(state: &AppState, headers: &HeaderMap) -> bool {
+    let Some(token) = extract_session_token(headers) else {
+        return false;
+    };
+    {
+        let sessions = state.sessions.read().await;
+        if sessions.contains(&token) {
+            return true;
+        }
+    }
+    if let Ok(conn) = state.db.conn() {
+        if let Ok(true) = Repository::verify_admin_session(&conn, &token).await {
+            let mut sessions = state.sessions.write().await;
+            if sessions.len() >= 100 {
+                sessions.clear();
+            }
+            sessions.insert(token);
+            return true;
+        }
+    }
+    false
 }
 
 /// Form đăng nhập admin
@@ -927,31 +1468,67 @@ async fn handle_login_page(headers: HeaderMap, State(state): State<AppState>) ->
     Html(html).into_response()
 }
 
-/// Xử lý xác thực đăng nhập (Chống Timing Attack bằng Constant-Time comparison)
+/// Xử lý xác thực đăng nhập (Chống Brute-force 5 lần / 15 phút & chống Timing Attack)
 async fn handle_login_submit(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Form(form): Form<LoginForm>,
 ) -> Response {
-    let user_match = form
+    let client_ip = extract_client_ip(&headers);
+    let now_ts = Utc::now().timestamp();
+
+    {
+        let limiter = state.login_limiter.read().await;
+        if let Some(&(attempts, last_ts)) = limiter.get(&client_ip) {
+            if attempts >= 5 && (now_ts - last_ts) < 900 {
+                let locked_html = r#"<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Tạm Khóa Đăng Nhập</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="flex items-center justify-center min-h-screen bg-gray-950 text-white p-4">
+    <div class="max-w-md w-full bg-gray-900 border border-yellow-500/50 p-6 rounded-2xl text-center shadow-2xl">
+        <div class="text-5xl mb-4">🛡️</div>
+        <h2 class="text-xl font-bold text-yellow-400 mb-2">Tạm Khóa Do Nhập Sai Nhiều Lần</h2>
+        <p class="text-sm text-gray-400 mb-6">Bạn đã nhập sai quá 5 lần. Hệ thống tạm khóa đăng nhập trong 15 phút để bảo vệ tài khoản Quản Trị.</p>
+        <a href="/admin/login" class="inline-block px-6 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-xl font-semibold text-white transition">Quay Lại</a>
+    </div>
+</body>
+</html>"#;
+                return (StatusCode::TOO_MANY_REQUESTS, Html(locked_html)).into_response();
+            }
+        }
+    }
+
+    let user_match: bool = form
         .username
         .as_bytes()
         .ct_eq(state.config.admin_username.as_bytes())
         .into();
-    let pass_match = form
+    let pass_match: bool = form
         .password
         .as_bytes()
         .ct_eq(state.config.admin_password.as_bytes())
         .into();
 
     if user_match && pass_match {
+        {
+            let mut limiter = state.login_limiter.write().await;
+            limiter.remove(&client_ip);
+        }
+
         let token = Uuid::new_v4().to_string();
         {
             let mut sessions = state.sessions.write().await;
-            // Giới hạn số phiên đăng nhập lưu trên RAM tránh phình bộ nhớ
             if sessions.len() >= 100 {
                 sessions.clear();
             }
             sessions.insert(token.clone());
+        }
+        if let Ok(conn) = state.db.conn() {
+            let _ = Repository::create_admin_session(&conn, &token, 86400).await;
         }
 
         info!("✅ Quản trị viên đăng nhập thành công vào Web Dashboard!");
@@ -971,9 +1548,30 @@ async fn handle_login_submit(
         }
         response
     } else {
-        error!("❌ Thử đăng nhập trái phép vào Web Admin Dashboard");
+        let attempts_now = {
+            let mut limiter = state.login_limiter.write().await;
+            if limiter.len() >= 2000 {
+                limiter.clear();
+            }
+            let entry = limiter.entry(client_ip.clone()).or_insert((0, now_ts));
+            if (now_ts - entry.1) >= 900 {
+                *entry = (1, now_ts);
+            } else {
+                entry.0 += 1;
+                entry.1 = now_ts;
+            }
+            entry.0
+        };
+        let remaining = 5u32.saturating_sub(attempts_now);
+
+        error!(
+            "❌ Thử đăng nhập trái phép vào Web Admin Dashboard từ IP {} (lần {})",
+            sanitize_crlf(&client_ip),
+            attempts_now
+        );
         tokio::time::sleep(Duration::from_millis(500)).await;
-        let error_html = r#"<!DOCTYPE html>
+        let error_html = format!(
+            r#"<!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
@@ -984,20 +1582,27 @@ async fn handle_login_submit(
     <div class="max-w-md w-full bg-gray-900 border border-red-500/50 p-6 rounded-2xl text-center shadow-2xl">
         <div class="text-5xl mb-4">⛔</div>
         <h2 class="text-xl font-bold text-red-400 mb-2">Đăng Nhập Thất Bại</h2>
-        <p class="text-sm text-gray-400 mb-6">Tài khoản hoặc mật khẩu quản trị viên không chính xác. Hệ thống chỉ cho phép duy nhất 1 tài khoản Admin.</p>
+        <p class="text-sm text-gray-400 mb-6">Tài khoản hoặc mật khẩu quản trị viên không chính xác (còn <b>{}</b> lần thử trước khi tạm khóa 15 phút).</p>
         <a href="/admin/login" class="inline-block px-6 py-2.5 bg-red-600 hover:bg-red-700 rounded-xl font-semibold text-white transition">Thử Lại</a>
     </div>
 </body>
-</html>"#;
-        Html(error_html).into_response()
+</html>"#,
+            remaining
+        );
+        (StatusCode::UNAUTHORIZED, Html(error_html)).into_response()
     }
 }
 
-/// Đăng xuất quản trị viên
+/// Đăng xuất quản trị viên (xoá cả RAM cache và bảng admin_sessions trong DB)
 async fn handle_logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if let Some(token) = extract_session_token(&headers) {
-        let mut sessions = state.sessions.write().await;
-        sessions.remove(&token);
+        {
+            let mut sessions = state.sessions.write().await;
+            sessions.remove(&token);
+        }
+        if let Ok(conn) = state.db.conn() {
+            let _ = Repository::delete_admin_session(&conn, &token).await;
+        }
     }
 
     let mut response = Redirect::to("/admin/login").into_response();
@@ -1165,6 +1770,17 @@ async fn handle_dashboard(
         .map(|s| s.trim() != "0")
         .unwrap_or(true);
 
+    let admin_telegram_id_val = Repository::get_setting(&conn, "admin_telegram_id")
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| state.config.admin_telegram_id.map(|id| id.to_string()))
+        .unwrap_or_default();
+    let tracked_orders = Repository::get_recent_tracked_orders(&conn, 20)
+        .await
+        .unwrap_or_default();
+
     let shopee_card_html = render_shopee_card(
         &shopee_affiliate_id,
         &shopee_app_id,
@@ -1173,6 +1789,7 @@ async fn handle_dashboard(
         &shortlink_base_url,
         shortlink_mobile_only,
     );
+    let order_alerts_card_html = render_order_alerts_card(&admin_telegram_id_val, &tracked_orders);
 
     let mut approved_opt: Option<ApprovedCampaigns> = None;
     let (at_status_badge, campaign_status_html) = if let Some(ref token) = db_at_token {
@@ -1527,6 +2144,8 @@ async fn handle_dashboard(
 
         {}
 
+        {}
+
         <!-- Kho Mã Giảm Giá Toàn Thị Trường (Quét 100% không bỏ sót + Cập nhật mỗi 60 giây) -->
         <section class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-4">
             <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-4">
@@ -1735,6 +2354,7 @@ async fn handle_dashboard(
         escape_html(&camp_tiki),
         escape_html(&camp_tiktok),
         shopee_card_html,
+        order_alerts_card_html,
         total_market_vouchers,
         high_pct_vouchers,
         escape_html(&last_sync_display),
@@ -1980,6 +2600,151 @@ async fn handle_sync_accesstrade(headers: HeaderMap, State(state): State<AppStat
     }
 
     Redirect::to("/admin").into_response()
+}
+
+fn render_order_alerts_card(admin_telegram_id: &str, orders: &[TrackedOrder]) -> String {
+    let status_badge = if admin_telegram_id.trim().is_empty() {
+        r#"<span class="px-2.5 py-1 bg-yellow-500/20 text-yellow-300 rounded-lg text-xs font-semibold">🟡 Chưa gắn Telegram ID nhận báo đơn</span>"#.to_string()
+    } else {
+        format!(
+            r#"<span class="px-2.5 py-1 bg-green-500/20 text-green-400 rounded-lg text-xs font-semibold">🟢 Đang báo đơn tới ID: {}</span>"#,
+            escape_html(admin_telegram_id.trim())
+        )
+    };
+
+    let mut order_rows = String::new();
+    for ord in orders {
+        let status_cls = match ord.status.as_str() {
+            "APPROVED" => "text-green-400",
+            "REJECTED" => "text-red-400",
+            _ => "text-yellow-300",
+        };
+        order_rows.push_str(&format!(
+            r#"<tr class="border-b border-gray-800/80 hover:bg-gray-800/40">
+                <td class="py-2.5 px-3 text-xs font-semibold text-white">{}</td>
+                <td class="py-2.5 px-3 text-xs font-mono text-gray-200">{}</td>
+                <td class="py-2.5 px-3 text-xs font-bold {}">{}</td>
+                <td class="py-2.5 px-3 text-xs text-gray-200">{}</td>
+                <td class="py-2.5 px-3 text-xs font-bold text-green-400">{}</td>
+                <td class="py-2.5 px-3 text-xs font-mono text-gray-400">{}</td>
+            </tr>"#,
+            escape_html(&ord.platform),
+            escape_html(&ord.order_id),
+            status_cls,
+            escape_html(&ord.status),
+            escape_html(&format_vnd(ord.order_amount)),
+            escape_html(&format_vnd(ord.commission)),
+            escape_html(&ord.order_time)
+        ));
+    }
+    if order_rows.is_empty() {
+        order_rows = r#"<tr><td colspan="6" class="py-6 text-center text-xs text-gray-500">Chưa có đơn hàng phát sinh được ghi nhận trong 7 ngày gần nhất. Khi có đơn thật từ Shopee / TikTok Shop / ACCESSTRADE, hệ thống sẽ tự lưu và báo ngay về Telegram!</td></tr>"#.to_string();
+    }
+
+    format!(
+        r#"<section class="bg-gray-900 border border-green-500/30 rounded-2xl p-6 shadow-xl space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-4">
+                <div>
+                    <h2 class="text-lg font-bold text-white flex items-center space-x-2">
+                        <span>🔔</span>
+                        <span>Báo Đơn Tự Động Về Telegram &amp; Đối Soát Hoa Hồng (Mỗi 10 Phút)</span>
+                    </h2>
+                    <p class="text-xs text-gray-400 mt-1">
+                        Gõ lệnh <code>/stats</code> trong bot Telegram để lấy ID số của bạn rồi dán vào ô bên dưới. Mỗi khi có đơn mới trên ACCESSTRADE / Shopee Open API, bot sẽ nhắn tin báo ngay!
+                    </p>
+                </div>
+                <div>{}</div>
+            </div>
+            <div class="flex flex-wrap items-end gap-3">
+                <form method="POST" action="/admin/settings/notifications" class="flex flex-wrap items-end gap-3 flex-1">
+                    <div class="flex-1 min-w-52">
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Telegram ID Admin Nhận Thông Báo Đơn</label>
+                        <input type="text" name="admin_telegram_id" value="{}" placeholder="Ví dụ: 5123456789 (hoặc để trống để tắt)" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-green-500">
+                    </div>
+                    <button type="submit" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-xs transition">
+                        💾 Lưu Telegram ID Báo Đơn
+                    </button>
+                </form>
+                <form method="POST" action="/admin/orders/sync">
+                    <button type="submit" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-green-300 font-semibold rounded-xl text-xs transition">
+                        🔄 Quét Đơn Mới Ngay
+                    </button>
+                </form>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead class="bg-gray-800/60 text-xs uppercase text-gray-400 border-b border-gray-800">
+                        <tr>
+                            <th class="py-2.5 px-3">Sàn</th>
+                            <th class="py-2.5 px-3">Mã Đơn Hàng</th>
+                            <th class="py-2.5 px-3">Trạng Thái</th>
+                            <th class="py-2.5 px-3">Giá Trị Đơn</th>
+                            <th class="py-2.5 px-3">Hoa Hồng</th>
+                            <th class="py-2.5 px-3">Thời Gian Đặt</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {}
+                    </tbody>
+                </table>
+            </div>
+        </section>"#,
+        status_badge,
+        escape_html(admin_telegram_id.trim()),
+        order_rows
+    )
+}
+
+#[derive(serde::Deserialize)]
+pub struct NotificationsForm {
+    pub admin_telegram_id: String,
+}
+
+async fn handle_update_notifications(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Form(form): Form<NotificationsForm>,
+) -> Response {
+    if !is_authenticated(&state, &headers).await {
+        return Redirect::to("/admin/login").into_response();
+    }
+
+    let trimmed = form.admin_telegram_id.trim();
+    if !trimmed.is_empty() && trimmed.parse::<i64>().is_err() {
+        return redirect_with_notice("Telegram ID phải là dãy số nguyên (lấy bằng cách gõ /stats trong Bot).");
+    }
+
+    let Ok(conn) = state.db.conn() else {
+        return redirect_with_notice("Lỗi kết nối cơ sở dữ liệu.");
+    };
+
+    let _ = Repository::set_setting(&conn, "admin_telegram_id", trimmed).await;
+    if trimmed.is_empty() {
+        redirect_with_notice("Đã tắt thông báo đơn hàng qua Telegram.")
+    } else {
+        redirect_with_notice(&format!("Đã lưu Telegram ID {} để nhận báo đơn tự động!", trimmed))
+    }
+}
+
+async fn handle_sync_orders(headers: HeaderMap, State(state): State<AppState>) -> Response {
+    if !is_authenticated(&state, &headers).await {
+        return Redirect::to("/admin/login").into_response();
+    }
+
+    let summary = order_tracker::sync_orders_once(&state.db, &state.config, &state.accesstrade).await;
+    if summary.errors.is_empty() {
+        redirect_with_notice(&format!(
+            "Đối soát xong: Quét {} đơn trong 7 ngày qua, phát hiện {} đơn mới!",
+            summary.fetched, summary.newly_inserted
+        ))
+    } else {
+        redirect_with_notice(&format!(
+            "Quét {} đơn (mới {}). Lưu ý: {}",
+            summary.fetched,
+            summary.newly_inserted,
+            summary.errors.join("; ")
+        ))
+    }
 }
 
 fn redirect_with_notice(msg: &str) -> Response {
@@ -2233,6 +2998,48 @@ async fn handle_update_affiliate_settings(
 mod tests {
     use super::*;
 
+    async fn make_test_state(
+        test_db_path: &str,
+        webhook_tx: Option<WebhookUpdateSender>,
+    ) -> AppState {
+        let config = Config {
+            telegram_token: "test".to_string(),
+            bot_username: "vvipass_vip_bot".to_string(),
+            database_path: test_db_path.to_string(),
+            turso_url: None,
+            turso_auth_token: None,
+            default_cashback_rate: 70.0,
+            default_referral_bonus_rate: 10.0,
+            min_withdrawal_vnd: 50000.0,
+            accesstrade_deeplink_template: "template".to_string(),
+            accesstrade_api_token: None,
+            shopee_affiliate_id: None,
+            shopee_app_id: None,
+            shopee_app_secret: None,
+            shopee_social_params: None,
+            shortlink_base_url: None,
+            admin_username: "admin".to_string(),
+            admin_password: "password".to_string(),
+            admin_telegram_id: None,
+            port: 10000,
+            public_base_url: Some("https://bot-sale.onrender.com".to_string()),
+            telegram_webhook_secret: "valid_secret_xyz".to_string(),
+        };
+        let db = AppDb::init(&config).await.unwrap();
+        let accesstrade = Arc::new(AccessTradeClient::new());
+        let parser = Arc::new(DealParser::with_accesstrade(accesstrade.clone()));
+        AppState {
+            db,
+            config,
+            accesstrade,
+            parser,
+            sessions: Arc::new(RwLock::new(HashSet::new())),
+            login_limiter: Arc::new(RwLock::new(HashMap::new())),
+            convert_limiter: Arc::new(RwLock::new(HashMap::new())),
+            webhook_tx,
+        }
+    }
+
     #[test]
     fn test_extract_session_token() {
         let mut headers = HeaderMap::new();
@@ -2254,37 +3061,8 @@ mod tests {
     #[tokio::test]
     async fn test_router_build() {
         let test_db_path = format!("target/test_web_{}.db", uuid::Uuid::new_v4().simple());
-        let config = Config {
-            telegram_token: "test".to_string(),
-            bot_username: "test_bot".to_string(),
-            database_path: test_db_path.clone(),
-            turso_url: None,
-            turso_auth_token: None,
-            default_cashback_rate: 70.0,
-            default_referral_bonus_rate: 10.0,
-            min_withdrawal_vnd: 50000.0,
-            accesstrade_deeplink_template: "template".to_string(),
-            accesstrade_api_token: None,
-            shopee_affiliate_id: None,
-            shopee_app_id: None,
-            shopee_app_secret: None,
-            shopee_social_params: None,
-            shortlink_base_url: None,
-            admin_username: "admin".to_string(),
-            admin_password: "password".to_string(),
-            port: 10000,
-            public_base_url: Some("https://bot-sale.onrender.com".to_string()),
-            telegram_webhook_secret: "secret_token_test_123".to_string(),
-        };
-        let db = AppDb::init(&config).await.unwrap();
         let (tx, _rx) = mpsc::unbounded_channel();
-        let state = AppState {
-            db,
-            config,
-            accesstrade: Arc::new(AccessTradeClient::new()),
-            sessions: Arc::new(RwLock::new(HashSet::new())),
-            webhook_tx: Some(tx),
-        };
+        let state = make_test_state(&test_db_path, Some(tx)).await;
 
         let _app: Router = build_router(state);
         let _ = std::fs::remove_file(&test_db_path);
@@ -2293,37 +3071,8 @@ mod tests {
     #[tokio::test]
     async fn test_webhook_secret_verification_and_dispatch() {
         let test_db_path = format!("target/test_wh_{}.db", uuid::Uuid::new_v4().simple());
-        let config = Config {
-            telegram_token: "test".to_string(),
-            bot_username: "test_bot".to_string(),
-            database_path: test_db_path.clone(),
-            turso_url: None,
-            turso_auth_token: None,
-            default_cashback_rate: 70.0,
-            default_referral_bonus_rate: 10.0,
-            min_withdrawal_vnd: 50000.0,
-            accesstrade_deeplink_template: "template".to_string(),
-            accesstrade_api_token: None,
-            shopee_affiliate_id: None,
-            shopee_app_id: None,
-            shopee_app_secret: None,
-            shopee_social_params: None,
-            shortlink_base_url: None,
-            admin_username: "admin".to_string(),
-            admin_password: "password".to_string(),
-            port: 10000,
-            public_base_url: Some("https://bot-sale.onrender.com".to_string()),
-            telegram_webhook_secret: "valid_secret_xyz".to_string(),
-        };
-        let db = AppDb::init(&config).await.unwrap();
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let state = AppState {
-            db,
-            config,
-            accesstrade: Arc::new(AccessTradeClient::new()),
-            sessions: Arc::new(RwLock::new(HashSet::new())),
-            webhook_tx: Some(tx),
-        };
+        let state = make_test_state(&test_db_path, Some(tx)).await;
 
         // 1. Sai secret header phải bị từ chối 401
         let mut bad_headers = HeaderMap::new();
@@ -2382,36 +3131,7 @@ DongLoiThieuCot | 123
     #[tokio::test]
     async fn test_public_home_renders_200_and_contains_disclosure() {
         let test_db_path = format!("target/test_home_{}.db", uuid::Uuid::new_v4().simple());
-        let config = Config {
-            telegram_token: "test".to_string(),
-            bot_username: "vvipass_vip_bot".to_string(),
-            database_path: test_db_path.clone(),
-            turso_url: None,
-            turso_auth_token: None,
-            default_cashback_rate: 70.0,
-            default_referral_bonus_rate: 10.0,
-            min_withdrawal_vnd: 50000.0,
-            accesstrade_deeplink_template: String::new(),
-            accesstrade_api_token: None,
-            shopee_affiliate_id: None,
-            shopee_app_id: None,
-            shopee_app_secret: None,
-            shopee_social_params: None,
-            shortlink_base_url: None,
-            admin_username: "admin".to_string(),
-            admin_password: "password".to_string(),
-            port: 10000,
-            public_base_url: Some("https://bot-sale.onrender.com".to_string()),
-            telegram_webhook_secret: "secret".to_string(),
-        };
-        let db = AppDb::init(&config).await.unwrap();
-        let state = AppState {
-            db,
-            config,
-            accesstrade: Arc::new(AccessTradeClient::new()),
-            sessions: Arc::new(RwLock::new(HashSet::new())),
-            webhook_tx: None,
-        };
+        let state = make_test_state(&test_db_path, None).await;
 
         let resp = handle_root(Query(PublicHomeQuery::default()), State(state)).await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -2422,6 +3142,7 @@ DongLoiThieuCot | 123
 
         assert!(html.contains(r#"<html lang="vi">"#));
         assert!(html.contains("vvipass_vip_bot"));
+        assert!(html.contains("action=\"/convert\""));
         assert!(html.contains("<form"));
         assert!(html.contains("Affiliate Disclosure"));
         assert!(!html.contains("Đăng Nhập Quản Trị"));
@@ -2432,43 +3153,13 @@ DongLoiThieuCot | 123
     #[tokio::test]
     async fn test_shortlink_redirect_preview_desktop_and_mobile() {
         let test_db_path = format!("target/test_sl_{}.db", uuid::Uuid::new_v4().simple());
-        let config = Config {
-            telegram_token: "test".to_string(),
-            bot_username: "vvipass_vip_bot".to_string(),
-            database_path: test_db_path.clone(),
-            turso_url: None,
-            turso_auth_token: None,
-            default_cashback_rate: 70.0,
-            default_referral_bonus_rate: 10.0,
-            min_withdrawal_vnd: 50000.0,
-            accesstrade_deeplink_template: String::new(),
-            accesstrade_api_token: None,
-            shopee_affiliate_id: None,
-            shopee_app_id: None,
-            shopee_app_secret: None,
-            shopee_social_params: None,
-            shortlink_base_url: None,
-            admin_username: "admin".to_string(),
-            admin_password: "password".to_string(),
-            port: 10000,
-            public_base_url: Some("https://bot-sale.onrender.com".to_string()),
-            telegram_webhook_secret: "secret".to_string(),
-        };
-        let db = AppDb::init(&config).await.unwrap();
+        let state = make_test_state(&test_db_path, None).await;
         let secret_target = "https://s.shopee.vn/an_redir?origin_link=https%3A%2F%2Fshopee.vn%2Fproduct%2F1%2F2&affiliate_id=17375520550&sm_sig_id=SIGTEST123";
         let code = {
-            let conn = db.conn().unwrap();
+            let conn = state.db.conn().unwrap();
             Repository::create_or_get_short_link(&conn, secret_target, "Sữa bột Enfagrow Test", "Shopee")
                 .await
                 .unwrap()
-        };
-
-        let state = AppState {
-            db,
-            config,
-            accesstrade: Arc::new(AccessTradeClient::new()),
-            sessions: Arc::new(RwLock::new(HashSet::new())),
-            webhook_tx: None,
         };
 
         // 1. TelegramBot preview -> 200 HTML sạch, không lộ secret_target
@@ -2516,7 +3207,7 @@ DongLoiThieuCot | 123
         .unwrap();
         assert!(!desktop_body.contains("SIGTEST123"));
 
-        // 3. Mobile iPhone -> 302 Found chuyển thẳng sang target_url kèm Referrer-Policy: unsafe-url
+        // 3. Mobile iPhone khi mobile_only bật -> 200 HTML bridge (mã hóa XOR + /assets/bridge.js, không lộ thô SIGTEST123)
         let mut mobile_hdrs = HeaderMap::new();
         mobile_hdrs.insert(
             header::USER_AGENT,
@@ -2525,20 +3216,110 @@ DongLoiThieuCot | 123
                 .unwrap(),
         );
         let resp_mobile = handle_shortlink_redirect(
+            Path(code.clone()),
+            mobile_hdrs.clone(),
+            State(state.clone()),
+        )
+        .await;
+        assert_eq!(resp_mobile.status(), StatusCode::OK);
+        assert_eq!(
+            resp_mobile.headers().get("referrer-policy").unwrap().to_str().unwrap(),
+            "unsafe-url"
+        );
+        let mobile_body = String::from_utf8(
+            axum::body::to_bytes(resp_mobile.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(mobile_body.contains("/assets/bridge.js"));
+        assert!(!mobile_body.contains("SIGTEST123"));
+
+        // Trích xuất payload/key và xác nhận decode_bridge_payload giải mã khớp 100%
+        let p_hex = mobile_body.split("data-p=\"").nth(1).unwrap().split('"').next().unwrap();
+        let k_hex = mobile_body.split("data-k=\"").nth(1).unwrap().split('"').next().unwrap();
+        assert_eq!(decode_bridge_payload(p_hex, k_hex).as_deref(), Some(secret_target));
+
+        // 4. Tắt shortlink_mobile_only -> trả 302 Found trực tiếp tới secret_target
+        {
+            let conn = state.db.conn().unwrap();
+            Repository::set_setting(&conn, "shortlink_mobile_only", "0").await.unwrap();
+        }
+        let resp_302 = handle_shortlink_redirect(
             Path(code),
             mobile_hdrs,
             State(state),
         )
         .await;
-        assert_eq!(resp_mobile.status(), StatusCode::FOUND);
+        assert_eq!(resp_302.status(), StatusCode::FOUND);
         assert_eq!(
-            resp_mobile.headers().get(header::LOCATION).unwrap().to_str().unwrap(),
+            resp_302.headers().get(header::LOCATION).unwrap().to_str().unwrap(),
             secret_target
         );
-        assert_eq!(
-            resp_mobile.headers().get("referrer-policy").unwrap().to_str().unwrap(),
-            "unsafe-url"
-        );
+
+        let _ = std::fs::remove_file(&test_db_path);
+    }
+
+    #[tokio::test]
+    async fn test_login_rate_limiter_blocks_brute_force() {
+        let test_db_path = format!("target/test_rl_{}.db", uuid::Uuid::new_v4().simple());
+        let state = make_test_state(&test_db_path, None).await;
+
+        let mut hdrs = HeaderMap::new();
+        hdrs.insert("x-forwarded-for", "203.0.113.77".parse().unwrap());
+
+        for _ in 0..5 {
+            let resp = handle_login_submit(
+                hdrs.clone(),
+                State(state.clone()),
+                Form(LoginForm {
+                    username: "admin".to_string(),
+                    password: "wrong-password".to_string(),
+                }),
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        // Lần thứ 6 cùng IP phải bị chặn 429 Too Many Requests ngay (kể cả khi nhập đúng)
+        let resp_locked = handle_login_submit(
+            hdrs,
+            State(state),
+            Form(LoginForm {
+                username: "admin".to_string(),
+                password: "password".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(resp_locked.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let _ = std::fs::remove_file(&test_db_path);
+    }
+
+    #[tokio::test]
+    async fn test_public_convert_empty_or_invalid_link_returns_200_error_banner() {
+        let test_db_path = format!("target/test_conv_{}.db", uuid::Uuid::new_v4().simple());
+        let state = make_test_state(&test_db_path, None).await;
+
+        let resp = handle_public_convert(
+            HeaderMap::new(),
+            State(state),
+            Form(PublicConvertForm {
+                url: "khong-phai-link".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(body.contains("convert-alert--error"));
+        assert!(body.contains("Vui lòng dán đúng đường link sản phẩm"));
 
         let _ = std::fs::remove_file(&test_db_path);
     }

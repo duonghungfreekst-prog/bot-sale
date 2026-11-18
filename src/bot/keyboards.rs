@@ -72,6 +72,17 @@ pub fn deal_action_keyboard(
     InlineKeyboardMarkup::new(rows)
 }
 
+/// Bàn phím hành động cho tin nhắn gom nhiều link (tối đa 5 nút mở nhanh theo số thứ tự)
+pub fn batch_action_keyboard(items: &[(String, String)]) -> InlineKeyboardMarkup {
+    let mut rows = Vec::new();
+    for (label, wrapped_url) in items.iter().take(5) {
+        if let Ok(parsed_url) = Url::parse(wrapped_url) {
+            rows.push(vec![InlineKeyboardButton::url(label.clone(), parsed_url)]);
+        }
+    }
+    InlineKeyboardMarkup::new(rows)
+}
+
 mod urlencoding {
     pub fn encode(data: &str) -> String {
         let mut encoded = String::with_capacity(data.len() * 3);

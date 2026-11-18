@@ -296,6 +296,181 @@ pub fn append_social_params_to_shopee_link(
     format!("{}{}{}", shopee_url, sep, extra)
 }
 
+#[derive(Serialize)]
+struct ShopeeReportReq {
+    query: String,
+}
+
+/// Lấy danh sách đơn hàng phát sinh từ Shopee Affiliate Open API (`conversionReport`)
+pub async fn fetch_open_api_recent_orders(
+    http: &Client,
+    app_id: &str,
+    app_secret: &str,
+    days_back: i64,
+) -> Result<Vec<crate::db::models::TrackedOrder>, String> {
+    let app_id_clean = app_id.trim();
+    let secret_clean = app_secret.trim();
+    if app_id_clean.is_empty() || secret_clean.is_empty() {
+        return Err("Thiếu App ID hoặc Secret Key của Shopee Open API".to_string());
+    }
+
+    let now_ts = Utc::now().timestamp();
+    let start_ts = now_ts - days_back.clamp(1, 30) * 86400;
+    let gql_query = format!(
+        "{{ conversionReport(purchaseTimeStart: {}, purchaseTimeEnd: {}, limit: 50) {{ nodes {{ conversionId conversionStatus totalCommission grossCommission purchaseTime utmContent subIds orders {{ orderId orderStatus items {{ actualAmount itemCommission }} }} }} }} }}",
+        start_ts, now_ts
+    );
+
+    let payload_json = serde_json::to_string(&ShopeeReportReq { query: gql_query })
+        .map_err(|e| format!("Lỗi đóng gói JSON Shopee conversionReport: {}", e))?;
+
+    let sign_payload = format!("{}{}{}{}", app_id_clean, now_ts, payload_json, secret_clean);
+    let signature = sha256_hex(sign_payload.as_bytes());
+    let auth_header = format!(
+        "SHA256 Credential={}, Timestamp={}, Signature={}",
+        app_id_clean, now_ts, signature
+    );
+
+    let resp = http
+        .post("https://open-api.affiliate.shopee.vn/graphql")
+        .header("Authorization", auth_header)
+        .header("Content-Type", "application/json")
+        .body(payload_json)
+        .send()
+        .await
+        .map_err(|e| format!("Lỗi kết nối Shopee Open API conversionReport: {}", e))?;
+
+    let status = resp.status();
+    let body_text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Lỗi đọc phản hồi Shopee Open API: {}", e))?;
+
+    if !status.is_success() {
+        return Err(format!("Shopee Open API conversionReport trả về HTTP {}", status));
+    }
+
+    parse_shopee_conversion_report_json(&body_text)
+}
+
+pub fn parse_shopee_conversion_report_json(
+    body: &str,
+) -> Result<Vec<crate::db::models::TrackedOrder>, String> {
+    let root: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("Lỗi parse JSON Shopee conversionReport: {}", e))?;
+
+    if let Some(err_msg) = root
+        .get("errors")
+        .and_then(|e| e.as_array())
+        .and_then(|a| a.first())
+        .and_then(|x| x.get("message"))
+        .and_then(|m| m.as_str())
+    {
+        return Err(err_msg.to_string());
+    }
+
+    let Some(nodes) = root
+        .get("data")
+        .and_then(|d| d.get("conversionReport"))
+        .and_then(|r| r.get("nodes"))
+        .and_then(|n| n.as_array())
+    else {
+        return Ok(Vec::new());
+    };
+
+    let now_rfc = Utc::now().to_rfc3339();
+    let mut out = Vec::new();
+    for node in nodes {
+        let conv_id = node
+            .get("conversionId")
+            .and_then(|v| v.as_str().map(str::to_string).or_else(|| v.as_i64().map(|n| n.to_string())))
+            .unwrap_or_default();
+        let nested_order_id = node
+            .get("orders")
+            .and_then(|o| o.as_array())
+            .and_then(|a| a.first())
+            .and_then(|o| o.get("orderId"))
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+
+        let order_id = if !nested_order_id.is_empty() {
+            nested_order_id
+        } else {
+            conv_id
+        };
+        if order_id.is_empty() {
+            continue;
+        }
+
+        let status = node
+            .get("conversionStatus")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_uppercase())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "PENDING".to_string());
+
+        let commission = parse_val_f64(node.get("totalCommission"))
+            .or_else(|| parse_val_f64(node.get("grossCommission")))
+            .unwrap_or(0.0);
+
+        let mut order_amount = 0.0;
+        if let Some(orders_arr) = node.get("orders").and_then(|o| o.as_array()) {
+            for ord in orders_arr {
+                if let Some(items) = ord.get("items").and_then(|i| i.as_array()) {
+                    for it in items {
+                        order_amount += parse_val_f64(it.get("actualAmount")).unwrap_or(0.0);
+                    }
+                }
+            }
+        }
+
+        let sub_id = node
+            .get("subIds")
+            .and_then(|s| s.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                node.get("utmContent")
+                    .and_then(|u| u.as_str())
+                    .map(|s| s.trim().to_string())
+            })
+            .unwrap_or_default();
+
+        let order_time = node
+            .get("purchaseTime")
+            .and_then(|v| v.as_i64().map(|ts| ts.to_string()).or_else(|| v.as_str().map(str::to_string)))
+            .unwrap_or_default();
+
+        out.push(crate::db::models::TrackedOrder {
+            order_key: format!("SHOPEE:{}", order_id),
+            platform: "Shopee".to_string(),
+            order_id,
+            status,
+            order_amount,
+            commission,
+            sub_id,
+            order_time,
+            notified_at: now_rfc.clone(),
+        });
+    }
+
+    Ok(out)
+}
+
+fn parse_val_f64(val: Option<&serde_json::Value>) -> Option<f64> {
+    match val? {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
 fn percent_encode_rfc3986(data: &str) -> String {
     let mut encoded = String::with_capacity(data.len() * 3);
     for byte in data.bytes() {
@@ -368,5 +543,40 @@ mod tests {
 
         // Nếu không chứa sm_sig_id hay encrypted_payload thì từ chối
         assert!(extract_social_passthrough_params("channel_type=ig&fbclid=123").is_none());
+    }
+
+    #[test]
+    fn test_parse_shopee_conversion_report_json() {
+        let json = r#"{
+            "data": {
+                "conversionReport": {
+                    "nodes": [
+                        {
+                            "conversionId": "CONV777",
+                            "conversionStatus": "PENDING",
+                            "totalCommission": "14250",
+                            "purchaseTime": 1794980000,
+                            "subIds": ["u99_r0_1234"],
+                            "orders": [
+                                {
+                                    "orderId": "261118XYZ999",
+                                    "orderStatus": "UNPAID",
+                                    "items": [
+                                        { "actualAmount": "285000", "itemCommission": "14250" }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        }"#;
+        let list = parse_shopee_conversion_report_json(json).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].order_key, "SHOPEE:261118XYZ999");
+        assert_eq!(list[0].platform, "Shopee");
+        assert_eq!(list[0].order_amount, 285000.0);
+        assert_eq!(list[0].commission, 14250.0);
+        assert_eq!(list[0].sub_id, "u99_r0_1234");
     }
 }

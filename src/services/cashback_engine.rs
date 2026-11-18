@@ -124,6 +124,7 @@ mod tests {
             shortlink_base_url: None,
             admin_username: "admin".to_string(),
             admin_password: "password".to_string(),
+            admin_telegram_id: None,
             port: 10000,
             public_base_url: None,
             telegram_webhook_secret: "test_secret".to_string(),

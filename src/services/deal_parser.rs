@@ -159,6 +159,38 @@ impl DealParser {
         })
     }
 
+    /// Trích xuất danh sách tối đa `max_urls` URL duy nhất theo thứ tự xuất hiện (ưu tiên URL sàn TMĐT hỗ trợ)
+    pub fn extract_all_urls(&self, text: &str, max_urls: usize) -> Vec<String> {
+        if max_urls == 0 {
+            return Vec::new();
+        }
+        let mut all_unique = Vec::new();
+        for m in self.url_regex.find_iter(text) {
+            let cleaned = m
+                .as_str()
+                .trim_end_matches(&['.', ',', '!', '?', ')', ']', '>', '"', '\''][..])
+                .to_string();
+            if !cleaned.is_empty() && !all_unique.contains(&cleaned) {
+                all_unique.push(cleaned);
+            }
+        }
+
+        let supported: Vec<String> = all_unique
+            .iter()
+            .filter(|u| self.detect_platform(u) != Platform::Unknown)
+            .take(max_urls)
+            .cloned()
+            .collect();
+
+        if !supported.is_empty() {
+            supported
+        } else if all_unique.len() == 1 {
+            all_unique
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Trích xuất tiêu đề sản phẩm từ tin nhắn của người dùng hoặc bóc tách từ link
     pub fn extract_title_from_text(&self, text: &str, raw_url: &str) -> Option<String> {
         let without_url = text.replace(raw_url, "");
@@ -968,5 +1000,27 @@ mod tests {
             .unwrap();
         assert!(parsed_social.affiliate_url.contains("&channel_type=ig&"));
         assert!(parsed_social.affiliate_url.contains("sm_sig_id=QfU_sig"));
+    }
+
+    #[test]
+    fn test_extract_all_urls_dedup_and_limit() {
+        let parser = DealParser::new();
+        let text = "\
+            Deal hot hôm nay tại https://example.com/not-supported nè!\n\
+            1) Sữa Enfa: https://tiki.vn/product-p12345.html\n\
+            2) Áo thun: https://shopee.vn/product/11/22,\n\
+            3) Lặp lại: https://shopee.vn/product/11/22)\n\
+            4) TikTok: https://www.tiktok.com/@shop/video/123456\n\
+            5) Lazada: https://s.lazada.vn/s.CDJeh\n\
+            6) Thứ năm: https://shopee.vn/product/33/44\n\
+            7) Vượt giới hạn: https://shopee.vn/product/55/66";
+        let urls = parser.extract_all_urls(text, 5);
+        assert_eq!(urls.len(), 5);
+        assert_eq!(urls[0], "https://tiki.vn/product-p12345.html");
+        assert_eq!(urls[1], "https://shopee.vn/product/11/22");
+        assert_eq!(urls[4], "https://shopee.vn/product/33/44");
+
+        let only_unknown = parser.extract_all_urls("Check https://example.com/abc", 5);
+        assert_eq!(only_unknown, vec!["https://example.com/abc".to_string()]);
     }
 }

@@ -122,6 +122,13 @@ async fn main() -> anyhow::Result<()> {
         spawn_keepalive_task(base_url);
     }
 
+    // 1.6 Tự động đối soát đơn hàng mỗi 10 phút và báo về Telegram Admin nếu có cấu hình
+    services::order_tracker::spawn_order_tracker_task(
+        db.clone(),
+        config.clone(),
+        accesstrade.clone(),
+    );
+
     // 2. Kiểm tra xem token Telegram đã được cấu hình chưa
     if config.telegram_token.contains("DEMO_TOKEN") || config.telegram_token.trim().is_empty() {
         info!("-------------------------------------------------------");

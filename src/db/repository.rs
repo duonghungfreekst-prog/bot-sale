@@ -6,9 +6,10 @@ use tracing::info;
 use uuid::Uuid;
 
 use super::models::{
-    AdminStats, CashbackOrder, ClickRecord, DealItem, ShortLinkRecord, User, WalletSummary,
-    Withdrawal,
+    AdminStats, CashbackOrder, ClickRecord, DealItem, ShortLinkRecord, TrackedOrder, User,
+    WalletSummary, Withdrawal,
 };
+use crate::services::shopee_affiliate::sha256_hex;
 use crate::utils::generate_referral_code;
 
 #[derive(Clone, Debug)]
@@ -831,6 +832,135 @@ impl Repository {
             Err(_) => trimmed_target.to_string(),
         }
     }
+
+    /// Lưu phiên đăng nhập Admin dưới dạng băm SHA-256 kèm thời hạn hết hiệu lực
+    pub async fn create_admin_session(conn: &Connection, raw_token: &str, ttl_secs: i64) -> Result<()> {
+        let now_ts = Utc::now().timestamp();
+        let expires_at = now_ts + ttl_secs.max(60);
+        let token_hash = sha256_hex(raw_token.as_bytes());
+        let created_at = Utc::now().to_rfc3339();
+
+        let _ = conn
+            .execute("DELETE FROM admin_sessions WHERE expires_at <= ?1", params![now_ts])
+            .await;
+
+        let _ = conn
+            .execute(
+                "DELETE FROM admin_sessions WHERE token_hash NOT IN (SELECT token_hash FROM admin_sessions ORDER BY expires_at DESC LIMIT 99)",
+                (),
+            )
+            .await;
+
+        conn.execute(
+            "INSERT INTO admin_sessions (token_hash, expires_at, created_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(token_hash) DO UPDATE SET expires_at = ?2",
+            params![token_hash, expires_at, created_at],
+        )
+        .await
+        .context("Lưu phiên admin thất bại")?;
+
+        Ok(())
+    }
+
+    /// Xác thực phiên đăng nhập Admin từ DB bằng SHA-256 và kiểm tra hạn sử dụng
+    pub async fn verify_admin_session(conn: &Connection, raw_token: &str) -> Result<bool> {
+        let token_hash = sha256_hex(raw_token.as_bytes());
+        let now_ts = Utc::now().timestamp();
+        let mut rows = conn
+            .query(
+                "SELECT expires_at FROM admin_sessions WHERE token_hash = ?1 LIMIT 1",
+                params![token_hash],
+            )
+            .await?;
+
+        if let Some(row) = rows.next().await? {
+            let expires_at: i64 = row.get(0)?;
+            Ok(expires_at > now_ts)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Xoá phiên đăng nhập Admin khỏi DB khi đăng xuất
+    pub async fn delete_admin_session(conn: &Connection, raw_token: &str) -> Result<()> {
+        let token_hash = sha256_hex(raw_token.as_bytes());
+        conn.execute(
+            "DELETE FROM admin_sessions WHERE token_hash = ?1",
+            params![token_hash],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Lưu đơn hàng đối soát (trả về true nếu là đơn mới hoàn toàn cần báo Telegram)
+    pub async fn upsert_tracked_order(conn: &Connection, order: &TrackedOrder) -> Result<bool> {
+        let mut rows = conn
+            .query(
+                "SELECT status FROM tracked_orders WHERE order_key = ?1 LIMIT 1",
+                params![order.order_key.clone()],
+            )
+            .await?;
+
+        if rows.next().await?.is_some() {
+            conn.execute(
+                "UPDATE tracked_orders SET status = ?1, order_amount = ?2, commission = ?3 WHERE order_key = ?4",
+                params![
+                    order.status.clone(),
+                    order.order_amount,
+                    order.commission,
+                    order.order_key.clone()
+                ],
+            )
+            .await?;
+            Ok(false)
+        } else {
+            conn.execute(
+                "INSERT INTO tracked_orders (order_key, platform, order_id, status, order_amount, commission, sub_id, order_time, notified_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    order.order_key.clone(),
+                    order.platform.clone(),
+                    order.order_id.clone(),
+                    order.status.clone(),
+                    order.order_amount,
+                    order.commission,
+                    order.sub_id.clone(),
+                    order.order_time.clone(),
+                    order.notified_at.clone()
+                ],
+            )
+            .await?;
+            Ok(true)
+        }
+    }
+
+    /// Lấy danh sách đơn hàng đối soát mới nhất hiển thị trên Dashboard Admin
+    pub async fn get_recent_tracked_orders(conn: &Connection, limit: i64) -> Result<Vec<TrackedOrder>> {
+        let mut rows = conn
+            .query(
+                "SELECT order_key, platform, order_id, status, order_amount, commission, sub_id, order_time, notified_at
+                 FROM tracked_orders ORDER BY notified_at DESC LIMIT ?1",
+                params![limit],
+            )
+            .await?;
+
+        let mut list = Vec::new();
+        while let Some(row) = rows.next().await? {
+            list.push(TrackedOrder {
+                order_key: row.get(0)?,
+                platform: row.get(1)?,
+                order_id: row.get(2)?,
+                status: row.get(3)?,
+                order_amount: row.get(4)?,
+                commission: row.get(5)?,
+                sub_id: row.get(6)?,
+                order_time: row.get(7)?,
+                notified_at: row.get(8)?,
+            });
+        }
+        Ok(list)
+    }
 }
 
 fn generate_short_code() -> String {
@@ -871,6 +1001,7 @@ mod tests {
             shortlink_base_url: None,
             admin_username: "admin".to_string(),
             admin_password: "pass".to_string(),
+            admin_telegram_id: None,
             port: 10000,
             public_base_url: None,
             telegram_webhook_secret: "secret".to_string(),
@@ -939,6 +1070,7 @@ mod tests {
             shortlink_base_url: None,
             admin_username: "admin".to_string(),
             admin_password: "pass".to_string(),
+            admin_telegram_id: None,
             port: 10000,
             public_base_url: Some("https://bot-sale.onrender.com".to_string()),
             telegram_webhook_secret: "secret".to_string(),
@@ -989,6 +1121,105 @@ mod tests {
         assert_eq!(resolved.target_url, target);
         assert_eq!(resolved.title, "Áo thun test");
         assert_eq!(resolved.platform, "Shopee");
+
+        drop(conn);
+        drop(db);
+        let _ = std::fs::remove_file(&test_db_path);
+    }
+
+    #[tokio::test]
+    async fn test_admin_session_hashed_and_expiry() {
+        let test_db_path = format!("target/test_sess_{}.db", Uuid::new_v4().simple());
+        let config = Config {
+            telegram_token: "test".to_string(),
+            bot_username: "test_bot".to_string(),
+            database_path: test_db_path.clone(),
+            turso_url: None,
+            turso_auth_token: None,
+            default_cashback_rate: 70.0,
+            default_referral_bonus_rate: 10.0,
+            min_withdrawal_vnd: 50000.0,
+            accesstrade_deeplink_template: String::new(),
+            accesstrade_api_token: None,
+            shopee_affiliate_id: None,
+            shopee_app_id: None,
+            shopee_app_secret: None,
+            shopee_social_params: None,
+            shortlink_base_url: None,
+            admin_username: "admin".to_string(),
+            admin_password: "pass".to_string(),
+            admin_telegram_id: None,
+            port: 10000,
+            public_base_url: None,
+            telegram_webhook_secret: "secret".to_string(),
+        };
+        let db = AppDb::init(&config).await.unwrap();
+        let conn = db.conn().unwrap();
+
+        let raw_token = "sess-secret-token-abc";
+        Repository::create_admin_session(&conn, raw_token, 3600).await.unwrap();
+        assert!(Repository::verify_admin_session(&conn, raw_token).await.unwrap());
+        assert!(!Repository::verify_admin_session(&conn, "wrong-token").await.unwrap());
+
+        Repository::delete_admin_session(&conn, raw_token).await.unwrap();
+        assert!(!Repository::verify_admin_session(&conn, raw_token).await.unwrap());
+
+        drop(conn);
+        drop(db);
+        let _ = std::fs::remove_file(&test_db_path);
+    }
+
+    #[tokio::test]
+    async fn test_tracked_order_upsert_idempotent() {
+        let test_db_path = format!("target/test_ord_{}.db", Uuid::new_v4().simple());
+        let config = Config {
+            telegram_token: "test".to_string(),
+            bot_username: "test_bot".to_string(),
+            database_path: test_db_path.clone(),
+            turso_url: None,
+            turso_auth_token: None,
+            default_cashback_rate: 70.0,
+            default_referral_bonus_rate: 10.0,
+            min_withdrawal_vnd: 50000.0,
+            accesstrade_deeplink_template: String::new(),
+            accesstrade_api_token: None,
+            shopee_affiliate_id: None,
+            shopee_app_id: None,
+            shopee_app_secret: None,
+            shopee_social_params: None,
+            shortlink_base_url: None,
+            admin_username: "admin".to_string(),
+            admin_password: "pass".to_string(),
+            admin_telegram_id: None,
+            port: 10000,
+            public_base_url: None,
+            telegram_webhook_secret: "secret".to_string(),
+        };
+        let db = AppDb::init(&config).await.unwrap();
+        let conn = db.conn().unwrap();
+
+        let order = TrackedOrder {
+            order_key: "AT:ORD12345".to_string(),
+            platform: "TikTok Shop".to_string(),
+            order_id: "ORD12345".to_string(),
+            status: "PENDING".to_string(),
+            order_amount: 350000.0,
+            commission: 28000.0,
+            sub_id: "u1_r0".to_string(),
+            order_time: "2026-11-18T14:00:00Z".to_string(),
+            notified_at: "2026-11-18T14:05:00Z".to_string(),
+        };
+        assert!(Repository::upsert_tracked_order(&conn, &order).await.unwrap());
+
+        let updated = TrackedOrder {
+            status: "APPROVED".to_string(),
+            ..order
+        };
+        assert!(!Repository::upsert_tracked_order(&conn, &updated).await.unwrap());
+
+        let list = Repository::get_recent_tracked_orders(&conn, 10).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].status, "APPROVED");
 
         drop(conn);
         drop(db);

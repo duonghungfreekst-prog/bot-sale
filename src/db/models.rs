@@ -97,3 +97,16 @@ pub struct ShortLinkRecord {
     pub title: String,
     pub platform: String,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrackedOrder {
+    pub order_key: String,
+    pub platform: String,
+    pub order_id: String,
+    pub status: String,
+    pub order_amount: f64,
+    pub commission: f64,
+    pub sub_id: String,
+    pub order_time: String,
+    pub notified_at: String,
+}
