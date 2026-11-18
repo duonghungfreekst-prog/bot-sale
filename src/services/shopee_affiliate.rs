@@ -1,0 +1,277 @@
+use chrono::Utc;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+
+const SHA256_H0: [u32; 8] = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+];
+
+const SHA256_K: [u32; 64] = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+];
+
+/// Tính mã băm SHA-256 dạng hex chữ thường chuẩn FIPS 180-4 (không cần crate ngoài)
+pub fn sha256_hex(data: &[u8]) -> String {
+    let mut h = SHA256_H0;
+    let bit_len = (data.len() as u64).wrapping_mul(8);
+
+    let mut padded = Vec::with_capacity(((data.len() + 9 + 63) / 64) * 64);
+    padded.extend_from_slice(data);
+    padded.push(0x80);
+    while (padded.len() % 64) != 56 {
+        padded.push(0x00);
+    }
+    padded.extend_from_slice(&bit_len.to_be_bytes());
+
+    for chunk in padded.chunks_exact(64) {
+        let mut w = [0u32; 64];
+        for i in 0..16 {
+            let idx = i * 4;
+            w[i] = u32::from_be_bytes([chunk[idx], chunk[idx + 1], chunk[idx + 2], chunk[idx + 3]]);
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
+        }
+
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = h;
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let temp1 = hh
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(SHA256_K[i])
+                .wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = s0.wrapping_add(maj);
+
+            hh = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
+        }
+
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+        h[5] = h[5].wrapping_add(f);
+        h[6] = h[6].wrapping_add(g);
+        h[7] = h[7].wrapping_add(hh);
+    }
+
+    let mut out = String::with_capacity(64);
+    for word in h {
+        out.push_str(&format!("{:08x}", word));
+    }
+    out
+}
+
+/// Kiểm tra Shopee Affiliate ID có hợp lệ (chuỗi chữ số từ 5 đến 20 ký tự)
+pub fn is_valid_shopee_affiliate_id(id: &str) -> bool {
+    let t = id.trim();
+    (5..=20).contains(&t.len()) && t.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Sinh link Shopee Affiliate trực tiếp qua định dạng an_redir chuẩn tại Việt Nam
+pub fn build_direct_an_redir_link(clean_url: &str, affiliate_id: &str, sub_id: &str) -> String {
+    let aff_trimmed = affiliate_id.trim();
+    let encoded_origin = percent_encode_rfc3986(clean_url.trim());
+    let encoded_sub = percent_encode_rfc3986(sub_id.trim());
+    format!(
+        "https://s.shopee.vn/an_redir?origin_link={}&affiliate_id={}&sub_id={}",
+        encoded_origin, aff_trimmed, encoded_sub
+    )
+}
+
+#[derive(Serialize)]
+struct ShopeeGraphQlReq<'a> {
+    query: &'a str,
+    variables: ShopeeShortLinkVars<'a>,
+}
+
+#[derive(Serialize)]
+struct ShopeeShortLinkVars<'a> {
+    input: ShopeeShortLinkInput<'a>,
+}
+
+#[derive(Serialize)]
+struct ShopeeShortLinkInput<'a> {
+    #[serde(rename = "originUrl")]
+    origin_url: &'a str,
+    #[serde(rename = "subIds")]
+    sub_ids: &'a [&'a str],
+}
+
+#[derive(Deserialize, Debug)]
+struct ShopeeGraphQlResp {
+    data: Option<ShopeeGraphQlData>,
+    errors: Option<Vec<ShopeeGraphQlError>>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ShopeeGraphQlData {
+    #[serde(rename = "generateShortLink")]
+    generate_short_link: Option<ShopeeShortLinkResult>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ShopeeShortLinkResult {
+    #[serde(rename = "shortLink")]
+    short_link: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ShopeeGraphQlError {
+    message: Option<String>,
+}
+
+/// Tạo link rút gọn Shopee Affiliate qua Open API GraphQL (`open-api.affiliate.shopee.vn/graphql`)
+pub async fn generate_open_api_short_link(
+    http: &Client,
+    app_id: &str,
+    app_secret: &str,
+    origin_url: &str,
+    sub_ids: &[&str],
+) -> Result<String, String> {
+    let app_id_clean = app_id.trim();
+    let secret_clean = app_secret.trim();
+    if app_id_clean.is_empty() || secret_clean.is_empty() {
+        return Err("Thiếu App ID hoặc Secret Key của Shopee Open API".to_string());
+    }
+
+    let req_body = ShopeeGraphQlReq {
+        query: "mutation($input: ShortLinkInput!) { generateShortLink(input: $input) { shortLink } }",
+        variables: ShopeeShortLinkVars {
+            input: ShopeeShortLinkInput {
+                origin_url: origin_url.trim(),
+                sub_ids,
+            },
+        },
+    };
+    let payload_json = serde_json::to_string(&req_body)
+        .map_err(|e| format!("Lỗi đóng gói JSON Shopee Open API: {}", e))?;
+
+    let timestamp = Utc::now().timestamp();
+    let sign_payload = format!("{}{}{}{}", app_id_clean, timestamp, payload_json, secret_clean);
+    let signature = sha256_hex(sign_payload.as_bytes());
+    let auth_header = format!(
+        "SHA256 Credential={}, Timestamp={}, Signature={}",
+        app_id_clean, timestamp, signature
+    );
+
+    let resp = http
+        .post("https://open-api.affiliate.shopee.vn/graphql")
+        .header("Authorization", auth_header)
+        .header("Content-Type", "application/json")
+        .body(payload_json)
+        .send()
+        .await
+        .map_err(|e| format!("Lỗi kết nối Shopee Open API: {}", e))?;
+
+    let status = resp.status();
+    let body_text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Lỗi đọc phản hồi Shopee Open API: {}", e))?;
+
+    if !status.is_success() {
+        return Err(format!("Shopee Open API trả về HTTP {}", status));
+    }
+
+    let parsed: ShopeeGraphQlResp = serde_json::from_str(&body_text)
+        .map_err(|e| format!("Lỗi giải mã JSON Shopee Open API: {}", e))?;
+
+    if let Some(errors) = parsed.errors {
+        if let Some(first) = errors.first() {
+            let msg = first
+                .message
+                .as_deref()
+                .filter(|m| !m.trim().is_empty())
+                .unwrap_or("Shopee Open API từ chối yêu cầu");
+            return Err(msg.to_string());
+        }
+    }
+
+    if let Some(short_link) = parsed
+        .data
+        .and_then(|d| d.generate_short_link)
+        .and_then(|r| r.short_link)
+        .map(|s| s.trim().to_string())
+        .filter(|s| s.starts_with("https://"))
+    {
+        return Ok(short_link);
+    }
+
+    Err("Shopee Open API không trả về shortLink hợp lệ".to_string())
+}
+
+fn percent_encode_rfc3986(data: &str) -> String {
+    let mut encoded = String::with_capacity(data.len() * 3);
+    for byte in data.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => {
+                encoded.push_str(&format!("%{:02X}", byte));
+            }
+        }
+    }
+    encoded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sha256_hex_nist_vectors() {
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn test_build_direct_an_redir_link_and_validation() {
+        assert!(is_valid_shopee_affiliate_id("17375520550"));
+        assert!(is_valid_shopee_affiliate_id(" 17375520550 "));
+        assert!(!is_valid_shopee_affiliate_id(""));
+        assert!(!is_valid_shopee_affiliate_id("1234"));
+        assert!(!is_valid_shopee_affiliate_id("17375abc550"));
+
+        let link = build_direct_an_redir_link(
+            "https://shopee.vn/product/123/456",
+            "17375520550",
+            "u1_r0_abcd1234",
+        );
+        assert_eq!(
+            link,
+            "https://s.shopee.vn/an_redir?origin_link=https%3A%2F%2Fshopee.vn%2Fproduct%2F123%2F456&affiliate_id=17375520550&sub_id=u1_r0_abcd1234"
+        );
+    }
+}

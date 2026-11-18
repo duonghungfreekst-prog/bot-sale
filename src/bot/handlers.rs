@@ -140,6 +140,25 @@ pub async fn handle_message(
         let campaign_tiki = Repository::get_setting(&conn, "campaign_tiki").await.ok().flatten().filter(|s| !s.trim().is_empty());
         let campaign_tiktok = Repository::get_setting(&conn, "campaign_tiktok").await.ok().flatten().filter(|s| !s.trim().is_empty());
 
+        let shopee_affiliate_id = Repository::get_setting(&conn, "shopee_affiliate_id")
+            .await
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| config.shopee_affiliate_id.clone());
+        let shopee_app_id = Repository::get_setting(&conn, "shopee_app_id")
+            .await
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| config.shopee_app_id.clone());
+        let shopee_app_secret = Repository::get_setting(&conn, "shopee_app_secret")
+            .await
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| config.shopee_app_secret.clone());
+
         let aff_settings = AffiliateSettings {
             deeplink_template: &affiliate_template,
             accesstrade_token: db_at_token.as_deref(),
@@ -147,6 +166,9 @@ pub async fn handle_message(
             campaign_lazada: campaign_lazada.as_deref(),
             campaign_tiki: campaign_tiki.as_deref(),
             campaign_tiktok: campaign_tiktok.as_deref(),
+            shopee_affiliate_id: shopee_affiliate_id.as_deref(),
+            shopee_app_id: shopee_app_id.as_deref(),
+            shopee_app_secret: shopee_app_secret.as_deref(),
         };
 
         // Bóc tách link và gọi ACCESSTRADE API tạo link thực tế

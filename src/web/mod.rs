@@ -19,7 +19,8 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::db::repository::{NewDealInput, Repository};
 use crate::db::AppDb;
-use crate::services::accesstrade::{mask_token, AccessTradeClient, ApprovedCampaigns};
+use crate::services::accesstrade::{mask_token, AccessTradeClient, ApprovedCampaigns, VoucherOffer};
+use crate::services::shopee_affiliate::is_valid_shopee_affiliate_id;
 use crate::utils::{escape_html, format_vnd, sanitize_crlf};
 
 pub type WebhookUpdateSender = mpsc::UnboundedSender<Result<Update, Infallible>>;
@@ -75,6 +76,7 @@ fn build_router(state: AppState) -> Router {
         .route("/admin", get(handle_dashboard))
         .route("/admin/settings/accesstrade", post(handle_update_accesstrade))
         .route("/admin/settings/accesstrade/sync", post(handle_sync_accesstrade))
+        .route("/admin/settings/shopee", post(handle_update_shopee_settings))
         .route("/admin/settings/affiliate", post(handle_update_affiliate_settings))
         .route("/admin/vouchers/sync", post(handle_sync_vouchers))
         .route("/admin/deals/add", post(handle_add_deal))
@@ -141,14 +143,489 @@ async fn security_headers_middleware(req: Request, next: Next) -> Response {
     headers.insert("x-xss-protection", HeaderValue::from_static("1; mode=block"));
     headers.insert(
         "content-security-policy",
-        HeaderValue::from_static("default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:"),
+        HeaderValue::from_static("default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:"),
     );
     res
 }
 
-/// Root redirect về /admin
-async fn handle_root() -> Redirect {
-    Redirect::to("/admin")
+#[derive(serde::Deserialize, Default)]
+pub struct PublicHomeQuery {
+    pub q: Option<String>,
+    pub plat: Option<String>,
+}
+
+enum PublicDealCard<'a> {
+    Db(&'a crate::db::models::DealItem),
+    Api(&'a VoucherOffer),
+}
+
+/// Trang chủ công khai tổng hợp mã giảm giá & gợi ý sản phẩm (phục vụ khách hàng & xét duyệt đối tác)
+async fn handle_root(
+    Query(query): Query<PublicHomeQuery>,
+    State(state): State<AppState>,
+) -> Response {
+    let search_q = query.q.unwrap_or_default().trim().to_string();
+    let filter_plat = query
+        .plat
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("all")
+        .to_string();
+
+    let db_deals = match state.db.conn() {
+        Ok(conn) => Repository::get_active_deals(&conn, None).await.unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    let market_vouchers = state.accesstrade.peek_cached_high_discount_vouchers().await;
+    let approved = state.accesstrade.peek_approved_campaigns().await;
+    let sync_meta = state.accesstrade.get_voucher_sync_meta().await;
+
+    let q_lower = search_q.to_lowercase();
+    let mut cards: Vec<PublicDealCard<'_>> = Vec::new();
+
+    for d in &db_deals {
+        let plat_ok = filter_plat == "all" || d.platform.eq_ignore_ascii_case(&filter_plat);
+        let q_ok = q_lower.is_empty()
+            || d.title.to_lowercase().contains(&q_lower)
+            || d.discount_desc.to_lowercase().contains(&q_lower)
+            || d.coupon_code.as_deref().unwrap_or("").to_lowercase().contains(&q_lower)
+            || d.platform.to_lowercase().contains(&q_lower);
+        if plat_ok && q_ok {
+            cards.push(PublicDealCard::Db(d));
+        }
+    }
+
+    for v in &market_vouchers {
+        let plat_ok = filter_plat == "all" || v.platform.eq_ignore_ascii_case(&filter_plat);
+        let q_ok = q_lower.is_empty()
+            || v.shop_name.to_lowercase().contains(&q_lower)
+            || v.title.to_lowercase().contains(&q_lower)
+            || v.coupon_code.to_lowercase().contains(&q_lower)
+            || v.discount_desc.to_lowercase().contains(&q_lower)
+            || v.platform.to_lowercase().contains(&q_lower);
+        if plat_ok && q_ok {
+            cards.push(PublicDealCard::Api(v));
+        }
+    }
+
+    let total_available = db_deals.len() + market_vouchers.len();
+    let matched_count = cards.len();
+    let last_sync_text = if sync_meta.last_sync_vn.is_empty() {
+        "Đang đồng bộ thời gian thực".to_string()
+    } else {
+        sync_meta.last_sync_vn
+    };
+
+    let mut cards_html = String::new();
+    for card in cards.into_iter().take(24) {
+        match card {
+            PublicDealCard::Db(d) => {
+                let code_txt = d
+                    .coupon_code
+                    .as_deref()
+                    .filter(|c| !c.trim().is_empty())
+                    .unwrap_or("Tự động áp dụng");
+                let badge = if d.is_exclusive {
+                    "Ưu đãi nổi bật"
+                } else {
+                    "Mã giảm giá"
+                };
+                let min_txt = if d.min_spend > 0.0 {
+                    format!("Đơn từ {}", format_vnd(d.min_spend))
+                } else {
+                    "Không giới hạn đơn tối thiểu".to_string()
+                };
+                cards_html.push_str(&format!(
+                    r#"<article class="deal-card">
+                        <div class="deal-card__top">
+                            <span class="badge badge--platform">{}</span>
+                            <span class="badge badge--accent">{}</span>
+                        </div>
+                        <h3 class="deal-card__title">{}</h3>
+                        <p class="deal-card__desc">{}</p>
+                        <div class="deal-card__meta">
+                            <span class="coupon-pill">Mã: <code>{}</code></span>
+                            <span class="deal-card__note">{}</span>
+                        </div>
+                        <a class="btn btn--primary deal-card__cta" href="{}" target="_blank" rel="noopener noreferrer">Lấy mã &amp; Xem ưu đãi ↗</a>
+                    </article>"#,
+                    escape_html(&d.platform),
+                    badge,
+                    escape_html(&d.title),
+                    escape_html(&d.discount_desc),
+                    escape_html(code_txt),
+                    escape_html(&min_txt),
+                    escape_html(&d.deal_url)
+                ));
+            }
+            PublicDealCard::Api(v) => {
+                let target_url = v.best_target_url(approved.as_ref());
+                let badge = v.discount_badge();
+                let expiry = if v.end_time.trim().is_empty() {
+                    "Đang hiệu lực".to_string()
+                } else {
+                    format!("HSD: {}", v.end_time.trim())
+                };
+                cards_html.push_str(&format!(
+                    r#"<article class="deal-card">
+                        <div class="deal-card__top">
+                            <span class="badge badge--platform">{}</span>
+                            <span class="badge badge--accent">{}</span>
+                        </div>
+                        <h3 class="deal-card__title">{}</h3>
+                        <p class="deal-card__desc">{}</p>
+                        <div class="deal-card__meta">
+                            <span class="coupon-pill">Mã: <code>{}</code></span>
+                            <span class="deal-card__note">{}</span>
+                        </div>
+                        <a class="btn btn--primary deal-card__cta" href="{}" target="_blank" rel="noopener noreferrer">Lấy mã &amp; Mở gian hàng ↗</a>
+                    </article>"#,
+                    escape_html(&v.platform),
+                    escape_html(&badge),
+                    escape_html(&v.shop_name),
+                    escape_html(&v.discount_desc),
+                    escape_html(&v.coupon_code),
+                    escape_html(&expiry),
+                    escape_html(target_url)
+                ));
+            }
+        }
+    }
+
+    if cards_html.is_empty() {
+        let empty_msg = if total_available == 0 {
+            "Hệ thống đang đồng bộ danh sách ưu đãi mới nhất từ đối tác. Bạn có thể quay lại sau ít phút hoặc gửi trực tiếp link sản phẩm qua trợ lý Telegram để kiểm tra nhanh."
+        } else {
+            "Không tìm thấy ưu đãi nào khớp với từ khóa hoặc sàn bạn vừa chọn. Hãy thử xóa bộ lọc để xem toàn bộ ưu đãi đang hoạt động."
+        };
+        cards_html = format!(
+            r#"<div class="empty-state">
+                <p>{}</p>
+                <a class="btn btn--secondary" href="/">Xem toàn bộ ưu đãi</a>
+            </div>"#,
+            empty_msg
+        );
+    }
+
+    let filter_links = [
+        ("all", "Tất cả sàn"),
+        ("Shopee", "Shopee"),
+        ("Tiki", "Tiki"),
+        ("Lazada", "Lazada"),
+        ("TikTok Shop", "TikTok Shop"),
+    ]
+    .into_iter()
+    .map(|(val, label)| {
+        let active_cls = if filter_plat.eq_ignore_ascii_case(val) {
+            "filter-pill filter-pill--active"
+        } else {
+            "filter-pill"
+        };
+        let href = if search_q.is_empty() {
+            format!("/?plat={}", urlencoding_simple(val))
+        } else {
+            format!(
+                "/?q={}&plat={}",
+                urlencoding_simple(&search_q),
+                urlencoding_simple(val)
+            )
+        };
+        format!(r#"<a class="{}" href="{}">{}</a>"#, active_cls, href, label)
+    })
+    .collect::<Vec<_>>()
+    .join("");
+
+    let html = format!(
+        r##"<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DealX Vietnam — Tổng Hợp Mã Giảm Giá &amp; Gợi Ý Sản Phẩm Chính Hãng</title>
+    <meta name="description" content="Cổng tổng hợp mã giảm giá công khai theo từng ngành hàng từ Shopee, Tiki, Lazada, TikTok Shop giúp người mua tiết kiệm mỗi ngày.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&amp;family=Lexend:wght@600;700;800&amp;display=swap">
+    <style>
+        :root {{
+            --color-bg: #0c0f17;
+            --color-surface: #141926;
+            --color-surface-elevated: #1c2333;
+            --color-text: #f8fafc;
+            --color-text-muted: #cbd5e1;
+            --color-primary: #f97316;
+            --color-primary-hover: #ea580c;
+            --color-primary-contrast: #0b0f19;
+            --color-border: #263044;
+            --color-success: #34d399;
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 18px;
+            --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.35);
+            --font-sans: "Be Vietnam Pro", system-ui, -apple-system, sans-serif;
+            --font-display: "Lexend", "Be Vietnam Pro", system-ui, sans-serif;
+        }}
+        * {{ box-sizing: border-box; }}
+        html {{ scroll-behavior: smooth; }}
+        body {{
+            margin: 0;
+            background: radial-gradient(circle at top right, rgba(249, 115, 22, 0.12), transparent 42%), var(--color-bg);
+            color: var(--color-text);
+            font-family: var(--font-sans);
+            font-size: 16px;
+            line-height: 1.6;
+        }}
+        a, button, input {{ font: inherit; }}
+        a:focus-visible, button:focus-visible, input:focus-visible {{
+            outline: 2px solid var(--color-primary);
+            outline-offset: 2px;
+        }}
+        .container {{ max-width: 1180px; margin: 0 auto; padding: 0 16px; }}
+        .site-header {{
+            position: sticky; top: 0; z-index: 20;
+            background: rgba(12, 15, 23, 0.92);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--color-border);
+        }}
+        .site-header__inner {{
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 12px; min-height: 68px; flex-wrap: wrap; padding: 10px 0;
+        }}
+        .brand {{
+            display: inline-flex; align-items: center; gap: 10px;
+            text-decoration: none; color: var(--color-text);
+            font-family: var(--font-display); font-weight: 800; font-size: 1.15rem;
+        }}
+        .brand__mark {{
+            width: 38px; height: 38px; border-radius: var(--radius-md);
+            display: inline-flex; align-items: center; justify-content: center;
+            background: var(--color-primary); color: var(--color-primary-contrast); font-weight: 800;
+        }}
+        .nav {{ display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }}
+        .nav__link {{
+            color: var(--color-text-muted); text-decoration: none; font-size: 0.95rem; font-weight: 500;
+            padding: 8px 4px; min-height: 44px; display: inline-flex; align-items: center;
+        }}
+        .nav__link:hover {{ color: var(--color-text); }}
+        .btn {{
+            display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+            min-height: 44px; padding: 10px 18px; border-radius: var(--radius-md);
+            border: 1px solid transparent; font-weight: 700; text-decoration: none; cursor: pointer;
+            transition: background-color 180ms ease, transform 180ms ease;
+        }}
+        .btn--primary {{
+            background: var(--color-primary); color: var(--color-primary-contrast);
+        }}
+        .btn--primary:hover {{ background: var(--color-primary-hover); transform: translateY(-1px); }}
+        .btn--secondary {{
+            background: var(--color-surface-elevated); color: var(--color-text);
+            border-color: var(--color-border);
+        }}
+        .btn--secondary:hover {{ border-color: var(--color-primary); }}
+        .hero {{ padding: 40px 0 28px; }}
+        .hero__eyebrow {{
+            display: inline-flex; align-items: center; gap: 8px;
+            padding: 6px 12px; border-radius: 999px;
+            background: var(--color-surface); border: 1px solid var(--color-border);
+            color: var(--color-success); font-size: 0.85rem; font-weight: 600;
+        }}
+        .hero__title {{
+            font-family: var(--font-display);
+            font-size: clamp(1.75rem, 4vw, 2.75rem);
+            line-height: 1.2; margin: 16px 0 12px; max-width: 780px;
+        }}
+        .hero__subtitle {{
+            color: var(--color-text-muted); max-width: 68ch; margin: 0 0 24px;
+        }}
+        .stats-bar {{
+            display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 24px;
+            color: var(--color-text-muted); font-size: 0.9rem;
+        }}
+        .stats-bar strong {{ color: var(--color-text); }}
+        .search-panel {{
+            background: var(--color-surface); border: 1px solid var(--color-border);
+            border-radius: var(--radius-lg); padding: 16px; box-shadow: var(--shadow-md);
+        }}
+        .search-form {{ display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; }}
+        .sr-only {{
+            position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+            overflow: hidden; clip: rect(0, 0, 0, 0); border: 0;
+        }}
+        .search-input {{
+            flex: 1 1 240px; min-height: 44px; padding: 10px 14px;
+            border-radius: var(--radius-md); border: 1px solid var(--color-border);
+            background: var(--color-bg); color: var(--color-text);
+        }}
+        .search-input::placeholder {{ color: #94a3b8; }}
+        .filter-row {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }}
+        .filter-pill {{
+            min-height: 40px; padding: 6px 14px; border-radius: 999px;
+            border: 1px solid var(--color-border); background: var(--color-bg);
+            color: var(--color-text-muted); text-decoration: none; font-size: 0.9rem; font-weight: 600;
+            display: inline-flex; align-items: center;
+        }}
+        .filter-pill--active {{
+            background: var(--color-primary); color: var(--color-primary-contrast); border-color: var(--color-primary);
+        }}
+        .section {{ padding: 28px 0; }}
+        .section__head {{
+            display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline;
+            gap: 12px; margin-bottom: 18px;
+        }}
+        .section__title {{ font-family: var(--font-display); font-size: 1.45rem; margin: 0; }}
+        .deals-grid {{
+            display: grid; gap: 16px;
+            grid-template-columns: 1fr;
+        }}
+        @media (min-width: 720px) {{ .deals-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} }}
+        @media (min-width: 1060px) {{ .deals-grid {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }} }}
+        .deal-card {{
+            display: flex; flex-direction: column; justify-content: space-between; gap: 12px;
+            background: var(--color-surface); border: 1px solid var(--color-border);
+            border-radius: var(--radius-lg); padding: 18px;
+        }}
+        .deal-card__top {{ display: flex; justify-content: space-between; align-items: center; gap: 8px; }}
+        .badge {{
+            font-size: 0.78rem; font-weight: 700; padding: 4px 10px; border-radius: 999px;
+        }}
+        .badge--platform {{ background: var(--color-surface-elevated); color: var(--color-text); border: 1px solid var(--color-border); }}
+        .badge--accent {{ background: rgba(249, 115, 22, 0.18); color: #fdba74; border: 1px solid rgba(249, 115, 22, 0.4); }}
+        .deal-card__title {{ font-family: var(--font-display); font-size: 1.05rem; margin: 0; color: var(--color-text); }}
+        .deal-card__desc {{ margin: 0; color: var(--color-text-muted); font-size: 0.92rem; }}
+        .deal-card__meta {{ display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; }}
+        .coupon-pill code {{
+            background: var(--color-bg); border: 1px dashed var(--color-primary);
+            padding: 2px 8px; border-radius: 6px; color: #fdba74; font-weight: 700;
+        }}
+        .deal-card__note {{ color: #94a3b8; }}
+        .deal-card__cta {{ width: 100%; }}
+        .steps-grid {{
+            display: grid; gap: 16px; grid-template-columns: 1fr;
+        }}
+        @media (min-width: 768px) {{ .steps-grid {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }} }}
+        .step-card {{
+            background: var(--color-surface); border: 1px solid var(--color-border);
+            border-radius: var(--radius-lg); padding: 18px;
+        }}
+        .step-card h3 {{ margin: 0 0 8px; font-family: var(--font-display); font-size: 1.05rem; }}
+        .step-card p {{ margin: 0; color: var(--color-text-muted); font-size: 0.92rem; }}
+        .empty-state {{
+            grid-column: 1 / -1; background: var(--color-surface); border: 1px solid var(--color-border);
+            border-radius: var(--radius-lg); padding: 28px; text-align: center; color: var(--color-text-muted);
+        }}
+        .site-footer {{
+            border-top: 1px solid var(--color-border); margin-top: 32px; padding: 28px 0 40px;
+            color: var(--color-text-muted); font-size: 0.88rem;
+        }}
+        .site-footer__links {{ display: flex; flex-wrap: wrap; gap: 16px; margin-top: 10px; }}
+        .site-footer a {{ color: #fdba74; }}
+        @media (prefers-reduced-motion: reduce) {{
+            *, *::before, *::after {{ transition: none !important; scroll-behavior: auto !important; }}
+        }}
+    </style>
+</head>
+<body>
+    <header class="site-header">
+        <div class="container site-header__inner">
+            <a class="brand" href="/">
+                <span class="brand__mark" aria-hidden="true">DX</span>
+                <span>DealX Vietnam</span>
+            </a>
+            <nav class="nav" aria-label="Điều hướng chính">
+                <a class="nav__link" href="#uu-dai">Ưu đãi nổi bật</a>
+                <a class="nav__link" href="#huong-dan">Cách nhận mã</a>
+                <a class="nav__link" href="#chinh-sach">Minh bạch đối tác</a>
+                <a class="btn btn--primary" href="https://t.me/{}" target="_blank" rel="noopener noreferrer">Mở Trợ Lý @{}</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <section class="hero">
+            <span class="hero__eyebrow">Cập nhật tự động từ đối tác chính hãng</span>
+            <h1 class="hero__title">Tổng hợp mã giảm giá &amp; gợi ý sản phẩm tiết kiệm mỗi ngày</h1>
+            <p class="hero__subtitle">
+                DealX Vietnam tổng hợp các chương trình ưu đãi, mã giảm giá công khai theo từng gian hàng và ngành hàng từ Shopee, Tiki, Lazada và TikTok Shop giúp người mua dễ dàng so sánh và đặt hàng trực tiếp trên sàn.
+            </p>
+            <div class="stats-bar">
+                <span>Đang hiển thị: <strong>{}</strong> / <strong>{}</strong> ưu đãi hoạt động</span>
+                <span>Lần đồng bộ gần nhất: <strong>{}</strong></span>
+            </div>
+
+            <div class="search-panel">
+                <form class="search-form" method="GET" action="/">
+                    <label class="sr-only" for="deal-search">Tìm mã giảm giá hoặc tên gian hàng</label>
+                    <input id="deal-search" class="search-input" type="text" name="q" value="{}" placeholder="Tìm tên gian hàng, ngành hàng hoặc mã ưu đãi (VD: Tiki Trading, Gia dụng...)">
+                    <input type="hidden" name="plat" value="{}">
+                    <button class="btn btn--primary" type="submit">Tìm ưu đãi</button>
+                </form>
+                <div class="filter-row" aria-label="Lọc theo sàn thương mại điện tử">
+                    {}
+                </div>
+            </div>
+        </section>
+
+        <section id="uu-dai" class="section">
+            <div class="section__head">
+                <h2 class="section__title">Danh sách ưu đãi &amp; mã giảm giá mới nhất</h2>
+                <span class="deal-card__note">Chuyển tiếp trực tiếp sang trang chính thức của sàn</span>
+            </div>
+            <div class="deals-grid">
+                {}
+            </div>
+        </section>
+
+        <section id="huong-dan" class="section">
+            <div class="section__head">
+                <h2 class="section__title">Quy trình sử dụng nhanh chóng &amp; hợp lệ</h2>
+            </div>
+            <div class="steps-grid">
+                <article class="step-card">
+                    <h3>1. Chọn ưu đãi hoặc gửi link sản phẩm</h3>
+                    <p>Tìm mã theo ngành hàng ngay trên website hoặc dán liên kết sản phẩm trực tiếp cho trợ lý Telegram @{}.</p>
+                </article>
+                <article class="step-card">
+                    <h3>2. Lưu mã tại trang gian hàng chính thức</h3>
+                    <p>Bấm nút mở gian hàng để truy cập trang khuyến mãi hợp lệ trên Shopee, Tiki, Lazada hoặc TikTok Shop.</p>
+                </article>
+                <article class="step-card">
+                    <h3>3. Thanh toán trực tiếp trên sàn</h3>
+                    <p>Người dùng chủ động chọn mã ở bước thanh toán trên ứng dụng thương mại điện tử để hưởng mức giá tốt nhất.</p>
+                </article>
+            </div>
+        </section>
+    </main>
+
+    <footer id="chinh-sach" class="site-footer">
+        <div class="container">
+            <p><strong>Tuyên bố minh bạch tiếp thị liên kết (Affiliate Disclosure):</strong> DealX Vietnam là website tổng hợp thông tin khuyến mãi độc lập, hoạt động theo quy chuẩn đối tác tiếp thị liên kết chính thức. Khi người dùng bấm vào liên kết ưu đãi và hoàn tất mua sắm tự nhiên trên sàn thương mại điện tử, nền tảng có thể nhận hoa hồng giới thiệu mà không làm tăng giá sản phẩm của người mua.</p>
+            <div class="site-footer__links">
+                <span>DealX Vietnam © 2026</span>
+                <a href="https://t.me/{}" target="_blank" rel="noopener noreferrer">Kênh hỗ trợ Telegram</a>
+                <a href="/admin">Quản trị hệ thống</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>"##,
+        escape_html(&state.config.bot_username),
+        escape_html(&state.config.bot_username),
+        matched_count,
+        total_available,
+        escape_html(&last_sync_text),
+        escape_html(&search_q),
+        escape_html(&filter_plat),
+        filter_links,
+        cards_html,
+        escape_html(&state.config.bot_username),
+        escape_html(&state.config.bot_username)
+    );
+
+    Html(html).into_response()
+}
+
+fn urlencoding_simple(data: &str) -> String {
+    url::form_urlencoded::byte_serialize(data.as_bytes()).collect()
 }
 
 /// Health check cho Render Web Service
@@ -274,9 +751,14 @@ async fn handle_login_submit(
         }
 
         info!("✅ Quản trị viên đăng nhập thành công vào Web Dashboard!");
+        let secure_flag = if state.config.public_base_url.is_some() {
+            "; Secure"
+        } else {
+            ""
+        };
         let cookie_header = format!(
-            "dealx_session={}; HttpOnly; Path=/; SameSite=Lax; Max-Age=86400",
-            token
+            "dealx_session={}; HttpOnly; Path=/; SameSite=Lax; Max-Age=86400{}",
+            token, secure_flag
         );
 
         let mut response = Redirect::to("/admin").into_response();
@@ -315,7 +797,13 @@ async fn handle_logout(State(state): State<AppState>, headers: HeaderMap) -> Res
     }
 
     let mut response = Redirect::to("/admin/login").into_response();
-    if let Ok(val) = header::HeaderValue::from_str("dealx_session=; HttpOnly; Path=/; Max-Age=0") {
+    let secure_flag = if state.config.public_base_url.is_some() {
+        "; Secure"
+    } else {
+        ""
+    };
+    let logout_cookie = format!("dealx_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0{}", secure_flag);
+    if let Ok(val) = header::HeaderValue::from_str(&logout_cookie) {
         response.headers_mut().insert(header::SET_COOKIE, val);
     }
     response
@@ -431,6 +919,30 @@ async fn handle_dashboard(
     let camp_lazada = Repository::get_setting(&conn, "campaign_lazada").await.ok().flatten().unwrap_or_default();
     let camp_tiki = Repository::get_setting(&conn, "campaign_tiki").await.ok().flatten().unwrap_or_default();
     let camp_tiktok = Repository::get_setting(&conn, "campaign_tiktok").await.ok().flatten().unwrap_or_default();
+
+    let shopee_affiliate_id = Repository::get_setting(&conn, "shopee_affiliate_id")
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| state.config.shopee_affiliate_id.clone())
+        .unwrap_or_default();
+    let shopee_app_id = Repository::get_setting(&conn, "shopee_app_id")
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| state.config.shopee_app_id.clone())
+        .unwrap_or_default();
+    let shopee_app_secret = Repository::get_setting(&conn, "shopee_app_secret")
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| state.config.shopee_app_secret.clone())
+        .unwrap_or_default();
+
+    let shopee_card_html = render_shopee_card(&shopee_affiliate_id, &shopee_app_id, &shopee_app_secret);
 
     let mut approved_opt: Option<ApprovedCampaigns> = None;
     let (at_status_badge, campaign_status_html) = if let Some(ref token) = db_at_token {
@@ -783,6 +1295,8 @@ async fn handle_dashboard(
             </div>
         </section>
 
+        {}
+
         <!-- Kho Mã Giảm Giá Toàn Thị Trường (Quét 100% không bỏ sót + Cập nhật mỗi 60 giây) -->
         <section class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-4">
             <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-4">
@@ -990,6 +1504,7 @@ async fn handle_dashboard(
         escape_html(&camp_lazada),
         escape_html(&camp_tiki),
         escape_html(&camp_tiktok),
+        shopee_card_html,
         total_market_vouchers,
         high_pct_vouchers,
         escape_html(&last_sync_display),
@@ -1044,6 +1559,104 @@ async fn handle_update_accesstrade(
 
     state.accesstrade.invalidate_cache().await;
     Redirect::to("/admin").into_response()
+}
+
+fn render_shopee_card(aff_id: &str, app_id: &str, app_secret: &str) -> String {
+    let status_badge = if !app_id.trim().is_empty() && !app_secret.trim().is_empty() {
+        format!(
+            r#"<span class="px-2.5 py-1 bg-green-500/20 text-green-400 rounded-lg text-xs font-semibold">🟢 Đang bật Open API (Secret: {})</span>"#,
+            escape_html(&mask_token(app_secret))
+        )
+    } else if is_valid_shopee_affiliate_id(aff_id) {
+        format!(
+            r#"<span class="px-2.5 py-1 bg-green-500/20 text-green-400 rounded-lg text-xs font-semibold">🟢 Đang bật Direct Affiliate ID: {}</span>"#,
+            escape_html(aff_id.trim())
+        )
+    } else {
+        r#"<span class="px-2.5 py-1 bg-gray-700 text-gray-300 rounded-lg text-xs font-semibold">⚪ Chưa cấu hình — đang dùng luồng ACCESSTRADE</span>"#.to_string()
+    };
+
+    let secret_placeholder = if app_secret.trim().is_empty() {
+        "Nhập Secret Key nếu đã được Shopee cấp Open API..."
+    } else {
+        "Để trống để giữ Secret Key hiện tại (đã lưu an toàn)..."
+    };
+
+    format!(
+        r#"<section class="bg-gray-900 border border-orange-500/30 rounded-2xl p-6 shadow-xl space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-4">
+                <div>
+                    <h2 class="text-lg font-bold text-white flex items-center space-x-2">
+                        <span>🟠</span>
+                        <span>Kết Nối Shopee Affiliate Chính Chủ (Chạy Song Song ACCESSTRADE)</span>
+                    </h2>
+                    <p class="text-xs text-gray-400 mt-1">
+                        Khi có <b>Open API (AppID + Secret)</b> hoặc <b>Affiliate ID</b> từ <code>affiliate.shopee.vn</code>, bot tự ưu tiên sinh link <code>s.shopee.vn</code> ăn hoa hồng thẳng bên ví Shopee (Tiki/TikTok/Lazada vẫn chạy ACCESSTRADE).
+                    </p>
+                </div>
+                <div>{}</div>
+            </div>
+            <form method="POST" action="/admin/settings/shopee" class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Shopee Affiliate ID (Dùng ngay qua an_redir)</label>
+                        <input type="text" name="shopee_affiliate_id" value="{}" placeholder="Ví dụ: 17375520550 (5-20 chữ số)" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Shopee Open API AppID (Tùy chọn)</label>
+                        <input type="text" name="shopee_app_id" value="{}" placeholder="Nhập AppID từ affiliate.shopee.vn..." class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Shopee Open API Secret Key (Tùy chọn)</label>
+                        <input type="password" name="shopee_app_secret" placeholder="{}" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                    </div>
+                </div>
+                <button type="submit" class="px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-xl text-xs shadow-lg transition">
+                    💾 Lưu Cấu Hình Shopee Chính Chủ
+                </button>
+            </form>
+        </section>"#,
+        status_badge,
+        escape_html(aff_id),
+        escape_html(app_id),
+        secret_placeholder
+    )
+}
+
+#[derive(serde::Deserialize)]
+pub struct ShopeeSettingsForm {
+    pub shopee_affiliate_id: String,
+    pub shopee_app_id: String,
+    pub shopee_app_secret: String,
+}
+
+async fn handle_update_shopee_settings(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Form(form): Form<ShopeeSettingsForm>,
+) -> Response {
+    if !is_authenticated(&state, &headers).await {
+        return Redirect::to("/admin/login").into_response();
+    }
+
+    let aff_trimmed = form.shopee_affiliate_id.trim();
+    if !aff_trimmed.is_empty() && !is_valid_shopee_affiliate_id(aff_trimmed) {
+        return redirect_with_notice("Shopee Affiliate ID phải là dãy gồm 5 đến 20 chữ số (hoặc để trống để tắt).");
+    }
+
+    let Ok(conn) = state.db.conn() else {
+        return redirect_with_notice("Lỗi kết nối cơ sở dữ liệu.");
+    };
+
+    let _ = Repository::set_setting(&conn, "shopee_affiliate_id", aff_trimmed).await;
+    let _ = Repository::set_setting(&conn, "shopee_app_id", form.shopee_app_id.trim()).await;
+    let secret_trimmed = form.shopee_app_secret.trim();
+    if !secret_trimmed.is_empty() {
+        let _ = Repository::set_setting(&conn, "shopee_app_secret", secret_trimmed).await;
+    }
+
+    info!("✅ Quản trị viên đã cập nhật cấu hình Shopee Affiliate chính chủ trên Web Admin.");
+    redirect_with_notice("Đã lưu cấu hình Shopee Affiliate chính chủ (chạy song song ACCESSTRADE)!")
 }
 
 async fn handle_sync_accesstrade(headers: HeaderMap, State(state): State<AppState>) -> Response {
@@ -1343,6 +1956,9 @@ mod tests {
             min_withdrawal_vnd: 50000.0,
             accesstrade_deeplink_template: "template".to_string(),
             accesstrade_api_token: None,
+            shopee_affiliate_id: None,
+            shopee_app_id: None,
+            shopee_app_secret: None,
             admin_username: "admin".to_string(),
             admin_password: "password".to_string(),
             port: 10000,
@@ -1377,6 +1993,9 @@ mod tests {
             min_withdrawal_vnd: 50000.0,
             accesstrade_deeplink_template: "template".to_string(),
             accesstrade_api_token: None,
+            shopee_affiliate_id: None,
+            shopee_app_id: None,
+            shopee_app_secret: None,
             admin_username: "admin".to_string(),
             admin_password: "password".to_string(),
             port: 10000,
@@ -1445,5 +2064,53 @@ DongLoiThieuCot | 123
         assert_eq!(parsed[1].platform, "TikTok Shop");
         assert_eq!(parsed[1].coupon_code.as_deref(), Some("TTS35"));
         assert_eq!(parsed[1].min_spend, 150000.0);
+    }
+
+    #[tokio::test]
+    async fn test_public_home_renders_200_and_contains_disclosure() {
+        let test_db_path = format!("target/test_home_{}.db", uuid::Uuid::new_v4().simple());
+        let config = Config {
+            telegram_token: "test".to_string(),
+            bot_username: "vvipass_vip_bot".to_string(),
+            database_path: test_db_path.clone(),
+            turso_url: None,
+            turso_auth_token: None,
+            default_cashback_rate: 70.0,
+            default_referral_bonus_rate: 10.0,
+            min_withdrawal_vnd: 50000.0,
+            accesstrade_deeplink_template: String::new(),
+            accesstrade_api_token: None,
+            shopee_affiliate_id: None,
+            shopee_app_id: None,
+            shopee_app_secret: None,
+            admin_username: "admin".to_string(),
+            admin_password: "password".to_string(),
+            port: 10000,
+            public_base_url: Some("https://bot-sale.onrender.com".to_string()),
+            telegram_webhook_secret: "secret".to_string(),
+        };
+        let db = AppDb::init(&config).await.unwrap();
+        let state = AppState {
+            db,
+            config,
+            accesstrade: Arc::new(AccessTradeClient::new()),
+            sessions: Arc::new(RwLock::new(HashSet::new())),
+            webhook_tx: None,
+        };
+
+        let resp = handle_root(Query(PublicHomeQuery::default()), State(state)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(html.contains(r#"<html lang="vi">"#));
+        assert!(html.contains("vvipass_vip_bot"));
+        assert!(html.contains("<form"));
+        assert!(html.contains("Affiliate Disclosure"));
+        assert!(!html.contains("Đăng Nhập Quản Trị"));
+
+        let _ = std::fs::remove_file(&test_db_path);
     }
 }

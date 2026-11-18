@@ -9,6 +9,9 @@ use url::Url;
 use uuid::Uuid;
 
 use super::accesstrade::AccessTradeClient;
+use super::shopee_affiliate::{
+    build_direct_an_redir_link, generate_open_api_short_link, is_valid_shopee_affiliate_id,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Platform {
@@ -39,6 +42,9 @@ pub struct AffiliateSettings<'a> {
     pub campaign_lazada: Option<&'a str>,
     pub campaign_tiki: Option<&'a str>,
     pub campaign_tiktok: Option<&'a str>,
+    pub shopee_affiliate_id: Option<&'a str>,
+    pub shopee_app_id: Option<&'a str>,
+    pub shopee_app_secret: Option<&'a str>,
 }
 
 /// Thông tin voucher/mã sale nhặt được tự động
@@ -591,8 +597,51 @@ impl DealParser {
             Platform::Unknown => None,
         };
 
-        // 1. Ưu tiên gọi ACCESSTRADE API thật nếu có API Token
-        let (affiliate_url, sub_id, is_affiliate) = if let Some(token) = settings.accesstrade_token.map(str::trim).filter(|s| !s.is_empty()) {
+        // 0. Riêng Shopee: Ưu tiên Shopee Affiliate Chính Chủ (Open API -> Direct Affiliate ID an_redir), sau đó mới fallback ACCESSTRADE
+        let mut direct_shopee_result: Option<(String, String, bool)> = None;
+        if platform == Platform::Shopee {
+            let app_id_opt = settings.shopee_app_id.map(str::trim).filter(|s| !s.is_empty());
+            let app_secret_opt = settings.shopee_app_secret.map(str::trim).filter(|s| !s.is_empty());
+            if let (Some(app_id), Some(app_secret)) = (app_id_opt, app_secret_opt) {
+                let user_str = user_id.to_string();
+                let click_short = &click_id[..8];
+                let sub_ids = [user_str.as_str(), ref_str.as_str(), click_short];
+                match generate_open_api_short_link(
+                    &self.http_client,
+                    app_id,
+                    app_secret,
+                    &clean_url,
+                    &sub_ids,
+                )
+                .await
+                {
+                    Ok(short_url) => {
+                        direct_shopee_result = Some((short_url, default_sub_id.clone(), true));
+                    }
+                    Err(err_msg) => {
+                        warn!("Fallback khỏi Shopee Open API: {}", err_msg);
+                        affiliate_note = Some(err_msg);
+                    }
+                }
+            }
+
+            if direct_shopee_result.is_none() {
+                if let Some(aff_id) = settings
+                    .shopee_affiliate_id
+                    .map(str::trim)
+                    .filter(|id| is_valid_shopee_affiliate_id(id))
+                {
+                    let an_redir = build_direct_an_redir_link(&clean_url, aff_id, &default_sub_id);
+                    affiliate_note = None;
+                    direct_shopee_result = Some((an_redir, default_sub_id.clone(), true));
+                }
+            }
+        }
+
+        // 1. Ưu tiên dùng kết quả Shopee Chính Chủ nếu có; nếu không gọi ACCESSTRADE API thật
+        let (affiliate_url, sub_id, is_affiliate) = if let Some(res) = direct_shopee_result {
+            res
+        } else if let Some(token) = settings.accesstrade_token.map(str::trim).filter(|s| !s.is_empty()) {
             match self
                 .accesstrade
                 .create_affiliate_link(
@@ -852,5 +901,34 @@ mod tests {
         assert_eq!(price, Some(822000.0));
         assert_eq!(shop.as_deref(), Some("Tiki Trading"));
         assert_eq!(brand.as_deref(), Some("Enfa"));
+    }
+
+    #[tokio::test]
+    async fn test_process_link_shopee_direct_affiliate_id_priority() {
+        let parser = DealParser::new();
+        let settings = AffiliateSettings {
+            deeplink_template: "",
+            accesstrade_token: None,
+            campaign_shopee: None,
+            campaign_lazada: None,
+            campaign_tiki: None,
+            campaign_tiktok: None,
+            shopee_affiliate_id: Some("17375520550"),
+            shopee_app_id: None,
+            shopee_app_secret: None,
+        };
+        let parsed = parser
+            .process_link(
+                "https://shopee.vn/product/123456/987654321?sp_atk=abc",
+                42,
+                None,
+                settings,
+            )
+            .await
+            .expect("process_link phải thành công cho Shopee URL sạch");
+        assert!(parsed.is_affiliate);
+        assert!(parsed
+            .affiliate_url
+            .starts_with("https://s.shopee.vn/an_redir?origin_link=https%3A%2F%2Fshopee.vn%2Fproduct%2F123456%2F987654321&affiliate_id=17375520550"));
     }
 }

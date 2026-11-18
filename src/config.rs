@@ -18,6 +18,11 @@ pub struct Config {
     // Cấu hình Affiliate Deeplink template & API Token (AccessTrade)
     pub accesstrade_deeplink_template: String,
     pub accesstrade_api_token: Option<String>,
+
+    // Cấu hình Shopee Affiliate Chính Chủ (Chạy song song AccessTrade)
+    pub shopee_affiliate_id: Option<String>,
+    pub shopee_app_id: Option<String>,
+    pub shopee_app_secret: Option<String>,
     
     // Cấu hình tài khoản Quản trị viên (Chỉ 1 tài khoản Admin duy nhất)
     pub admin_username: String,
@@ -102,6 +107,10 @@ impl Config {
             .filter(|s| !s.is_empty())
             .or(Some(fallback_at_token));
 
+        let shopee_affiliate_id = read_env_non_empty("SHOPEE_AFFILIATE_ID");
+        let shopee_app_id = read_env_non_empty("SHOPEE_APP_ID");
+        let shopee_app_secret = read_env_non_empty("SHOPEE_APP_SECRET");
+
         let admin_username = env::var("ADMIN_USERNAME")
             .ok()
             .map(|s| s.trim().to_string())
@@ -133,6 +142,9 @@ impl Config {
             min_withdrawal_vnd,
             accesstrade_deeplink_template,
             accesstrade_api_token,
+            shopee_affiliate_id,
+            shopee_app_id,
+            shopee_app_secret,
             admin_username,
             admin_password,
             port,

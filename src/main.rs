@@ -221,6 +221,9 @@ async fn run_internal_verification(db: &AppDb, config: &Config) -> anyhow::Resul
         campaign_lazada: None,
         campaign_tiki: None,
         campaign_tiktok: None,
+        shopee_affiliate_id: config.shopee_affiliate_id.as_deref(),
+        shopee_app_id: config.shopee_app_id.as_deref(),
+        shopee_app_secret: config.shopee_app_secret.as_deref(),
     };
     let parsed = parser
         .process_link(
