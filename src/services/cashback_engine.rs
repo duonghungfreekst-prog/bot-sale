@@ -120,6 +120,8 @@ mod tests {
             shopee_affiliate_id: None,
             shopee_app_id: None,
             shopee_app_secret: None,
+            shopee_social_params: None,
+            shortlink_base_url: None,
             admin_username: "admin".to_string(),
             admin_password: "password".to_string(),
             port: 10000,

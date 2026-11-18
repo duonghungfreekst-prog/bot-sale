@@ -160,6 +160,27 @@ impl AppDb {
         .await
         .context("Tạo bảng settings thất bại")?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS short_links (
+                code TEXT PRIMARY KEY,
+                target_url TEXT NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                platform TEXT NOT NULL DEFAULT '',
+                clicks_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );",
+            (),
+        )
+        .await
+        .context("Tạo bảng short_links thất bại")?;
+
+        let _ = conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_short_links_target ON short_links(target_url);",
+                (),
+            )
+            .await;
+
         info!("LibSQL schema migration thành công.");
         Ok(())
     }

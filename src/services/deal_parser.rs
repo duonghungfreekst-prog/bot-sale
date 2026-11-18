@@ -10,7 +10,8 @@ use uuid::Uuid;
 
 use super::accesstrade::AccessTradeClient;
 use super::shopee_affiliate::{
-    build_direct_an_redir_link, generate_open_api_short_link, is_valid_shopee_affiliate_id,
+    append_social_params_to_shopee_link, build_direct_an_redir_link, generate_open_api_short_link,
+    is_valid_shopee_affiliate_id,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +46,7 @@ pub struct AffiliateSettings<'a> {
     pub shopee_affiliate_id: Option<&'a str>,
     pub shopee_app_id: Option<&'a str>,
     pub shopee_app_secret: Option<&'a str>,
+    pub shopee_social_params: Option<&'a str>,
 }
 
 /// Thông tin voucher/mã sale nhặt được tự động
@@ -616,7 +618,11 @@ impl DealParser {
                 .await
                 {
                     Ok(short_url) => {
-                        direct_shopee_result = Some((short_url, default_sub_id.clone(), true));
+                        let final_shopee = append_social_params_to_shopee_link(
+                            &short_url,
+                            settings.shopee_social_params,
+                        );
+                        direct_shopee_result = Some((final_shopee, default_sub_id.clone(), true));
                     }
                     Err(err_msg) => {
                         warn!("Fallback khỏi Shopee Open API: {}", err_msg);
@@ -632,8 +638,12 @@ impl DealParser {
                     .filter(|id| is_valid_shopee_affiliate_id(id))
                 {
                     let an_redir = build_direct_an_redir_link(&clean_url, aff_id, &default_sub_id);
+                    let final_shopee = append_social_params_to_shopee_link(
+                        &an_redir,
+                        settings.shopee_social_params,
+                    );
                     affiliate_note = None;
-                    direct_shopee_result = Some((an_redir, default_sub_id.clone(), true));
+                    direct_shopee_result = Some((final_shopee, default_sub_id.clone(), true));
                 }
             }
         }
@@ -916,6 +926,7 @@ mod tests {
             shopee_affiliate_id: Some("17375520550"),
             shopee_app_id: None,
             shopee_app_secret: None,
+            shopee_social_params: None,
         };
         let parsed = parser
             .process_link(
@@ -930,5 +941,32 @@ mod tests {
         assert!(parsed
             .affiliate_url
             .starts_with("https://s.shopee.vn/an_redir?origin_link=https%3A%2F%2Fshopee.vn%2Fproduct%2F123456%2F987654321&affiliate_id=17375520550"));
+
+        // Kiểm tra nối bộ tham số phiên IG/FB Reels khi có mẫu cấu hình
+        let settings_with_social = AffiliateSettings {
+            deeplink_template: "",
+            accesstrade_token: None,
+            campaign_shopee: None,
+            campaign_lazada: None,
+            campaign_tiki: None,
+            campaign_tiktok: None,
+            shopee_affiliate_id: Some("17375520550"),
+            shopee_app_id: None,
+            shopee_app_secret: None,
+            shopee_social_params: Some(
+                "https://s.shopee.vn/2gCo1LuaEU?fb_content_id=Q9test&encrypted_payload=cM5f_test&channel_type=ig&content_source=ig&content_type=REELS&sm_sig_id=QfU_sig",
+            ),
+        };
+        let parsed_social = parser
+            .process_link(
+                "https://shopee.vn/product/123456/987654321",
+                42,
+                None,
+                settings_with_social,
+            )
+            .await
+            .unwrap();
+        assert!(parsed_social.affiliate_url.contains("&channel_type=ig&"));
+        assert!(parsed_social.affiliate_url.contains("sm_sig_id=QfU_sig"));
     }
 }

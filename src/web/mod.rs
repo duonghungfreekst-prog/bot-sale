@@ -3,8 +3,8 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 use axum::{
-    extract::{Form, Query, Request, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    extract::{Form, Path, Query, Request, State},
+    http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -20,7 +20,9 @@ use crate::config::Config;
 use crate::db::repository::{NewDealInput, Repository};
 use crate::db::AppDb;
 use crate::services::accesstrade::{mask_token, AccessTradeClient, ApprovedCampaigns, VoucherOffer};
-use crate::services::shopee_affiliate::is_valid_shopee_affiliate_id;
+use crate::services::shopee_affiliate::{
+    extract_social_passthrough_params, is_valid_shopee_affiliate_id,
+};
 use crate::utils::{escape_html, format_vnd, sanitize_crlf};
 
 pub type WebhookUpdateSender = mpsc::UnboundedSender<Result<Update, Infallible>>;
@@ -83,6 +85,9 @@ fn build_router(state: AppState) -> Router {
         .route("/admin/deals/import", post(handle_import_deals))
         .route("/admin/deals/toggle", post(handle_toggle_deal))
         .route("/admin/deals/delete", post(handle_delete_deal))
+        // Giải mã link bọc 8 ký tự chuẩn DealX (đặt cuối cùng)
+        .route("/go/{code}", get(handle_shortlink_redirect))
+        .route("/{code}", get(handle_shortlink_redirect))
         .layer(middleware::from_fn(security_headers_middleware))
         .with_state(state)
 }
@@ -173,9 +178,25 @@ async fn handle_root(
         .unwrap_or("all")
         .to_string();
 
-    let db_deals = match state.db.conn() {
-        Ok(conn) => Repository::get_active_deals(&conn, None).await.unwrap_or_default(),
-        Err(_) => Vec::new(),
+    let conn_opt = state.db.conn().ok();
+    let db_deals = match conn_opt.as_ref() {
+        Some(conn) => Repository::get_active_deals(conn, None).await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let shortlink_base = match conn_opt.as_ref() {
+        Some(conn) => Repository::get_setting(conn, "shortlink_base_url")
+            .await
+            .ok()
+            .flatten()
+            .map(|s| s.trim().trim_end_matches('/').to_string())
+            .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
+            .or_else(|| state.config.shortlink_base_url.clone())
+            .or_else(|| state.config.public_base_url.clone()),
+        None => state
+            .config
+            .shortlink_base_url
+            .clone()
+            .or_else(|| state.config.public_base_url.clone()),
     };
     let market_vouchers = state.accesstrade.peek_cached_high_discount_vouchers().await;
     let approved = state.accesstrade.peek_approved_campaigns().await;
@@ -236,6 +257,19 @@ async fn handle_root(
                 } else {
                     "Không giới hạn đơn tối thiểu".to_string()
                 };
+                let wrapped_url = match conn_opt.as_ref() {
+                    Some(conn) => {
+                        Repository::wrap_url_if_public(
+                            conn,
+                            shortlink_base.as_deref(),
+                            &d.deal_url,
+                            &d.title,
+                            &d.platform,
+                        )
+                        .await
+                    }
+                    None => d.deal_url.clone(),
+                };
                 cards_html.push_str(&format!(
                     r#"<article class="deal-card">
                         <div class="deal-card__top">
@@ -256,11 +290,24 @@ async fn handle_root(
                     escape_html(&d.discount_desc),
                     escape_html(code_txt),
                     escape_html(&min_txt),
-                    escape_html(&d.deal_url)
+                    escape_html(&wrapped_url)
                 ));
             }
             PublicDealCard::Api(v) => {
                 let target_url = v.best_target_url(approved.as_ref());
+                let wrapped_url = match conn_opt.as_ref() {
+                    Some(conn) => {
+                        Repository::wrap_url_if_public(
+                            conn,
+                            shortlink_base.as_deref(),
+                            target_url,
+                            &v.shop_name,
+                            &v.platform,
+                        )
+                        .await
+                    }
+                    None => target_url.to_string(),
+                };
                 let badge = v.discount_badge();
                 let expiry = if v.end_time.trim().is_empty() {
                     "Đang hiệu lực".to_string()
@@ -287,7 +334,7 @@ async fn handle_root(
                     escape_html(&v.discount_desc),
                     escape_html(&v.coupon_code),
                     escape_html(&expiry),
-                    escape_html(target_url)
+                    escape_html(&wrapped_url)
                 ));
             }
         }
@@ -628,6 +675,163 @@ fn urlencoding_simple(data: &str) -> String {
     url::form_urlencoded::byte_serialize(data.as_bytes()).collect()
 }
 
+fn is_preview_bot(headers: &HeaderMap) -> bool {
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+    ua.contains("telegrambot")
+        || ua.contains("twitterbot")
+        || ua.contains("facebookexternalhit")
+        || ua.contains("whatsapp")
+        || ua.contains("discordbot")
+        || ua.contains("slackbot")
+        || ua.contains("zalo")
+}
+
+fn is_desktop_browser(headers: &HeaderMap) -> bool {
+    let sec_mobile = headers
+        .get("sec-ch-ua-mobile")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .trim();
+    if sec_mobile == "?0" {
+        return true;
+    }
+
+    let sec_platform = headers
+        .get("sec-ch-ua-platform")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+    if sec_platform.contains("windows")
+        || sec_platform.contains("macos")
+        || sec_platform.contains("linux")
+        || sec_platform.contains("chrome os")
+    {
+        return true;
+    }
+
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+    let is_mobile_ua = ua.contains("android")
+        || ua.contains("iphone")
+        || ua.contains("ipad")
+        || ua.contains("ipod")
+        || ua.contains("mobile");
+    !is_mobile_ua
+        && (ua.contains("windows nt") || ua.contains("macintosh") || ua.contains("x11; linux"))
+}
+
+/// Giải mã link bọc `/{code}` & `/go/{code}`: bảo vệ chống soi link trên PC và giữ referrer chuẩn sang App sàn
+async fn handle_shortlink_redirect(
+    Path(code): Path<String>,
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Response {
+    let code_trimmed = code.trim();
+    if !Repository::is_valid_short_code(code_trimmed) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    let Ok(conn) = state.db.conn() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+
+    let Ok(Some(record)) = Repository::resolve_short_link(&conn, code_trimmed).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    if is_preview_bot(&headers) {
+        let title_display = if record.title.trim().is_empty() {
+            format!("Ưu đãi {} từ DealX Vietnam", record.platform.trim())
+        } else {
+            record.title.clone()
+        };
+        let plat_desc = if record.platform.trim().is_empty() {
+            "ứng dụng mua sắm".to_string()
+        } else {
+            record.platform.trim().to_string()
+        };
+        let preview_html = format!(
+            r#"<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <meta name="robots" content="noindex, nofollow">
+    <meta property="og:title" content="{}">
+    <meta property="og:description" content="Bấm để mở ưu đãi trên {}">
+    <title>{}</title>
+</head>
+<body><p>Ưu đãi được chia sẻ qua DealX Vietnam.</p></body>
+</html>"#,
+            escape_html(&title_display),
+            escape_html(&plat_desc),
+            escape_html(&title_display)
+        );
+        return (StatusCode::OK, Html(preview_html)).into_response();
+    }
+
+    let mobile_only = Repository::get_setting(&conn, "shortlink_mobile_only")
+        .await
+        .ok()
+        .flatten()
+        .map(|v| v.trim() != "0")
+        .unwrap_or(true);
+
+    if mobile_only && is_desktop_browser(&headers) {
+        let blocked_html = r#"<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Chỉ hỗ trợ mở trên Điện Thoại</title>
+</head>
+<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0c0f17;color:#f8fafc;font-family:system-ui,sans-serif;padding:24px;text-align:center;">
+    <div style="max-width:420px;background:#141926;border:1px solid #263044;border-radius:16px;padding:24px;">
+        <h1 style="margin:0 0 12px;font-size:18px;">📱 Link ưu đãi chỉ mở được trên Điện Thoại</h1>
+        <p style="margin:0;color:#cbd5e1;font-size:14px;line-height:1.6;">Link ưu đãi này chỉ mở được trên Điện Thoại (iOS / Android) để tự động chuyển vào App sàn &amp; kích hoạt ưu đãi. Vui lòng bấm mở từ điện thoại của bạn!</p>
+    </div>
+</body>
+</html>"#;
+        let mut resp = (StatusCode::FORBIDDEN, Html(blocked_html)).into_response();
+        resp.headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        resp.headers_mut().insert(
+            HeaderName::from_static("x-robots-tag"),
+            HeaderValue::from_static("noindex, nofollow"),
+        );
+        return resp;
+    }
+
+    let _ = Repository::increment_short_link_click(&conn, code_trimmed).await;
+
+    let mut response = StatusCode::FOUND.into_response();
+    if let Ok(loc_val) = HeaderValue::from_str(&record.target_url) {
+        response.headers_mut().insert(header::LOCATION, loc_val);
+    } else {
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
+    response.headers_mut().insert(
+        HeaderName::from_static("referrer-policy"),
+        HeaderValue::from_static("unsafe-url"),
+    );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store, no-cache, must-revalidate, private"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static("x-robots-tag"),
+        HeaderValue::from_static("noindex, nofollow"),
+    );
+    response
+}
+
 /// Health check cho Render Web Service
 async fn handle_health() -> (StatusCode, &'static str) {
     (StatusCode::OK, "DealX Bot & Web Admin Healthy")
@@ -941,8 +1145,34 @@ async fn handle_dashboard(
         .filter(|s| !s.trim().is_empty())
         .or_else(|| state.config.shopee_app_secret.clone())
         .unwrap_or_default();
+    let shopee_social_params = Repository::get_setting(&conn, "shopee_social_params")
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| state.config.shopee_social_params.clone())
+        .unwrap_or_default();
+    let shortlink_base_url = Repository::get_setting(&conn, "shortlink_base_url")
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_default();
+    let shortlink_mobile_only = Repository::get_setting(&conn, "shortlink_mobile_only")
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s.trim() != "0")
+        .unwrap_or(true);
 
-    let shopee_card_html = render_shopee_card(&shopee_affiliate_id, &shopee_app_id, &shopee_app_secret);
+    let shopee_card_html = render_shopee_card(
+        &shopee_affiliate_id,
+        &shopee_app_id,
+        &shopee_app_secret,
+        &shopee_social_params,
+        &shortlink_base_url,
+        shortlink_mobile_only,
+    );
 
     let mut approved_opt: Option<ApprovedCampaigns> = None;
     let (at_status_badge, campaign_status_html) = if let Some(ref token) = db_at_token {
@@ -1561,7 +1791,14 @@ async fn handle_update_accesstrade(
     Redirect::to("/admin").into_response()
 }
 
-fn render_shopee_card(aff_id: &str, app_id: &str, app_secret: &str) -> String {
+fn render_shopee_card(
+    aff_id: &str,
+    app_id: &str,
+    app_secret: &str,
+    social_params: &str,
+    shortlink_base_url: &str,
+    shortlink_mobile_only: bool,
+) -> String {
     let status_badge = if !app_id.trim().is_empty() && !app_secret.trim().is_empty() {
         format!(
             r#"<span class="px-2.5 py-1 bg-green-500/20 text-green-400 rounded-lg text-xs font-semibold">🟢 Đang bật Open API (Secret: {})</span>"#,
@@ -1581,6 +1818,17 @@ fn render_shopee_card(aff_id: &str, app_id: &str, app_secret: &str) -> String {
     } else {
         "Để trống để giữ Secret Key hiện tại (đã lưu an toàn)..."
     };
+    let social_placeholder = if social_params.trim().is_empty() {
+        "Dán link/query phiên IG/FB Reels (có sm_sig_id / encrypted_payload) nếu có..."
+    } else {
+        "Đã lưu mẫu phiên IG/FB Reels (để trống để giữ nguyên mẫu hiện tại)..."
+    };
+    let social_badge = if social_params.trim().is_empty() {
+        "Chưa gắn mẫu phiên IG/FB"
+    } else {
+        "🟢 Đã gắn bộ tham số IG/FB Reels"
+    };
+    let mobile_checked = if shortlink_mobile_only { "checked" } else { "" };
 
     format!(
         r#"<section class="bg-gray-900 border border-orange-500/30 rounded-2xl p-6 shadow-xl space-y-4">
@@ -1588,10 +1836,10 @@ fn render_shopee_card(aff_id: &str, app_id: &str, app_secret: &str) -> String {
                 <div>
                     <h2 class="text-lg font-bold text-white flex items-center space-x-2">
                         <span>🟠</span>
-                        <span>Kết Nối Shopee Affiliate Chính Chủ (Chạy Song Song ACCESSTRADE)</span>
+                        <span>Kết Nối Shopee Affiliate Chính Chủ &amp; Bọc Link Riêng</span>
                     </h2>
                     <p class="text-xs text-gray-400 mt-1">
-                        Khi có <b>Open API (AppID + Secret)</b> hoặc <b>Affiliate ID</b> từ <code>affiliate.shopee.vn</code>, bot tự ưu tiên sinh link <code>s.shopee.vn</code> ăn hoa hồng thẳng bên ví Shopee (Tiki/TikTok/Lazada vẫn chạy ACCESSTRADE).
+                        Bot tự động bọc 100% link đầu ra dạng <code>/8_ký_tự</code>, đồng thời ưu tiên sinh link <code>s.shopee.vn</code> chính chủ (kèm nối đuôi phiên IG/FB Reels nếu bạn gắn mẫu bên dưới).
                     </p>
                 </div>
                 <div>{}</div>
@@ -1611,15 +1859,37 @@ fn render_shopee_card(aff_id: &str, app_id: &str, app_secret: &str) -> String {
                         <input type="password" name="shopee_app_secret" placeholder="{}" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
                     </div>
                 </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-gray-800/80">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Bộ Tham Số Phiên IG/FB Reels Passthrough (<span class="text-orange-300">{}</span>)</label>
+                        <input type="password" name="shopee_social_params" placeholder="{}" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <label class="inline-flex items-center space-x-2 text-xs text-gray-400 mt-1.5">
+                            <input type="checkbox" name="clear_social_params" value="1" class="rounded bg-gray-800 border-gray-600">
+                            <span>Xóa bộ tham số phiên IG/FB đang lưu</span>
+                        </label>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Tên Miền Bọc Link Riêng (Tùy chọn)</label>
+                        <input type="text" name="shortlink_base_url" value="{}" placeholder="Mặc định tự dùng domain Render (VD: https://tenmiencuaban.online)" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <label class="inline-flex items-center space-x-2 text-xs text-gray-300 mt-1.5">
+                            <input type="checkbox" name="shortlink_mobile_only" value="1" {} class="rounded bg-gray-800 border-gray-600">
+                            <span>🛡️ Chặn máy tính soi link bọc (Chỉ cho điện thoại mở giống godeal.online)</span>
+                        </label>
+                    </div>
+                </div>
                 <button type="submit" class="px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-xl text-xs shadow-lg transition">
-                    💾 Lưu Cấu Hình Shopee Chính Chủ
+                    💾 Lưu Cấu Hình Shopee &amp; Bọc Link
                 </button>
             </form>
         </section>"#,
         status_badge,
         escape_html(aff_id),
         escape_html(app_id),
-        secret_placeholder
+        secret_placeholder,
+        social_badge,
+        social_placeholder,
+        escape_html(shortlink_base_url),
+        mobile_checked
     )
 }
 
@@ -1628,6 +1898,14 @@ pub struct ShopeeSettingsForm {
     pub shopee_affiliate_id: String,
     pub shopee_app_id: String,
     pub shopee_app_secret: String,
+    #[serde(default)]
+    pub shopee_social_params: String,
+    #[serde(default)]
+    pub clear_social_params: Option<String>,
+    #[serde(default)]
+    pub shortlink_base_url: String,
+    #[serde(default)]
+    pub shortlink_mobile_only: Option<String>,
 }
 
 async fn handle_update_shopee_settings(
@@ -1644,6 +1922,27 @@ async fn handle_update_shopee_settings(
         return redirect_with_notice("Shopee Affiliate ID phải là dãy gồm 5 đến 20 chữ số (hoặc để trống để tắt).");
     }
 
+    let short_base_trimmed = form.shortlink_base_url.trim().trim_end_matches('/');
+    if !short_base_trimmed.is_empty() && !is_valid_http_url(short_base_trimmed) {
+        return redirect_with_notice("Tên miền bọc link riêng phải bắt đầu bằng https:// hoặc http://.");
+    }
+
+    let social_trimmed = form.shopee_social_params.trim();
+    let validated_social = if form.clear_social_params.as_deref() == Some("1") {
+        Some(String::new())
+    } else if !social_trimmed.is_empty() {
+        match extract_social_passthrough_params(social_trimmed) {
+            Some(clean) => Some(clean),
+            None => {
+                return redirect_with_notice(
+                    "Mẫu phiên IG/FB Reels chưa hợp lệ (phải chứa sm_sig_id hoặc encrypted_payload).",
+                );
+            }
+        }
+    } else {
+        None
+    };
+
     let Ok(conn) = state.db.conn() else {
         return redirect_with_notice("Lỗi kết nối cơ sở dữ liệu.");
     };
@@ -1654,9 +1953,19 @@ async fn handle_update_shopee_settings(
     if !secret_trimmed.is_empty() {
         let _ = Repository::set_setting(&conn, "shopee_app_secret", secret_trimmed).await;
     }
+    if let Some(social_val) = validated_social {
+        let _ = Repository::set_setting(&conn, "shopee_social_params", &social_val).await;
+    }
+    let _ = Repository::set_setting(&conn, "shortlink_base_url", short_base_trimmed).await;
+    let mobile_flag = if form.shortlink_mobile_only.as_deref() == Some("1") {
+        "1"
+    } else {
+        "0"
+    };
+    let _ = Repository::set_setting(&conn, "shortlink_mobile_only", mobile_flag).await;
 
-    info!("✅ Quản trị viên đã cập nhật cấu hình Shopee Affiliate chính chủ trên Web Admin.");
-    redirect_with_notice("Đã lưu cấu hình Shopee Affiliate chính chủ (chạy song song ACCESSTRADE)!")
+    info!("✅ Quản trị viên đã cập nhật cấu hình Shopee Chính Chủ & Bọc Link trên Web Admin.");
+    redirect_with_notice("Đã lưu cấu hình Shopee Chính Chủ & Bộ Bọc Link an toàn!")
 }
 
 async fn handle_sync_accesstrade(headers: HeaderMap, State(state): State<AppState>) -> Response {
@@ -1959,6 +2268,8 @@ mod tests {
             shopee_affiliate_id: None,
             shopee_app_id: None,
             shopee_app_secret: None,
+            shopee_social_params: None,
+            shortlink_base_url: None,
             admin_username: "admin".to_string(),
             admin_password: "password".to_string(),
             port: 10000,
@@ -1996,6 +2307,8 @@ mod tests {
             shopee_affiliate_id: None,
             shopee_app_id: None,
             shopee_app_secret: None,
+            shopee_social_params: None,
+            shortlink_base_url: None,
             admin_username: "admin".to_string(),
             admin_password: "password".to_string(),
             port: 10000,
@@ -2083,6 +2396,8 @@ DongLoiThieuCot | 123
             shopee_affiliate_id: None,
             shopee_app_id: None,
             shopee_app_secret: None,
+            shopee_social_params: None,
+            shortlink_base_url: None,
             admin_username: "admin".to_string(),
             admin_password: "password".to_string(),
             port: 10000,
@@ -2110,6 +2425,120 @@ DongLoiThieuCot | 123
         assert!(html.contains("<form"));
         assert!(html.contains("Affiliate Disclosure"));
         assert!(!html.contains("Đăng Nhập Quản Trị"));
+
+        let _ = std::fs::remove_file(&test_db_path);
+    }
+
+    #[tokio::test]
+    async fn test_shortlink_redirect_preview_desktop_and_mobile() {
+        let test_db_path = format!("target/test_sl_{}.db", uuid::Uuid::new_v4().simple());
+        let config = Config {
+            telegram_token: "test".to_string(),
+            bot_username: "vvipass_vip_bot".to_string(),
+            database_path: test_db_path.clone(),
+            turso_url: None,
+            turso_auth_token: None,
+            default_cashback_rate: 70.0,
+            default_referral_bonus_rate: 10.0,
+            min_withdrawal_vnd: 50000.0,
+            accesstrade_deeplink_template: String::new(),
+            accesstrade_api_token: None,
+            shopee_affiliate_id: None,
+            shopee_app_id: None,
+            shopee_app_secret: None,
+            shopee_social_params: None,
+            shortlink_base_url: None,
+            admin_username: "admin".to_string(),
+            admin_password: "password".to_string(),
+            port: 10000,
+            public_base_url: Some("https://bot-sale.onrender.com".to_string()),
+            telegram_webhook_secret: "secret".to_string(),
+        };
+        let db = AppDb::init(&config).await.unwrap();
+        let secret_target = "https://s.shopee.vn/an_redir?origin_link=https%3A%2F%2Fshopee.vn%2Fproduct%2F1%2F2&affiliate_id=17375520550&sm_sig_id=SIGTEST123";
+        let code = {
+            let conn = db.conn().unwrap();
+            Repository::create_or_get_short_link(&conn, secret_target, "Sữa bột Enfagrow Test", "Shopee")
+                .await
+                .unwrap()
+        };
+
+        let state = AppState {
+            db,
+            config,
+            accesstrade: Arc::new(AccessTradeClient::new()),
+            sessions: Arc::new(RwLock::new(HashSet::new())),
+            webhook_tx: None,
+        };
+
+        // 1. TelegramBot preview -> 200 HTML sạch, không lộ secret_target
+        let mut preview_hdrs = HeaderMap::new();
+        preview_hdrs.insert(header::USER_AGENT, "TelegramBot (like TwitterBot)".parse().unwrap());
+        let resp_preview = handle_shortlink_redirect(
+            Path(code.clone()),
+            preview_hdrs,
+            State(state.clone()),
+        )
+        .await;
+        assert_eq!(resp_preview.status(), StatusCode::OK);
+        let preview_body = String::from_utf8(
+            axum::body::to_bytes(resp_preview.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(preview_body.contains("Sữa bột Enfagrow Test"));
+        assert!(!preview_body.contains("SIGTEST123"));
+
+        // 2. Desktop Windows -> 403 Forbidden (mặc định mobile_only bật), không có location & không lộ secret_target
+        let mut desktop_hdrs = HeaderMap::new();
+        desktop_hdrs.insert(
+            header::USER_AGENT,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36"
+                .parse()
+                .unwrap(),
+        );
+        let resp_desktop = handle_shortlink_redirect(
+            Path(code.clone()),
+            desktop_hdrs,
+            State(state.clone()),
+        )
+        .await;
+        assert_eq!(resp_desktop.status(), StatusCode::FORBIDDEN);
+        assert!(resp_desktop.headers().get(header::LOCATION).is_none());
+        let desktop_body = String::from_utf8(
+            axum::body::to_bytes(resp_desktop.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(!desktop_body.contains("SIGTEST123"));
+
+        // 3. Mobile iPhone -> 302 Found chuyển thẳng sang target_url kèm Referrer-Policy: unsafe-url
+        let mut mobile_hdrs = HeaderMap::new();
+        mobile_hdrs.insert(
+            header::USER_AGENT,
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1"
+                .parse()
+                .unwrap(),
+        );
+        let resp_mobile = handle_shortlink_redirect(
+            Path(code),
+            mobile_hdrs,
+            State(state),
+        )
+        .await;
+        assert_eq!(resp_mobile.status(), StatusCode::FOUND);
+        assert_eq!(
+            resp_mobile.headers().get(header::LOCATION).unwrap().to_str().unwrap(),
+            secret_target
+        );
+        assert_eq!(
+            resp_mobile.headers().get("referrer-policy").unwrap().to_str().unwrap(),
+            "unsafe-url"
+        );
 
         let _ = std::fs::remove_file(&test_db_path);
     }

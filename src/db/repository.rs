@@ -1,10 +1,14 @@
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use libsql::{params, Connection};
+use rand::RngExt;
 use tracing::info;
 use uuid::Uuid;
 
-use super::models::{AdminStats, CashbackOrder, ClickRecord, DealItem, User, WalletSummary, Withdrawal};
+use super::models::{
+    AdminStats, CashbackOrder, ClickRecord, DealItem, ShortLinkRecord, User, WalletSummary,
+    Withdrawal,
+};
 use crate::utils::generate_referral_code;
 
 #[derive(Clone, Debug)]
@@ -730,6 +734,114 @@ impl Repository {
         .await?;
         Ok(())
     }
+
+    /// Kiểm tra định dạng mã rút gọn hợp lệ (6-12 ký tự chữ/số ASCII)
+    pub fn is_valid_short_code(code: &str) -> bool {
+        (6..=12).contains(&code.len()) && code.bytes().all(|b| b.is_ascii_alphanumeric())
+    }
+
+    /// Tạo hoặc tái sử dụng mã bọc link 8 ký tự cho target_url (chống trùng trong DB)
+    pub async fn create_or_get_short_link(
+        conn: &Connection,
+        target_url: &str,
+        title: &str,
+        platform: &str,
+    ) -> Result<String> {
+        let mut rows = conn
+            .query(
+                "SELECT code FROM short_links WHERE target_url = ?1 LIMIT 1",
+                params![target_url],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            let existing: String = row.get(0)?;
+            return Ok(existing);
+        }
+
+        let now = Utc::now().to_rfc3339();
+        for _ in 0..5 {
+            let code = generate_short_code();
+            let res = conn
+                .execute(
+                    "INSERT INTO short_links (code, target_url, title, platform, clicks_count, created_at)
+                     VALUES (?1, ?2, ?3, ?4, 0, ?5)",
+                    params![code.clone(), target_url, title, platform, now.clone()],
+                )
+                .await;
+            if res.is_ok() {
+                return Ok(code);
+            }
+        }
+
+        Err(anyhow!("Không thể tạo mã shortlink duy nhất sau 5 lần thử"))
+    }
+
+    /// Tra cứu link gốc từ mã bọc
+    pub async fn resolve_short_link(conn: &Connection, code: &str) -> Result<Option<ShortLinkRecord>> {
+        let mut rows = conn
+            .query(
+                "SELECT code, target_url, title, platform FROM short_links WHERE code = ?1 LIMIT 1",
+                params![code],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            Ok(Some(ShortLinkRecord {
+                code: row.get(0)?,
+                target_url: row.get(1)?,
+                title: row.get(2)?,
+                platform: row.get(3)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Ghi nhận lượt bấm thật qua link bọc
+    pub async fn increment_short_link_click(conn: &Connection, code: &str) -> Result<()> {
+        conn.execute(
+            "UPDATE short_links SET clicks_count = clicks_count + 1 WHERE code = ?1",
+            params![code],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Tự động bọc target_url thành link ngắn dạng `<base_url>/<code>` nếu có domain công khai
+    pub async fn wrap_url_if_public(
+        conn: &Connection,
+        base_url_opt: Option<&str>,
+        target_url: &str,
+        title: &str,
+        platform: &str,
+    ) -> String {
+        let trimmed_target = target_url.trim();
+        let Some(base) = base_url_opt
+            .map(|s| s.trim().trim_end_matches('/'))
+            .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
+        else {
+            return trimmed_target.to_string();
+        };
+
+        if trimmed_target.starts_with(base) || trimmed_target.is_empty() {
+            return trimmed_target.to_string();
+        }
+
+        match Self::create_or_get_short_link(conn, trimmed_target, title.trim(), platform.trim()).await {
+            Ok(code) => format!("{}/{}", base, code),
+            Err(_) => trimmed_target.to_string(),
+        }
+    }
+}
+
+fn generate_short_code() -> String {
+    const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    let mut rng = rand::rng();
+    (0..8)
+        .map(|_| {
+            let idx = rng.random_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -755,6 +867,8 @@ mod tests {
             shopee_affiliate_id: None,
             shopee_app_id: None,
             shopee_app_secret: None,
+            shopee_social_params: None,
+            shortlink_base_url: None,
             admin_username: "admin".to_string(),
             admin_password: "pass".to_string(),
             port: 10000,
@@ -798,6 +912,83 @@ mod tests {
         assert_eq!(active.len(), 2);
         assert!(active[0].is_exclusive); // Mã độc quyền phải đứng đầu tiên
         assert_eq!(active[0].coupon_code.as_deref(), Some("VIP35"));
+
+        drop(conn);
+        drop(db);
+        let _ = std::fs::remove_file(&test_db_path);
+    }
+
+    #[tokio::test]
+    async fn test_short_link_wrap_and_deduplicate() {
+        let test_db_path = format!("target/test_short_{}.db", Uuid::new_v4().simple());
+        let config = Config {
+            telegram_token: "test".to_string(),
+            bot_username: "test_bot".to_string(),
+            database_path: test_db_path.clone(),
+            turso_url: None,
+            turso_auth_token: None,
+            default_cashback_rate: 70.0,
+            default_referral_bonus_rate: 10.0,
+            min_withdrawal_vnd: 50000.0,
+            accesstrade_deeplink_template: String::new(),
+            accesstrade_api_token: None,
+            shopee_affiliate_id: None,
+            shopee_app_id: None,
+            shopee_app_secret: None,
+            shopee_social_params: None,
+            shortlink_base_url: None,
+            admin_username: "admin".to_string(),
+            admin_password: "pass".to_string(),
+            port: 10000,
+            public_base_url: Some("https://bot-sale.onrender.com".to_string()),
+            telegram_webhook_secret: "secret".to_string(),
+        };
+        let db = AppDb::init(&config).await.unwrap();
+        let conn = db.conn().unwrap();
+
+        let target = "https://s.shopee.vn/an_redir?origin_link=https%3A%2F%2Fshopee.vn%2Fproduct%2F1%2F2&affiliate_id=17375520550";
+        let wrapped1 = Repository::wrap_url_if_public(
+            &conn,
+            Some("https://bot-sale.onrender.com/"),
+            target,
+            "Áo thun test",
+            "Shopee",
+        )
+        .await;
+        assert!(wrapped1.starts_with("https://bot-sale.onrender.com/"));
+        let code = wrapped1.rsplit('/').next().unwrap();
+        assert_eq!(code.len(), 8);
+        assert!(Repository::is_valid_short_code(code));
+
+        // Bọc lần 2 cùng target -> phải tái sử dụng đúng mã cũ
+        let wrapped2 = Repository::wrap_url_if_public(
+            &conn,
+            Some("https://bot-sale.onrender.com"),
+            target,
+            "Áo thun test",
+            "Shopee",
+        )
+        .await;
+        assert_eq!(wrapped1, wrapped2);
+
+        // Không bọc chồng nếu đã có prefix base_url
+        let no_double = Repository::wrap_url_if_public(
+            &conn,
+            Some("https://bot-sale.onrender.com"),
+            &wrapped1,
+            "Áo thun test",
+            "Shopee",
+        )
+        .await;
+        assert_eq!(no_double, wrapped1);
+
+        let resolved = Repository::resolve_short_link(&conn, code)
+            .await
+            .unwrap()
+            .expect("Shortlink phải tồn tại trong DB");
+        assert_eq!(resolved.target_url, target);
+        assert_eq!(resolved.title, "Áo thun test");
+        assert_eq!(resolved.platform, "Shopee");
 
         drop(conn);
         drop(db);

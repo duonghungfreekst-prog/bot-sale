@@ -23,14 +23,16 @@ pub struct Config {
     pub shopee_affiliate_id: Option<String>,
     pub shopee_app_id: Option<String>,
     pub shopee_app_secret: Option<String>,
+    pub shopee_social_params: Option<String>,
     
     // Cấu hình tài khoản Quản trị viên (Chỉ 1 tài khoản Admin duy nhất)
     pub admin_username: String,
     pub admin_password: String,
     pub port: u16,
 
-    // Cấu hình Webhook & Keep-Alive khi chạy trên Cloud (tự động nhận diện RENDER_EXTERNAL_URL)
+    // Cấu hình Webhook, Shortlink bọc đầu ra & Keep-Alive khi chạy trên Cloud
     pub public_base_url: Option<String>,
+    pub shortlink_base_url: Option<String>,
     pub telegram_webhook_secret: String,
 }
 
@@ -110,6 +112,7 @@ impl Config {
         let shopee_affiliate_id = read_env_non_empty("SHOPEE_AFFILIATE_ID");
         let shopee_app_id = read_env_non_empty("SHOPEE_APP_ID");
         let shopee_app_secret = read_env_non_empty("SHOPEE_APP_SECRET");
+        let shopee_social_params = read_env_non_empty("SHOPEE_SOCIAL_PARAMS");
 
         let admin_username = env::var("ADMIN_USERNAME")
             .ok()
@@ -129,6 +132,10 @@ impl Config {
             .unwrap_or(10000);
 
         let public_base_url = resolve_public_base_url();
+        let shortlink_base_url = read_env_non_empty("SHORTLINK_BASE_URL")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
+            .or_else(|| public_base_url.clone());
         let telegram_webhook_secret = resolve_webhook_secret(&telegram_token, &admin_password);
 
         Ok(Self {
@@ -145,10 +152,12 @@ impl Config {
             shopee_affiliate_id,
             shopee_app_id,
             shopee_app_secret,
+            shopee_social_params,
             admin_username,
             admin_password,
             port,
             public_base_url,
+            shortlink_base_url,
             telegram_webhook_secret,
         })
     }

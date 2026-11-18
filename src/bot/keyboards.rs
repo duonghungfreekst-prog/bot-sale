@@ -35,13 +35,14 @@ pub fn main_menu_keyboard(bot_username: &str) -> InlineKeyboardMarkup {
     ])
 }
 
-/// Bàn phím hành động khi người dùng gửi link sản phẩm (đính link mua và các mã khớp trực tiếp)
+/// Bàn phím hành động khi người dùng gửi link sản phẩm (100% nút đã được bọc link an toàn)
 pub fn deal_action_keyboard(
-    affiliate_url: &str,
+    wrapped_product_url: &str,
     platform: &str,
     voucher_links: &[(String, String)],
+    portal_links: &[(String, String)],
 ) -> InlineKeyboardMarkup {
-    let target_url = Url::parse(affiliate_url)
+    let target_url = Url::parse(wrapped_product_url)
         .unwrap_or_else(|_| Url::parse("https://shopee.vn").unwrap());
 
     let mut rows = vec![vec![InlineKeyboardButton::url(
@@ -58,35 +59,14 @@ pub fn deal_action_keyboard(
         }
     }
 
-    match platform.to_lowercase().as_str() {
-        "shopee" => {
-            if let (Ok(voucher_url), Ok(video_url)) = (
-                Url::parse("https://shopee.vn/m/ma-giam-gia"),
-                Url::parse("https://shopee.vn/m/shopee-video"),
-            ) {
-                rows.push(vec![
-                    InlineKeyboardButton::url("🎟️ Lưu Mã Shopee", voucher_url),
-                    InlineKeyboardButton::url("🎬 Săn Mã Video", video_url),
-                ]);
-            }
+    let mut portal_row = Vec::new();
+    for (label, raw_portal_url) in portal_links {
+        if let Ok(parsed_portal_url) = Url::parse(raw_portal_url) {
+            portal_row.push(InlineKeyboardButton::url(label.clone(), parsed_portal_url));
         }
-        "lazada" => {
-            if let Ok(voucher_url) = Url::parse("https://www.lazada.vn/voucher") {
-                rows.push(vec![InlineKeyboardButton::url(
-                    "🎟️ Thu Thập Voucher Lazada",
-                    voucher_url,
-                )]);
-            }
-        }
-        "tiki" => {
-            if let Ok(voucher_url) = Url::parse("https://tiki.vn/khuyen-mai/ma-giam-gia") {
-                rows.push(vec![InlineKeyboardButton::url(
-                    "🎟️ Cổng Voucher Tiki",
-                    voucher_url,
-                )]);
-            }
-        }
-        _ => {}
+    }
+    if !portal_row.is_empty() {
+        rows.push(portal_row);
     }
 
     InlineKeyboardMarkup::new(rows)

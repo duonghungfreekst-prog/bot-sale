@@ -224,6 +224,7 @@ async fn run_internal_verification(db: &AppDb, config: &Config) -> anyhow::Resul
         shopee_affiliate_id: config.shopee_affiliate_id.as_deref(),
         shopee_app_id: config.shopee_app_id.as_deref(),
         shopee_app_secret: config.shopee_app_secret.as_deref(),
+        shopee_social_params: config.shopee_social_params.as_deref(),
     };
     let parsed = parser
         .process_link(

@@ -88,3 +88,12 @@ pub struct AdminStats {
     pub tiki_clicks: i64,
     pub tiktok_clicks: i64,
 }
+
+#[derive(Debug, Clone)]
+pub struct ShortLinkRecord {
+    #[allow(dead_code)]
+    pub code: String,
+    pub target_url: String,
+    pub title: String,
+    pub platform: String,
+}

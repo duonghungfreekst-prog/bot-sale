@@ -158,6 +158,20 @@ pub async fn handle_message(
             .flatten()
             .filter(|s| !s.trim().is_empty())
             .or_else(|| config.shopee_app_secret.clone());
+        let shopee_social_params = Repository::get_setting(&conn, "shopee_social_params")
+            .await
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| config.shopee_social_params.clone());
+        let shortlink_base = Repository::get_setting(&conn, "shortlink_base_url")
+            .await
+            .ok()
+            .flatten()
+            .map(|s| s.trim().trim_end_matches('/').to_string())
+            .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
+            .or_else(|| config.shortlink_base_url.clone())
+            .or_else(|| config.public_base_url.clone());
 
         let aff_settings = AffiliateSettings {
             deeplink_template: &affiliate_template,
@@ -169,6 +183,7 @@ pub async fn handle_message(
             shopee_affiliate_id: shopee_affiliate_id.as_deref(),
             shopee_app_id: shopee_app_id.as_deref(),
             shopee_app_secret: shopee_app_secret.as_deref(),
+            shopee_social_params: shopee_social_params.as_deref(),
         };
 
         // Bóc tách link và gọi ACCESSTRADE API tạo link thực tế
@@ -202,12 +217,22 @@ pub async fn handle_message(
                     warn!("Không thể ghi log click vào LibSQL: {}", err);
                 }
 
+                // Bọc 100% link đầu ra qua shortlink hệ thống (giống godeal.online)
+                let wrapped_aff_url = Repository::wrap_url_if_public(
+                    &conn,
+                    shortlink_base.as_deref(),
+                    &parsed.affiliate_url,
+                    &parsed.product_title,
+                    parsed.platform.as_str(),
+                )
+                .await;
+
                 let mut tips_text = String::new();
                 for tip in &parsed.tips {
                     tips_text.push_str(&format!("- {}\n", escape_html(tip)));
                 }
 
-                let safe_aff_url = escape_html(&parsed.affiliate_url);
+                let safe_aff_url = escape_html(&wrapped_aff_url);
                 let header_line = if parsed.is_affiliate {
                     format!(
                         "👉 <b>{} ({}) · 🟢 {}% :</b>\n{} (<code>{}</code>)",
@@ -268,6 +293,14 @@ pub async fn handle_message(
                         } else {
                             let mut s = String::from("\n\n👑 <b>MÃ ĐỘC QUYỀN ÁP DỤNG CHO SẢN PHẨM NÀY:</b>");
                             for d in ex_list {
+                                let wrapped_deal_url = Repository::wrap_url_if_public(
+                                    &conn,
+                                    shortlink_base.as_deref(),
+                                    &d.deal_url,
+                                    &d.title,
+                                    &d.platform,
+                                )
+                                .await;
                                 let code_tag = d
                                     .coupon_code
                                     .as_deref()
@@ -279,14 +312,14 @@ pub async fn handle_message(
                                     escape_html(&d.title),
                                     escape_html(&d.discount_desc),
                                     code_tag,
-                                    escape_html(&d.deal_url)
+                                    escape_html(&wrapped_deal_url)
                                 ));
-                                if voucher_buttons.len() < 2 && !d.deal_url.trim().is_empty() {
+                                if voucher_buttons.len() < 2 && !wrapped_deal_url.trim().is_empty() {
                                     let btn_label = match d.coupon_code.as_deref().filter(|c| !c.trim().is_empty()) {
                                         Some(c) => format!("👑 Lấy Mã Độc Quyền · {}", c),
                                         None => format!("👑 {}", d.title),
                                     };
-                                    voucher_buttons.push((btn_label, d.deal_url));
+                                    voucher_buttons.push((btn_label, wrapped_deal_url));
                                 }
                             }
                             s
@@ -315,27 +348,57 @@ pub async fn handle_message(
                             .accesstrade()
                             .verified_offer_url(&mv, approved_cached.as_ref())
                             .await;
+                        let wrapped_voucher_url = Repository::wrap_url_if_public(
+                            &conn,
+                            shortlink_base.as_deref(),
+                            &direct_voucher_url,
+                            &format!("{} - {}", mv.shop_name, mv.discount_desc),
+                            &mv.platform,
+                        )
+                        .await;
                         extra_vouchers_block.push_str(&format!(
                             "\n• <b>[{}] {}</b> · Mã: <code>{}</code>\n  💬 {} · 👉 <a href=\"{}\">Mở Shop &amp; Lấy Mã ↗</a>",
                             escape_html(&mv.discount_badge()),
                             escape_html(&mv.shop_name),
                             escape_html(&mv.coupon_code),
                             escape_html(&mv.discount_desc),
-                            escape_html(&direct_voucher_url)
+                            escape_html(&wrapped_voucher_url)
                         ));
                         if voucher_buttons.len() < 2 {
                             voucher_buttons.push((
                                 format!("🎟️ Lấy Mã {} · {}", mv.discount_badge(), mv.coupon_code),
-                                direct_voucher_url,
+                                wrapped_voucher_url,
                             ));
                         }
                     }
                 }
 
+                // Bọc luôn các nút cổng voucher sàn để 100% nút trên Telegram đi qua domain bọc link
+                let raw_portals: Vec<(&str, &str)> = match parsed.platform.as_str().to_lowercase().as_str() {
+                    "shopee" => vec![
+                        ("🎟️ Lưu Mã Shopee", "https://shopee.vn/m/ma-giam-gia"),
+                        ("🎬 Săn Mã Video", "https://shopee.vn/m/shopee-video"),
+                    ],
+                    "lazada" => vec![("🎟️ Thu Thập Voucher Lazada", "https://www.lazada.vn/voucher")],
+                    "tiki" => vec![("🎟️ Cổng Voucher Tiki", "https://tiki.vn/khuyen-mai/ma-giam-gia")],
+                    _ => Vec::new(),
+                };
+                let mut portal_buttons = Vec::with_capacity(raw_portals.len());
+                for (label, raw_portal_url) in raw_portals {
+                    let wrapped_portal = Repository::wrap_url_if_public(
+                        &conn,
+                        shortlink_base.as_deref(),
+                        raw_portal_url,
+                        label,
+                        parsed.platform.as_str(),
+                    )
+                    .await;
+                    portal_buttons.push((label.to_string(), wrapped_portal));
+                }
+
                 let reply_html = format!(
                     "📦 <b>{}</b>\n\
-                     {}{}\
-                     🔗 <i>Link gốc:</i> {}\n\n\
+                     {}{}\n\
                      {}{}\n\n\
                      ⏰ <b>BACK MÃ LÚC:</b> {}\n\n\
                      ⚠️ <b>Lưu ý để áp mã thành công 100%:</b>\n\
@@ -344,7 +407,6 @@ pub async fn handle_message(
                     escape_html(&parsed.product_title),
                     shop_line,
                     price_line,
-                    escape_html(&parsed.original_url),
                     header_line,
                     extra_vouchers_block,
                     escape_html(&parsed.primary_voucher.back_hours),
@@ -357,9 +419,10 @@ pub async fn handle_message(
                 bot.send_message(msg.chat.id, reply_html)
                     .parse_mode(ParseMode::Html)
                     .reply_markup(deal_action_keyboard(
-                        &parsed.affiliate_url,
+                        &wrapped_aff_url,
                         parsed.platform.as_str(),
                         &voucher_buttons,
+                        &portal_buttons,
                     ))
                     .await?;
             }

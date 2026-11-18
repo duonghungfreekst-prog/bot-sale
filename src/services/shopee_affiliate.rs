@@ -225,6 +225,77 @@ pub async fn generate_open_api_short_link(
     Err("Shopee Open API không trả về shortLink hợp lệ".to_string())
 }
 
+const SOCIAL_PASSTHROUGH_KEYS: [&str; 9] = [
+    "fb_content_id",
+    "encrypted_payload",
+    "fbclid",
+    "cts",
+    "channel_type",
+    "content_source",
+    "content_type",
+    "sm_sig_id",
+    "gads_t_sig",
+];
+
+/// Trích xuất bộ tham số phiên mạng xã hội hợp lệ từ link mẫu hoặc chuỗi query (như cơ chế passthrough IG/FB Reels)
+pub fn extract_social_passthrough_params(sample_input: &str) -> Option<String> {
+    let trimmed = sample_input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let query_part = match trimmed.find('?') {
+        Some(idx) => &trimmed[idx + 1..],
+        None => trimmed.trim_start_matches('&'),
+    };
+    let query_clean = query_part.split('#').next().unwrap_or(query_part);
+
+    let mut kept = Vec::new();
+    let mut has_sig_or_payload = false;
+
+    for pair in query_clean.split('&') {
+        let Some((raw_key, raw_val)) = pair.split_once('=') else {
+            continue;
+        };
+        let key = raw_key.trim();
+        let val = raw_val.trim();
+        if !SOCIAL_PASSTHROUGH_KEYS.contains(&key) || val.is_empty() {
+            continue;
+        }
+        let is_safe_val = val
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~' | b'%'));
+        if !is_safe_val {
+            continue;
+        }
+        if key == "sm_sig_id" || key == "encrypted_payload" {
+            has_sig_or_payload = true;
+        }
+        kept.push(format!("{}={}", key, val));
+    }
+
+    if has_sig_or_payload && !kept.is_empty() {
+        Some(kept.join("&"))
+    } else {
+        None
+    }
+}
+
+/// Nối bộ tham số phiên mở khóa mã IG/FB Reels vào đuôi link Shopee Affiliate (s.shopee.vn)
+pub fn append_social_params_to_shopee_link(
+    shopee_url: &str,
+    raw_social_sample: Option<&str>,
+) -> String {
+    let Some(extra) = raw_social_sample.and_then(extract_social_passthrough_params) else {
+        return shopee_url.to_string();
+    };
+    if !shopee_url.contains("shopee.vn") || shopee_url.contains("sm_sig_id=") {
+        return shopee_url.to_string();
+    }
+    let sep = if shopee_url.contains('?') { '&' } else { '?' };
+    format!("{}{}{}", shopee_url, sep, extra)
+}
+
 fn percent_encode_rfc3986(data: &str) -> String {
     let mut encoded = String::with_capacity(data.len() * 3);
     for byte in data.bytes() {
@@ -273,5 +344,29 @@ mod tests {
             link,
             "https://s.shopee.vn/an_redir?origin_link=https%3A%2F%2Fshopee.vn%2Fproduct%2F123%2F456&affiliate_id=17375520550&sub_id=u1_r0_abcd1234"
         );
+    }
+
+    #[test]
+    fn test_extract_and_append_social_passthrough_params() {
+        let sample_full = "https://s.shopee.vn/2gCo1LuaEU?fb_content_id=Q9abc&encrypted_payload=cM5f_D-Cz&fbclid=76po&cts=1794981997&channel_type=ig&content_source=ig&content_type=REELS&sm_sig_id=QfU_6-xl&utm_source=ignore_me";
+        let extracted = extract_social_passthrough_params(sample_full).unwrap();
+        assert!(extracted.contains("channel_type=ig"));
+        assert!(extracted.contains("sm_sig_id=QfU_6-xl"));
+        assert!(!extracted.contains("utm_source="));
+
+        // Kiểm tra nối lên link ngắn s.shopee.vn (chưa có '?')
+        let on_short = append_social_params_to_shopee_link(
+            "https://s.shopee.vn/2gCo1LuaEU",
+            Some(sample_full),
+        );
+        assert!(on_short.starts_with("https://s.shopee.vn/2gCo1LuaEU?fb_content_id="));
+
+        // Kiểm tra nối lên link an_redir (đã có '?')
+        let an_redir = "https://s.shopee.vn/an_redir?origin_link=https%3A%2F%2Fshopee.vn%2Fproduct%2F1%2F2&affiliate_id=17375520550&sub_id=u1";
+        let on_redir = append_social_params_to_shopee_link(an_redir, Some(&extracted));
+        assert!(on_redir.starts_with(&format!("{}&fb_content_id=", an_redir)));
+
+        // Nếu không chứa sm_sig_id hay encrypted_payload thì từ chối
+        assert!(extract_social_passthrough_params("channel_type=ig&fbclid=123").is_none());
     }
 }
