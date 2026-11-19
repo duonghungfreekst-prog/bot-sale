@@ -37,24 +37,32 @@ pub struct VoucherOffer {
 
 impl VoucherOffer {
     /// Trả về link đích chuẩn xác 100% (chỉ dùng aff_link khi chiến dịch có redirect hoạt động thực tế, tránh lỗi 404/500 từ go.isclix.com)
-    pub fn best_target_url(&self, approved: Option<&ApprovedCampaigns>) -> &str {
+    pub fn best_target_url(&self, approved: Option<&ApprovedCampaigns>) -> String {
         let active_camp_id = match self.platform.as_str() {
             "Shopee" => approved.and_then(|a| a.shopee.as_ref()).map(|(id, _)| id.as_str()),
             "Lazada" => approved.and_then(|a| a.lazada.as_ref()).map(|(id, _)| id.as_str()),
             "Tiki" => approved.and_then(|a| a.tiki.as_ref()).map(|(id, _)| id.as_str()),
             "TikTok Shop" => approved.and_then(|a| a.tiktok.as_ref()).map(|(id, _)| id.as_str()),
+            "Alibaba" => approved.and_then(|a| a.alibaba.as_ref()).map(|(id, _)| id.as_str()),
             _ => None,
         };
         if let (Some(cid), Some(aff)) = (active_camp_id, self.aff_url.as_deref()) {
             let aff_trimmed = aff.trim();
-            // Chiến dịch TIKI (CPS) cũ (4348614231480407268 / v2/62) và link go.isclix.com thiếu campaign_id trong path bị lỗi HTTP 500 trên go.isclix.com
-            let is_broken_legacy = cid == "4348614231480407268"
-                || (aff_trimmed.contains("go.isclix.com/deep_link/") && !aff_trimmed.contains(cid));
-            if !aff_trimmed.is_empty() && !is_broken_legacy {
-                return aff_trimmed;
+            // Chiến dịch TIKI (CPS) cũ (4348614231480407268 / v2/62) bị lỗi HTTP 500 trên go.isclix.com
+            if cid != "4348614231480407268" && !aff_trimmed.is_empty() {
+                if aff_trimmed.contains(cid) || !aff_trimmed.contains("go.isclix.com/deep_link/") {
+                    return aff_trimmed.to_string();
+                }
+                // Tự động gắn campaign_id hoạt động (ví dụ TIKI CREATOR 6985318064449073386) vào aff_link của kho mã
+                if let Some((before_q, after_q)) = aff_trimmed.split_once('?') {
+                    let base = before_q
+                        .trim_end_matches("/4348614231480407268")
+                        .trim_end_matches('/');
+                    return format!("{}/{}?{}", base, cid, after_q);
+                }
             }
         }
-        &self.raw_url
+        self.raw_url.clone()
     }
 
     /// Nhãn hiển thị mức giảm (ví dụ: "-35%", "-300K", "-45K", hoặc "ƯU ĐÃI")
@@ -112,6 +120,7 @@ pub struct ApprovedCampaigns {
     pub lazada: Option<(String, String)>,
     pub tiki: Option<(String, String)>,
     pub tiktok: Option<(String, String)>,
+    pub alibaba: Option<(String, String)>,
     pub all_approved: Vec<ApprovedCampaignSummary>,
     pub fetched_at_epoch: i64,
 }
@@ -357,6 +366,7 @@ impl AccessTradeClient {
                 Platform::Lazada => approved.lazada,
                 Platform::Tiki => approved.tiki,
                 Platform::TikTokShop => approved.tiktok,
+                Platform::Alibaba => approved.alibaba,
                 Platform::Unknown => None,
             };
 
@@ -619,10 +629,10 @@ impl AccessTradeClient {
         approved: Option<&ApprovedCampaigns>,
     ) -> String {
         let candidate = offer.best_target_url(approved);
-        if candidate != offer.raw_url && !self.verify_affiliate_redirect_ok(candidate).await {
+        if candidate != offer.raw_url && !self.verify_affiliate_redirect_ok(&candidate).await {
             return offer.raw_url.clone();
         }
-        candidate.to_string()
+        candidate
     }
 
     /// Quét toàn bộ mã giảm giá trên thị trường từ tất cả các cổng ACCESSTRADE (hỗ trợ đồng bộ mỗi 60 giây)
@@ -906,6 +916,8 @@ fn normalize_order_platform(raw_merchant: &str) -> String {
         "Lazada".to_string()
     } else if lower.contains("tiki") {
         "Tiki".to_string()
+    } else if lower.contains("alibaba") {
+        "Alibaba".to_string()
     } else if raw_merchant.trim().is_empty() {
         "ACCESSTRADE".to_string()
     } else {
@@ -1069,7 +1081,14 @@ pub fn parse_approved_campaigns_page(json_str: &str, now_epoch: i64) -> Result<(
             }
             "Lazada"
         } else if is_tiki_campaign(&m_lower, &n_lower) {
-            if result.tiki.is_none() || m_lower == "tikivn" {
+            // Ưu tiên TIKI CREATOR (6985318064449073386 - gateway v2/3744 hoạt động 100%) thay vì gói cũ tikivn (4348614231480407268 lỗi 500)
+            let is_preferred = m_lower == "tiki_creator" || id_str == "6985318064449073386";
+            let target_is_legacy = result
+                .tiki
+                .as_ref()
+                .map(|(id, _)| id == "4348614231480407268")
+                .unwrap_or(false);
+            if result.tiki.is_none() || is_preferred || (target_is_legacy && id_str != "4348614231480407268") {
                 result.tiki = Some((id_str.clone(), name.clone()));
             }
             "Tiki"
@@ -1078,6 +1097,11 @@ pub fn parse_approved_campaigns_page(json_str: &str, now_epoch: i64) -> Result<(
                 result.tiktok = Some((id_str.clone(), name.clone()));
             }
             "TikTok Shop"
+        } else if is_alibaba_campaign(&m_lower, &n_lower) {
+            if result.alibaba.is_none() || m_lower == "admitad_alibaba" {
+                result.alibaba = Some((id_str.clone(), name.clone()));
+            }
+            "Alibaba"
         } else {
             "Khác"
         };
@@ -1100,11 +1124,24 @@ fn merge_approved_campaigns(target: &mut ApprovedCampaigns, mut page: ApprovedCa
     if target.lazada.is_none() {
         target.lazada = page.lazada.take();
     }
-    if target.tiki.is_none() {
+    let page_tiki_preferred = page
+        .tiki
+        .as_ref()
+        .map(|(id, _)| id == "6985318064449073386")
+        .unwrap_or(false);
+    let target_tiki_legacy = target
+        .tiki
+        .as_ref()
+        .map(|(id, _)| id == "4348614231480407268")
+        .unwrap_or(false);
+    if target.tiki.is_none() || (page.tiki.is_some() && (page_tiki_preferred || target_tiki_legacy)) {
         target.tiki = page.tiki.take();
     }
     if target.tiktok.is_none() {
         target.tiktok = page.tiktok.take();
+    }
+    if target.alibaba.is_none() {
+        target.alibaba = page.alibaba.take();
     }
     target.all_approved.append(&mut page.all_approved);
 }
@@ -1132,6 +1169,11 @@ fn is_tiktok_campaign(merchant: &str, name: &str) -> bool {
         || (merchant.contains("tiktok") && !merchant.contains("business") && name.contains("shop"))
 }
 
+fn is_alibaba_campaign(merchant: &str, name: &str) -> bool {
+    matches!(merchant, "admitad_alibaba" | "alibaba" | "alibaba_cps")
+        || (merchant.contains("alibaba") && name.contains("alibaba"))
+}
+
 /// Che giấu API Token khi hiển thị trên giao diện Web Admin (chỉ hiện 4 ký tự đầu + cuối)
 pub fn mask_token(token: &str) -> String {
     let chars: Vec<char> = token.trim().chars().collect();
@@ -1151,6 +1193,9 @@ mod tests {
     fn test_parse_approved_campaigns() {
         let sample = r#"{
             "data": [
+                {"id": "6985318064449073386", "merchant": "tiki_creator", "name": "TIKI CREATOR", "approval": "successful", "status": 1},
+                {"id": "4348614231480407268", "merchant": "tikivn", "name": "TIKI (CPS)", "approval": "successful", "status": 1},
+                {"id": "6954336422318207062", "merchant": "admitad_alibaba", "name": "ALIBABA", "approval": "successful", "status": 1},
                 {"id": 6648523843406889655, "merchant": "tiktok_cps", "name": "TIKTOK SHOP CPS", "approval": "successful", "status": 1},
                 {"id": "4751584435713464237", "merchant": "shopee", "name": "Shopee Việt Nam", "approval": "unregistered", "status": 1},
                 {"id": "7105125015509882615", "merchant": "romand_shopee", "name": "Romand Shopee PUB", "approval": "successful", "status": 1},
@@ -1159,11 +1204,21 @@ mod tests {
         }"#;
 
         let (parsed, count) = parse_approved_campaigns_page(sample, 1000).unwrap();
-        assert_eq!(count, 4);
+        assert_eq!(count, 7);
+        assert_eq!(parsed.tiki.as_ref().unwrap().0, "6985318064449073386"); // TIKI CREATOR must win over legacy tikivn
+        assert_eq!(parsed.alibaba.as_ref().unwrap().0, "6954336422318207062");
         assert_eq!(parsed.tiktok.as_ref().unwrap().0, "6648523843406889655");
         assert!(parsed.shopee.is_none()); // unregistered & brand-only shopee must NOT match
         assert_eq!(parsed.lazada.as_ref().unwrap().0, "5087153089503673507");
-        assert_eq!(parsed.all_approved.len(), 3);
+        assert_eq!(parsed.all_approved.len(), 6);
+
+        // Kiểm tra merge đa trang: trang 1 chỉ có gói cũ tikivn (4348614231480407268), trang 2 có TIKI CREATOR (6985318064449073386) -> phải nâng cấp lên 6985318064449073386
+        let page1 = r#"{"data": [{"id": "4348614231480407268", "merchant": "tikivn", "name": "TIKI (CPS)", "approval": "successful", "status": 1}]}"#;
+        let page2 = r#"{"data": [{"id": "6985318064449073386", "merchant": "tiki_creator", "name": "TIKI CREATOR", "approval": "successful", "status": 1}]}"#;
+        let (mut combined, _) = parse_approved_campaigns_page(page1, 1000).unwrap();
+        let (p2, _) = parse_approved_campaigns_page(page2, 1000).unwrap();
+        merge_approved_campaigns(&mut combined, p2);
+        assert_eq!(combined.tiki.as_ref().unwrap().0, "6985318064449073386");
     }
 
     #[test]
@@ -1195,6 +1250,24 @@ mod tests {
         };
         assert_eq!(tiki_offer.best_target_url(Some(&approved)), "https://tiki.vn/cua-hang/tiki-trading");
         assert_eq!(tiki_offer.discount_badge(), "-45K");
+
+        // Khi TIKI CREATOR (6985318064449073386) đã duyệt, tự động nâng cấp aff_link của kho mã sang campaign 6985318064449073386
+        let approved_tiki_creator = ApprovedCampaigns {
+            tiki: Some(("6985318064449073386".to_string(), "TIKI CREATOR".to_string())),
+            ..Default::default()
+        };
+        let tiki_offer_no_cid = VoucherOffer {
+            aff_url: Some("https://go.isclix.com/deep_link/7114511313911476062?url=https%3A%2F%2Ftiki.vn".to_string()),
+            ..tiki_offer.clone()
+        };
+        assert_eq!(
+            tiki_offer_no_cid.best_target_url(Some(&approved_tiki_creator)),
+            "https://go.isclix.com/deep_link/7114511313911476062/6985318064449073386?url=https%3A%2F%2Ftiki.vn"
+        );
+        assert_eq!(
+            tiki_offer.best_target_url(Some(&approved_tiki_creator)),
+            "https://go.isclix.com/deep_link/123/6985318064449073386?url=abc"
+        );
 
         let tiktok_offer = VoucherOffer {
             platform: "TikTok Shop".to_string(),
@@ -1667,6 +1740,8 @@ fn detect_offer_platform(merchant: &str, domain: &str, url: &str) -> String {
         "Lazada".to_string()
     } else if joined.contains("tiktok") {
         "TikTok Shop".to_string()
+    } else if joined.contains("alibaba") {
+        "Alibaba".to_string()
     } else {
         "Khác".to_string()
     }

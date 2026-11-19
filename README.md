@@ -7,7 +7,7 @@ Hệ thống Bot Telegram săn sale đa sàn (**DealX - Trợ Lý Săn Mã & Ép
 ## 🌟 Tính Năng Nổi Bật
 
 ### 1. Web Portal & Admin Dashboard Quản Trị (Bảo Mật Tối Cao)
-- **Trang chủ công khai `/` + Đổi link trực tiếp (`POST /convert`):** Khách không dùng Telegram vẫn dán được link Shopee, Lazada, Tiki, TikTok Shop ngay trên web để nhận link bọc kèm mã khớp (có Rate Limit chống spam).
+- **Trang chủ công khai `/` + Đổi link trực tiếp (`POST /convert`):** Khách không dùng Telegram vẫn dán được link Shopee, Lazada, Tiki, TikTok Shop, Alibaba ngay trên web để nhận link bọc kèm mã khớp (có Rate Limit chống spam).
 - **Cầu nối Mobile & Bọc link 2 lớp (`/{code}`, `/go/{code}`, `/assets/bridge.js`):** Bọc 100% link đầu ra dạng 8 ký tự, chặn máy tính/giả lập PC 2 lớp (HTTP + `isRealMobile()` + mã hóa XOR payload) và tự mở nút giải cứu khi bị kẹt trình duyệt nhúng Zalo/Messenger.
 - **Chỉ DUY NHẤT 1 tài khoản Admin:** Không cho phép đăng ký mới; khóa Brute-force `POST /admin/login` (tối đa 5 lần sai/15 phút -> `HTTP 429`), lưu phiên băm SHA-256 vào `admin_sessions`, Cookie `HttpOnly; SameSite=Lax`, chống Timing Attack với `subtle::ConstantTimeEq`.
 - **Đối soát đơn hàng & Báo Telegram Admin tự động:** Quét định kỳ mỗi 10 phút từ ACCESSTRADE (`/v1/orders`) và Shopee Open API (`conversionReport`), chống trùng lặp (`tracked_orders`) và nhắn báo ngay về Telegram ID Admin.
@@ -15,7 +15,7 @@ Hệ thống Bot Telegram săn sale đa sàn (**DealX - Trợ Lý Săn Mã & Ép
 - **Xem nhật ký dán link:** Theo dõi 50 link khách hàng vừa gửi gần nhất kèm link affiliate tương ứng.
 
 ### 2. Phân Tích & Đổi Nhiều Link Sản Phẩm (Bao Gồm Caption Ảnh/Video)
-- **Đa sàn TMĐT:** Hỗ trợ Shopee (`shopee.vn`, `shope.ee`, `s.shopee.vn`), Lazada (`lazada.vn`, `s.lazada.vn`), Tiki (`tiki.vn`), TikTok Shop (`tiktok.com`).
+- **Đa sàn TMĐT:** Hỗ trợ Shopee (`shopee.vn`, `shope.ee`, `s.shopee.vn`), Lazada (`lazada.vn`, `s.lazada.vn`), Tiki (`tiki.vn` — ưu tiên **TIKI CREATOR** gateway `v2/3744`), TikTok Shop (`tiktok.com`), Alibaba (`alibaba.com`).
 - **Đọc `caption` Ảnh/Video & Batch Convert (tối đa 5 link/tin):** Hỗ trợ bài gom sale có ảnh kèm caption nhiều link sản phẩm, tự động bọc từng link và xuất sẵn bài mẫu đã thay sạch sang link bọc để copy đăng kênh/nhóm.
 - **Giải mã shortlink & Xóa tracking rác (Clean URL):** Tự động resolve `shope.ee`, `s.lazada.vn`, `vt.tiktok.com`... về link chuẩn sản phẩm trước khi gắn Affiliate.
 
@@ -132,7 +132,7 @@ ACCESSTRADE_DEEPLINK_TEMPLATE=https://fast.accesstrade.com.vn/deep_link/63000000
 | `/share` | Lấy link chia sẻ bot cho bạn bè cùng săn sale |
 | `/stats` | Xem thống kê người dùng, lượt dán link, đơn đối soát và lấy **Telegram ID** |
 
-*(Ngoài ra người dùng chỉ cần **dán trực tiếp 1 hoặc tối đa 5 link sản phẩm — kể cả bài có ảnh/video kèm caption —** từ Shopee/Lazada/Tiki/TikTok Shop vào khung chat, Bot sẽ tự động phân tích, bọc link 8 ký tự và gắn mã khớp nếu có).*
+*(Ngoài ra người dùng chỉ cần **dán trực tiếp 1 hoặc tối đa 5 link sản phẩm — kể cả bài có ảnh/video kèm caption —** từ Shopee/Lazada/Tiki/TikTok Shop/Alibaba vào khung chat, Bot sẽ tự động phân tích, bọc link 8 ký tự và gắn mã khớp nếu có).*
 
 ---
 

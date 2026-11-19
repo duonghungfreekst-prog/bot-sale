@@ -224,7 +224,7 @@ async fn handle_public_convert(
     }
 
     if state.parser.extract_first_url(&input_raw).is_none() {
-        let err_html = r#"<div class="convert-alert convert-alert--error" role="alert">⚠️ Vui lòng dán đúng đường link sản phẩm bắt đầu bằng <code>https://</code> từ Shopee, Tiki, Lazada hoặc TikTok Shop.</div>"#;
+        let err_html = r#"<div class="convert-alert convert-alert--error" role="alert">⚠️ Vui lòng dán đúng đường link sản phẩm bắt đầu bằng <code>https://</code> từ Shopee, Tiki, Lazada, TikTok Shop hoặc Alibaba.</div>"#;
         return render_public_home(&state, PublicHomeQuery::default(), &input_raw, err_html).await;
     }
 
@@ -542,13 +542,13 @@ async fn render_public_home(
                         Repository::wrap_url_if_public(
                             conn,
                             shortlink_base.as_deref(),
-                            target_url,
+                            &target_url,
                             &v.shop_name,
                             &v.platform,
                         )
                         .await
                     }
-                    None => target_url.to_string(),
+                    None => target_url,
                 };
                 let badge = v.discount_badge();
                 let expiry = if v.end_time.trim().is_empty() {
@@ -603,6 +603,7 @@ async fn render_public_home(
         ("Tiki", "Tiki"),
         ("Lazada", "Lazada"),
         ("TikTok Shop", "TikTok Shop"),
+        ("Alibaba", "Alibaba"),
     ]
     .into_iter()
     .map(|(val, label)| {
@@ -863,7 +864,7 @@ async fn render_public_home(
             <span class="hero__eyebrow">Cập nhật tự động từ đối tác chính hãng</span>
             <h1 class="hero__title">Tổng hợp mã giảm giá &amp; gợi ý sản phẩm tiết kiệm mỗi ngày</h1>
             <p class="hero__subtitle">
-                DealX Vietnam tổng hợp các chương trình ưu đãi, mã giảm giá công khai theo từng gian hàng và ngành hàng từ Shopee, Tiki, Lazada và TikTok Shop giúp người mua dễ dàng so sánh và đặt hàng trực tiếp trên sàn.
+                DealX Vietnam tổng hợp các chương trình ưu đãi, mã giảm giá công khai theo từng gian hàng và ngành hàng từ Shopee, Tiki, Lazada, TikTok Shop và Alibaba giúp người mua dễ dàng so sánh và đặt hàng trực tiếp trên sàn.
             </p>
             <div class="stats-bar">
                 <span>Đang hiển thị: <strong>{}</strong> / <strong>{}</strong> ưu đãi hoạt động</span>
@@ -874,7 +875,7 @@ async fn render_public_home(
                 <p class="convert-panel__title">⚡ Dán link sản phẩm để lấy link ưu đãi &amp; mã khớp ngay (không cần cài App)</p>
                 <form class="search-form" method="POST" action="/convert">
                     <label class="sr-only" for="web-convert-url">Dán đường link sản phẩm cần săn mã</label>
-                    <input id="web-convert-url" class="search-input" type="url" name="url" required value="{}" placeholder="Dán link sản phẩm Shopee, Tiki, Lazada hoặc TikTok Shop vào đây...">
+                    <input id="web-convert-url" class="search-input" type="url" name="url" required value="{}" placeholder="Dán link sản phẩm Shopee, Tiki, Lazada, TikTok Shop hoặc Alibaba vào đây...">
                     <button class="btn btn--primary" type="submit">⚡ Lấy Link Ưu Đãi</button>
                 </form>
                 {}
@@ -1801,11 +1802,12 @@ async fn handle_dashboard(
                     masked
                 );
                 let rows = format!(
-                    "{}{}{}{}",
+                    "{}{}{}{}{}",
                     render_platform_status("🟠 Shopee", &approved.shopee, &camp_shopee),
                     render_platform_status("🔵 Lazada", &approved.lazada, &camp_lazada),
                     render_platform_status("🔹 Tiki", &approved.tiki, &camp_tiki),
                     render_platform_status("🎵 TikTok Shop", &approved.tiktok, &camp_tiktok),
+                    render_platform_status("🌐 Alibaba", &approved.alibaba, ""),
                 );
                 approved_opt = Some(approved);
                 (badge, rows)
@@ -1885,7 +1887,7 @@ async fn handle_dashboard(
             escape_html(&v.shop_name),
             escape_html(&v.discount_desc),
             escape_html(&v.end_time),
-            escape_html(target_url)
+            escape_html(&target_url)
         ));
     }
     if voucher_rows.is_empty() {
@@ -2101,8 +2103,8 @@ async fn handle_dashboard(
                     <div class="text-xs text-gray-400 bg-gray-900/80 border border-gray-800 rounded-lg p-2.5 space-y-1">
                         <div class="font-semibold text-gray-200">🛡️ Cơ chế bảo vệ Link Đầu Ra 100% Sống:</div>
                         <div>• <b>TikTok Shop:</b> Link v2 <code>tiktok.com/t/...</code> mở thẳng sản phẩm trên App.</div>
-                        <div>• <b>Tiki:</b> Bot tự kiểm tra gateway <code>go.isclix.com</code>, nếu lỗi 404/500 tự trả link gốc Tiki <code>HTTP 200</code> an toàn.</div>
-                        <div>• <b>Shopee / Lazada:</b> Đang chờ duyệt — bot trả link sản phẩm sạch <code>HTTP 200</code> + kho mã thật Shopee.</div>
+                        <div>• <b>Tiki &amp; Alibaba:</b> Tự dùng gói <b>TIKI CREATOR</b> (v2/3744) &amp; <b>ALIBABA</b> (v2/3713) đã duyệt + kiểm tra gateway <code>HTTP 200</code> trước khi gửi.</div>
+                        <div>• <b>Shopee / Lazada:</b> Chờ duyệt ACCESSTRADE — có thể bật ngay Shopee Chính Chủ bên dưới để chạy song song.</div>
                     </div>
                     <p class="text-xs text-gray-500">
                         Sàn nào báo <b>Chưa duyệt</b>: Hãy vào <a href="https://pub2.accesstrade.vn" target="_blank" rel="noopener noreferrer" class="text-yellow-400 underline">pub2.accesstrade.vn</a> bấm Đăng ký chiến dịch sàn đó rồi nhấn <b>Đồng Bộ Lại</b>.
@@ -2238,6 +2240,7 @@ async fn handle_dashboard(
                             <option value="TikTok Shop">TikTok Shop</option>
                             <option value="Lazada">Lazada</option>
                             <option value="Tiki">Tiki</option>
+                            <option value="Alibaba">Alibaba</option>
                         </select>
                         <input type="text" name="coupon_code" required placeholder="Mã Code (VD: ATVIP35)" class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs">
                         <input type="text" name="title" required placeholder="Tên Shop / Chương trình" class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-xs">

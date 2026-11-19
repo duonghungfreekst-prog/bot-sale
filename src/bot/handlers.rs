@@ -560,6 +560,7 @@ pub async fn handle_message(
                     ],
                     "lazada" => vec![("🎟️ Thu Thập Voucher Lazada", "https://www.lazada.vn/voucher")],
                     "tiki" => vec![("🎟️ Cổng Voucher Tiki", "https://tiki.vn/khuyen-mai/ma-giam-gia")],
+                    "alibaba" => vec![("🌐 Trang Chủ Alibaba.com", "https://www.alibaba.com")],
                     _ => Vec::new(),
                 };
                 let mut portal_buttons = Vec::with_capacity(raw_portals.len());
@@ -610,7 +611,7 @@ pub async fn handle_message(
                 let err_text = format!(
                     "⚠️ <b>Không thể phân tích link này</b>\n\n\
                      Chi tiết: {}\n\n\
-                     👉 Vui lòng dán đường link sản phẩm từ <b>Shopee</b>, <b>Lazada</b>, <b>Tiki</b> hoặc <b>TikTok Shop</b>.",
+                     👉 Vui lòng dán đường link sản phẩm từ <b>Shopee</b>, <b>Lazada</b>, <b>Tiki</b>, <b>TikTok Shop</b> hoặc <b>Alibaba</b>.",
                     escape_html(&err.to_string())
                 );
                 bot.send_message(msg.chat.id, err_text)
@@ -624,9 +625,9 @@ pub async fn handle_message(
     // Tin nhắn thông thường không có link
     let reply = format!(
         "👋 Chào <b>{}</b>!\n\n\
-         🤖 <b>Bot Tự Động Săn Mã Giảm Giá Đa Sàn (Shopee, Lazada, Tiki, TikTok Shop)</b>\n\n\
+         🤖 <b>Bot Tự Động Săn Mã Giảm Giá Đa Sàn (Shopee, Lazada, Tiki, TikTok Shop, Alibaba)</b>\n\n\
          📌 <b>Cách lấy mã giảm giá cực đơn giản:</b>\n\
-         1️⃣ Mở app <b>Shopee, Lazada, Tiki hoặc TikTok Shop</b> và copy link món đồ bạn muốn mua.\n\
+         1️⃣ Mở app <b>Shopee, Lazada, Tiki, TikTok Shop hoặc Alibaba</b> và copy link món đồ bạn muốn mua.\n\
          2️⃣ Dán trực tiếp đường link vào khung chat này.\n\
          3️⃣ Bot sẽ tự động kiểm tra ưu đãi và tạo link mua hàng kèm mã giảm giá cho bạn!\n\n\
          👇 <i>Bấm các nút chức năng bên dưới hoặc gửi link sản phẩm ngay:</i>",

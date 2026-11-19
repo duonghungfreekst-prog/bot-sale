@@ -20,6 +20,7 @@ pub enum Platform {
     Lazada,
     Tiki,
     TikTokShop,
+    Alibaba,
     Unknown,
 }
 
@@ -30,6 +31,7 @@ impl Platform {
             Platform::Lazada => "Lazada",
             Platform::Tiki => "Tiki",
             Platform::TikTokShop => "TikTokShop",
+            Platform::Alibaba => "Alibaba",
             Platform::Unknown => "Unknown",
         }
     }
@@ -220,6 +222,8 @@ impl DealParser {
             Platform::Tiki
         } else if lower.contains("tiktok.com") {
             Platform::TikTokShop
+        } else if lower.contains("alibaba.com") {
+            Platform::Alibaba
         } else {
             Platform::Unknown
         }
@@ -378,7 +382,11 @@ impl DealParser {
         if let Ok(parsed) = Url::parse(url_str) {
             let path = parsed.path();
             let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-            let candidate = if segments.first().map(|s| *s == "products").unwrap_or(false) {
+            let candidate = if segments
+                .first()
+                .map(|s| *s == "products" || *s == "product-detail")
+                .unwrap_or(false)
+            {
                 segments.get(1).copied()
             } else {
                 segments.first().copied()
@@ -393,7 +401,16 @@ impl DealParser {
                     .next()
                     .unwrap_or(seg);
                 let slug = slug.split("-i").next().unwrap_or(slug);
-                let title = slug.replace(['-', '_'], " ").replace(".html", "");
+                let slug = slug.strip_suffix(".html").unwrap_or(slug);
+                let slug = match slug.rsplit_once('_') {
+                    Some((prefix, suffix))
+                        if !prefix.is_empty() && !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()) =>
+                    {
+                        prefix
+                    }
+                    _ => slug,
+                };
+                let title = slug.replace(['-', '_'], " ");
                 let title = title.trim();
                 if title.len() > 3 && !title.starts_with("product") && !title.starts_with("s.") {
                     return capitalize_words(title);
@@ -450,7 +467,7 @@ impl DealParser {
                 }
                 format!("https://tiki.vn{}", parsed.path())
             }
-            Platform::TikTokShop | Platform::Unknown => {
+            Platform::TikTokShop | Platform::Alibaba | Platform::Unknown => {
                 format!("{}://{}{}", parsed.scheme(), parsed.host_str().unwrap_or(""), parsed.path())
             }
         }
@@ -541,6 +558,19 @@ impl DealParser {
                     "Bấm lưu mã tại cổng Tiki bên dưới rồi quay lại sản phẩm".to_string(),
                 ],
             ),
+            (Platform::Alibaba, _) => (
+                SaleVoucher {
+                    name: "Ưu Đãi Nguồn Hàng Giá Sỉ Alibaba".to_string(),
+                    discount_desc: "Giá sỉ tận xưởng & ưu đãi vận chuyển quốc tế Alibaba.com".to_string(),
+                    min_spend_desc: "Đơn sỉ / lẻ quốc tế".to_string(),
+                    remaining_percent: 90,
+                    back_hours: "Hoạt động 24/7".to_string(),
+                },
+                vec![
+                    "Bấm mở liên kết để truy cập trực tiếp trang sản phẩm chính thức trên Alibaba.com".to_string(),
+                    "Áp dụng thêm phiếu giảm giá nhà cung cấp (Supplier Coupon) trước khi thanh toán Trade Assurance".to_string(),
+                ],
+            ),
             (Platform::TikTokShop, _) | (Platform::Unknown, _) => (
                 SaleVoucher {
                     name: "Voucher Livestream / Giỏ Hàng TikTok Shop".to_string(),
@@ -579,7 +609,7 @@ impl DealParser {
         };
 
         if platform == Platform::Unknown {
-            return Err(anyhow!("Hiện tại bot hỗ trợ xử lý link cho: Shopee, Lazada, Tiki, TikTok Shop. Vui lòng gửi link thuộc các sàn này."));
+            return Err(anyhow!("Hiện tại bot hỗ trợ xử lý link cho: Shopee, Lazada, Tiki, TikTok Shop, Alibaba. Vui lòng gửi link thuộc các sàn này."));
         }
 
         // Ưu tiên: Tiêu đề gửi kèm từ tin nhắn -> Tiêu đề bóc từ HTML -> Tiêu đề bóc từ Slug URL
@@ -628,7 +658,7 @@ impl DealParser {
             Platform::Lazada => settings.campaign_lazada,
             Platform::Tiki => settings.campaign_tiki,
             Platform::TikTokShop => settings.campaign_tiktok,
-            Platform::Unknown => None,
+            Platform::Alibaba | Platform::Unknown => None,
         };
 
         // 0. Riêng Shopee: Ưu tiên Shopee Affiliate Chính Chủ (Open API -> Direct Affiliate ID an_redir), sau đó mới fallback ACCESSTRADE
@@ -737,6 +767,7 @@ impl DealParser {
             Platform::Lazada => "Hoàn thêm 2.5% - 8.0% (Tối đa 100,000₫/đơn)",
             Platform::Tiki => "Hoàn thêm 1.5% - 5.0% (Tối đa 80,000₫/đơn)",
             Platform::TikTokShop => "Hoàn thêm 3.0% - 12.0% (Tối đa 120,000₫/đơn)",
+            Platform::Alibaba => "Hoa hồng đối tác quốc tế 3.92%/đơn",
             Platform::Unknown => "Hoàn tiền lên tới 10%",
         }
         .to_string();
@@ -1022,5 +1053,17 @@ mod tests {
 
         let only_unknown = parser.extract_all_urls("Check https://example.com/abc", 5);
         assert_eq!(only_unknown, vec!["https://example.com/abc".to_string()]);
+    }
+
+    #[test]
+    fn test_alibaba_clean_url_and_slug_title() {
+        let parser = DealParser::new();
+        let raw = "https://www.alibaba.com/product-detail/Wireless-Bluetooth-Earbuds_1600500000000.html?spm=a2700";
+        assert_eq!(parser.detect_platform(raw), Platform::Alibaba);
+        assert_eq!(
+            parser.clean_url(raw, &Platform::Alibaba),
+            "https://www.alibaba.com/product-detail/Wireless-Bluetooth-Earbuds_1600500000000.html"
+        );
+        assert_eq!(parser.extract_title_from_slug(raw), "Wireless Bluetooth Earbuds");
     }
 }
