@@ -237,6 +237,10 @@ async fn handle_public_convert(
     let _ = Repository::get_or_create_user(&conn, 0, Some("web_guest"), "Khách Web DealX", None)
         .await;
     let owned_aff = load_owned_aff_settings(&conn, &state.config).await;
+    let _ = state
+        .accesstrade
+        .get_or_load_approved_campaigns(owned_aff.accesstrade_token.as_deref())
+        .await;
 
     match state
         .parser
@@ -1801,13 +1805,29 @@ async fn handle_dashboard(
                     "<span class=\"px-2.5 py-1 bg-green-500/20 text-green-400 rounded-lg text-xs font-semibold\">🟢 Đã kết nối ({})</span>",
                     masked
                 );
+                let dyn_list = approved.dynamic_campaigns();
+                let dyn_line = if dyn_list.is_empty() {
+                    r#"<div class="text-xs text-gray-400 pt-2">✨ <b>Tự động nhận diện đa sàn:</b> Sẵn sàng — đăng ký thêm <i>Shein, CellphoneS, FPT Shop, Con Cưng, Fado, Klook...</i> trên <code>pub2.accesstrade.vn</code> sẽ tự kích hoạt không cần sửa code.</div>"#.to_string()
+                } else {
+                    let labels: Vec<String> = dyn_list
+                        .iter()
+                        .take(8)
+                        .map(|c| format!("{} (<code>{}</code>)", escape_html(&c.platform_group), escape_html(&c.domain)))
+                        .collect();
+                    format!(
+                        "<div class=\"text-xs text-green-300 pt-2\">✨ <b>Đã tự mở thêm {} sàn/hãng mở rộng:</b> {}</div>",
+                        dyn_list.len(),
+                        labels.join(", ")
+                    )
+                };
                 let rows = format!(
-                    "{}{}{}{}{}",
+                    "{}{}{}{}{}{}",
                     render_platform_status("🟠 Shopee", &approved.shopee, &camp_shopee),
                     render_platform_status("🔵 Lazada", &approved.lazada, &camp_lazada),
                     render_platform_status("🔹 Tiki", &approved.tiki, &camp_tiki),
                     render_platform_status("🎵 TikTok Shop", &approved.tiktok, &camp_tiktok),
                     render_platform_status("🌐 Alibaba", &approved.alibaba, ""),
+                    dyn_line,
                 );
                 approved_opt = Some(approved);
                 (badge, rows)

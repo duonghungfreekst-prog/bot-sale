@@ -15,7 +15,7 @@ Hệ thống Bot Telegram săn sale đa sàn (**DealX - Trợ Lý Săn Mã & Ép
 - **Xem nhật ký dán link:** Theo dõi 50 link khách hàng vừa gửi gần nhất kèm link affiliate tương ứng.
 
 ### 2. Phân Tích & Đổi Nhiều Link Sản Phẩm (Bao Gồm Caption Ảnh/Video)
-- **Đa sàn TMĐT:** Hỗ trợ Shopee (`shopee.vn`, `shope.ee`, `s.shopee.vn`), Lazada (`lazada.vn`, `s.lazada.vn`), Tiki (`tiki.vn` — ưu tiên **TIKI CREATOR** gateway `v2/3744`), TikTok Shop (`tiktok.com`), Alibaba (`alibaba.com`).
+- **Đa sàn TMĐT & Tự động nhận diện chiến dịch mở rộng:** Hỗ trợ sẵn Shopee (`shopee.vn`, `shope.ee`, `s.shopee.vn`), Lazada (`lazada.vn`, `s.lazada.vn`), Tiki (`tiki.vn` — ưu tiên **TIKI CREATOR** gateway `v2/3744`), TikTok Shop (`tiktok.com`), Alibaba (`alibaba.com`), **và tự động nhận diện mọi tên miền chiến dịch bán lẻ/du lịch khác ngay khi được duyệt trên ACCESSTRADE** (Shein, CellphoneS, FPT Shop, Con Cưng, Fado, Klook...).
 - **Đọc `caption` Ảnh/Video & Batch Convert (tối đa 5 link/tin):** Hỗ trợ bài gom sale có ảnh kèm caption nhiều link sản phẩm, tự động bọc từng link và xuất sẵn bài mẫu đã thay sạch sang link bọc để copy đăng kênh/nhóm.
 - **Giải mã shortlink & Xóa tracking rác (Clean URL):** Tự động resolve `shope.ee`, `s.lazada.vn`, `vt.tiktok.com`... về link chuẩn sản phẩm trước khi gắn Affiliate.
 

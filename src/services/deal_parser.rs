@@ -8,7 +8,7 @@ use tracing::{info, warn};
 use url::Url;
 use uuid::Uuid;
 
-use super::accesstrade::AccessTradeClient;
+use super::accesstrade::{AccessTradeClient, ApprovedCampaigns};
 use super::shopee_affiliate::{
     append_social_params_to_shopee_link, build_direct_an_redir_link, generate_open_api_short_link,
     is_valid_shopee_affiliate_id,
@@ -21,17 +21,22 @@ pub enum Platform {
     Tiki,
     TikTokShop,
     Alibaba,
+    Dynamic {
+        name: String,
+        campaign_id: String,
+    },
     Unknown,
 }
 
 impl Platform {
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Platform::Shopee => "Shopee",
             Platform::Lazada => "Lazada",
             Platform::Tiki => "Tiki",
             Platform::TikTokShop => "TikTokShop",
             Platform::Alibaba => "Alibaba",
+            Platform::Dynamic { name, .. } => name.as_str(),
             Platform::Unknown => "Unknown",
         }
     }
@@ -162,7 +167,18 @@ impl DealParser {
     }
 
     /// Trích xuất danh sách tối đa `max_urls` URL duy nhất theo thứ tự xuất hiện (ưu tiên URL sàn TMĐT hỗ trợ)
+    #[allow(dead_code)]
     pub fn extract_all_urls(&self, text: &str, max_urls: usize) -> Vec<String> {
+        self.extract_all_urls_with_approved(text, max_urls, None)
+    }
+
+    /// Trích xuất danh sách URL có hỗ trợ cả các sàn/thương hiệu động đã duyệt trên ACCESSTRADE
+    pub fn extract_all_urls_with_approved(
+        &self,
+        text: &str,
+        max_urls: usize,
+        approved: Option<&ApprovedCampaigns>,
+    ) -> Vec<String> {
         if max_urls == 0 {
             return Vec::new();
         }
@@ -179,7 +195,7 @@ impl DealParser {
 
         let supported: Vec<String> = all_unique
             .iter()
-            .filter(|u| self.detect_platform(u) != Platform::Unknown)
+            .filter(|u| self.detect_platform_with_approved(u, approved) != Platform::Unknown)
             .take(max_urls)
             .cloned()
             .collect();
@@ -227,6 +243,25 @@ impl DealParser {
         } else {
             Platform::Unknown
         }
+    }
+
+    /// Nhận diện nền tảng từ URL, tự động đối chiếu cả các chiến dịch đã duyệt trên ACCESSTRADE
+    pub fn detect_platform_with_approved(
+        &self,
+        url_str: &str,
+        approved: Option<&ApprovedCampaigns>,
+    ) -> Platform {
+        let core = self.detect_platform(url_str);
+        if core != Platform::Unknown {
+            return core;
+        }
+        if let Some(camp) = approved.and_then(|a| a.find_dynamic_campaign_for_url(url_str)) {
+            return Platform::Dynamic {
+                name: camp.platform_group.clone(),
+                campaign_id: camp.id.clone(),
+            };
+        }
+        Platform::Unknown
     }
 
     /// Kiểm tra URL có phải là link rút gọn cần resolve không
@@ -382,29 +417,60 @@ impl DealParser {
         if let Ok(parsed) = Url::parse(url_str) {
             let path = parsed.path();
             let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-            let candidate = if segments
-                .first()
-                .map(|s| *s == "products" || *s == "product-detail")
-                .unwrap_or(false)
-            {
-                segments.get(1).copied()
-            } else {
-                segments.first().copied()
+            let is_container_seg = |s: &str| {
+                let l = s.to_lowercase();
+                matches!(
+                    l.as_str(),
+                    "products"
+                        | "product-detail"
+                        | "product"
+                        | "vi"
+                        | "vi-vn"
+                        | "en"
+                        | "vn"
+                        | "hotel"
+                        | "hotels"
+                        | "p"
+                        | "dp"
+                        | "c"
+                        | "dien-thoai"
+                        | "laptop"
+                        | "may-tinh-bang"
+                        | "phu-kien"
+                        | "khuyen-mai"
+                )
             };
 
+            let candidate = segments
+                .iter()
+                .copied()
+                .filter(|s| !is_container_seg(s))
+                .max_by_key(|s| s.len())
+                .or_else(|| segments.first().copied());
+
             if let Some(seg) = candidate {
-                let slug = seg
-                    .split("-i.")
-                    .next()
-                    .unwrap_or(seg)
-                    .split("-p")
-                    .next()
-                    .unwrap_or(seg);
+                let slug = seg.split("-i.").next().unwrap_or(seg);
+                let slug = self
+                    .tiki_item_regex
+                    .find(slug)
+                    .map(|m| &slug[..m.start()])
+                    .unwrap_or(slug);
                 let slug = slug.split("-i").next().unwrap_or(slug);
                 let slug = slug.strip_suffix(".html").unwrap_or(slug);
+                // Loại bỏ hậu tố mã số (ví dụ Shein `-p-12345` hoặc Alibaba `_1600500000000`)
+                let slug = match slug.rsplit_once("-p-") {
+                    Some((prefix, suffix))
+                        if !prefix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()) =>
+                    {
+                        prefix
+                    }
+                    _ => slug,
+                };
                 let slug = match slug.rsplit_once('_') {
                     Some((prefix, suffix))
-                        if !prefix.is_empty() && !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()) =>
+                        if !prefix.is_empty()
+                            && !suffix.is_empty()
+                            && suffix.bytes().all(|b| b.is_ascii_digit()) =>
                     {
                         prefix
                     }
@@ -470,6 +536,7 @@ impl DealParser {
             Platform::TikTokShop | Platform::Alibaba | Platform::Unknown => {
                 format!("{}://{}{}", parsed.scheme(), parsed.host_str().unwrap_or(""), parsed.path())
             }
+            Platform::Dynamic { .. } => strip_tracking_query_params(&parsed),
         }
     }
 
@@ -571,6 +638,19 @@ impl DealParser {
                     "Áp dụng thêm phiếu giảm giá nhà cung cấp (Supplier Coupon) trước khi thanh toán Trade Assurance".to_string(),
                 ],
             ),
+            (Platform::Dynamic { name, .. }, _) => (
+                SaleVoucher {
+                    name: format!("Link Đối Tác Chính Thức {}", name),
+                    discount_desc: "Đã gắn link tiếp thị trực tiếp qua hệ thống đối tác ACCESSTRADE".to_string(),
+                    min_spend_desc: "Theo điều kiện đơn tại trang hãng".to_string(),
+                    remaining_percent: 92,
+                    back_hours: "Cập nhật liên tục 24/7".to_string(),
+                },
+                vec![
+                    "Bấm nút bên dưới để truy cập trực tiếp sản phẩm & thu thập mã giảm giá / ưu đãi thẻ thanh toán ngay trên trang hãng".to_string(),
+                    "Không mở lại link từ nguồn khác trước khi hoàn tất thanh toán để tránh xung đột mã".to_string(),
+                ],
+            ),
             (Platform::TikTokShop, _) | (Platform::Unknown, _) => (
                 SaleVoucher {
                     name: "Voucher Livestream / Giỏ Hàng TikTok Shop".to_string(),
@@ -599,17 +679,41 @@ impl DealParser {
             .extract_first_url(input_text)
             .ok_or_else(|| anyhow!("Không tìm thấy đường link hợp lệ trong tin nhắn"))?;
 
-        let initial_platform = self.detect_platform(&raw_url);
+        let approved = self
+            .accesstrade
+            .get_or_load_approved_campaigns(settings.accesstrade_token)
+            .await;
+
+        let initial_platform = self.detect_platform_with_approved(&raw_url, approved.as_ref());
         let (resolved_url, html_title) = self.resolve_url(&raw_url).await;
 
         let platform = if initial_platform == Platform::Unknown {
-            self.detect_platform(&resolved_url)
+            self.detect_platform_with_approved(&resolved_url, approved.as_ref())
         } else {
             initial_platform
         };
 
         if platform == Platform::Unknown {
-            return Err(anyhow!("Hiện tại bot hỗ trợ xử lý link cho: Shopee, Lazada, Tiki, TikTok Shop, Alibaba. Vui lòng gửi link thuộc các sàn này."));
+            let dyn_hint = approved
+                .as_ref()
+                .map(|a| {
+                    let extras: Vec<String> = a
+                        .dynamic_campaigns()
+                        .into_iter()
+                        .take(6)
+                        .map(|c| c.platform_group.clone())
+                        .collect();
+                    if extras.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", {}", extras.join(", "))
+                    }
+                })
+                .unwrap_or_default();
+            return Err(anyhow!(
+                "Hiện tại bot hỗ trợ Shopee, Lazada, Tiki, TikTok Shop, Alibaba{}. Vui lòng gửi link thuộc các sàn/trang đã được duyệt!",
+                dyn_hint
+            ));
         }
 
         // Ưu tiên: Tiêu đề gửi kèm từ tin nhắn -> Tiêu đề bóc từ HTML -> Tiêu đề bóc từ Slug URL
@@ -653,11 +757,12 @@ impl DealParser {
             }
         }
 
-        let override_campaign_id = match platform {
+        let override_campaign_id = match &platform {
             Platform::Shopee => settings.campaign_shopee,
             Platform::Lazada => settings.campaign_lazada,
             Platform::Tiki => settings.campaign_tiki,
             Platform::TikTokShop => settings.campaign_tiktok,
+            Platform::Dynamic { campaign_id, .. } => Some(campaign_id.as_str()),
             Platform::Alibaba | Platform::Unknown => None,
         };
 
@@ -762,12 +867,13 @@ impl DealParser {
 
         let (primary_voucher, tips) = self.pick_best_voucher(&platform, is_affiliate);
 
-        let estimated_cashback_text = match platform {
+        let estimated_cashback_text = match &platform {
             Platform::Shopee => "Hoàn thêm 3.0% - 10.5% (Tối đa 150,000₫/đơn)",
             Platform::Lazada => "Hoàn thêm 2.5% - 8.0% (Tối đa 100,000₫/đơn)",
             Platform::Tiki => "Hoàn thêm 1.5% - 5.0% (Tối đa 80,000₫/đơn)",
             Platform::TikTokShop => "Hoàn thêm 3.0% - 12.0% (Tối đa 120,000₫/đơn)",
             Platform::Alibaba => "Hoa hồng đối tác quốc tế 3.92%/đơn",
+            Platform::Dynamic { .. } => "Ưu đãi chính hãng & hoa hồng đối tác ACCESSTRADE",
             Platform::Unknown => "Hoàn tiền lên tới 10%",
         }
         .to_string();
@@ -849,6 +955,46 @@ pub fn parse_tiki_product_json(
         return None;
     }
     Some((title, price, shop, brand))
+}
+
+fn strip_tracking_query_params(parsed: &Url) -> String {
+    let base = format!(
+        "{}://{}{}",
+        parsed.scheme(),
+        parsed.host_str().unwrap_or(""),
+        parsed.path()
+    );
+    let kept_pairs: Vec<(String, String)> = parsed
+        .query_pairs()
+        .filter(|(k, _)| {
+            let kl = k.to_lowercase();
+            !kl.starts_with("utm_")
+                && !kl.starts_with("aff_")
+                && !kl.starts_with("at_")
+                && !matches!(
+                    kl.as_str(),
+                    "fbclid"
+                        | "gclid"
+                        | "ttclid"
+                        | "spm"
+                        | "scm"
+                        | "sub1"
+                        | "sub2"
+                        | "sub3"
+                        | "sub4"
+                        | "sub5"
+                )
+        })
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    if kept_pairs.is_empty() {
+        base
+    } else if let Ok(mut out_url) = Url::parse(&base) {
+        out_url.query_pairs_mut().extend_pairs(kept_pairs);
+        out_url.to_string()
+    } else {
+        base
+    }
 }
 
 fn html_escape_decode(s: &str) -> String {
@@ -1065,5 +1211,46 @@ mod tests {
             "https://www.alibaba.com/product-detail/Wireless-Bluetooth-Earbuds_1600500000000.html"
         );
         assert_eq!(parser.extract_title_from_slug(raw), "Wireless Bluetooth Earbuds");
+    }
+
+    #[test]
+    fn test_dynamic_approved_platform_detection_clean_url_and_slug() {
+        use super::super::accesstrade::parse_approved_campaigns_page;
+
+        let parser = DealParser::new();
+        let page_json = r#"{
+            "data": [
+                {"id": "6345454361061452947", "merchant": "fpt_shop", "name": "FPT Shop", "approval": "successful", "status": 1, "url": "https://fptshop.com.vn/"},
+                {"id": "4704521809526929067", "merchant": "klookvn", "name": "Klook - SIM, Vé Tham Quan, Show, Tour", "approval": "successful", "status": 1, "url": "https://www.klook.com/vi/"}
+            ]
+        }"#;
+        let (approved, _) = parse_approved_campaigns_page(page_json, 1000).unwrap();
+
+        let fpt_url = "https://fptshop.com.vn/dien-thoai/iphone-16-pro-max?utm_source=fb&fbclid=xyz";
+        let detected = parser.detect_platform_with_approved(fpt_url, Some(&approved));
+        assert_eq!(
+            detected,
+            Platform::Dynamic {
+                name: "FPT Shop".to_string(),
+                campaign_id: "6345454361061452947".to_string(),
+            }
+        );
+        assert_eq!(
+            parser.clean_url(fpt_url, &detected),
+            "https://fptshop.com.vn/dien-thoai/iphone-16-pro-max"
+        );
+        assert_eq!(parser.extract_title_from_slug(fpt_url), "Iphone 16 Pro Max");
+
+        let klook_url = "https://www.klook.com/vi/activity/1234-vinwonders/?aid=99&utm_medium=social";
+        let klook_det = parser.detect_platform_with_approved(klook_url, Some(&approved));
+        assert_eq!(klook_det.as_str(), "Klook");
+        assert_eq!(
+            parser.clean_url(klook_url, &klook_det),
+            "https://www.klook.com/vi/activity/1234-vinwonders/?aid=99"
+        );
+
+        let batch = "Xem máy https://fptshop.com.vn/dien-thoai/iphone-16-pro-max và tour https://www.klook.com/vi/activity/1234-vinwonders/";
+        let extracted = parser.extract_all_urls_with_approved(batch, 5, Some(&approved));
+        assert_eq!(extracted.len(), 2);
     }
 }

@@ -178,9 +178,8 @@ pub async fn handle_message(
         }
     }
 
-    // Kiểm tra xem tin nhắn có chứa 1 hay nhiều URL link sản phẩm không (hỗ trợ cả caption ảnh và tối đa 5 link/tin)
-    let extracted_urls = parser.extract_all_urls(text, 5);
-    if !extracted_urls.is_empty() {
+    // Kiểm tra xem tin nhắn có chứa 1 hay nhiều URL link sản phẩm không (hỗ trợ cả caption ảnh, tối đa 5 link/tin & mọi sàn đã duyệt trên ACCESSTRADE)
+    if parser.extract_first_url(text).is_some() {
         let conn = match db.conn() {
             Ok(c) => c,
             Err(e) => {
@@ -206,8 +205,14 @@ pub async fn handle_message(
         };
 
         let owned_aff = load_owned_aff_settings(&conn, &config).await;
-
-        if extracted_urls.len() >= 2 {
+        let approved_dynamic = parser
+            .accesstrade()
+            .get_or_load_approved_campaigns(owned_aff.accesstrade_token.as_deref())
+            .await;
+        let extracted_urls =
+            parser.extract_all_urls_with_approved(text, 5, approved_dynamic.as_ref());
+        if !extracted_urls.is_empty() {
+            if extracted_urls.len() >= 2 {
             let wait_msg = bot
                 .send_message(
                     msg.chat.id,
@@ -611,7 +616,7 @@ pub async fn handle_message(
                 let err_text = format!(
                     "⚠️ <b>Không thể phân tích link này</b>\n\n\
                      Chi tiết: {}\n\n\
-                     👉 Vui lòng dán đường link sản phẩm từ <b>Shopee</b>, <b>Lazada</b>, <b>Tiki</b>, <b>TikTok Shop</b> hoặc <b>Alibaba</b>.",
+                     👉 Vui lòng dán đường link sản phẩm từ <b>Shopee</b>, <b>Lazada</b>, <b>Tiki</b>, <b>TikTok Shop</b>, <b>Alibaba</b> hoặc các sàn đã duyệt trên ACCESSTRADE.",
                     escape_html(&err.to_string())
                 );
                 bot.send_message(msg.chat.id, err_text)
@@ -620,6 +625,7 @@ pub async fn handle_message(
             }
         }
         return Ok(());
+        }
     }
 
     // Tin nhắn thông thường không có link
@@ -688,7 +694,7 @@ pub async fn handle_command(
 
             let welcome = "⚡ <b>CHÀO MỪNG BẠN ĐẾN VỚI DEALX - TRỢ LÝ SĂN MÃ &amp; GẮN LINK</b> ⚡\n\n\
                  🔥 <b>Mua hàng tiết kiệm hơn chỉ với 1 bước:</b>\n\
-                 Chỉ cần <b>Dán trực tiếp link sản phẩm Shopee, Lazada, Tiki hoặc TikTok Shop</b> vào khung chat này, bot sẽ tự phân tích sản phẩm/shop và gắn link mua kèm mã khớp riêng (nếu có) ngay cho bạn!\n\n\
+                 Chỉ cần <b>Dán trực tiếp link sản phẩm Shopee, Lazada, Tiki, TikTok Shop, Alibaba hoặc các sàn đối tác đã kích hoạt (FPT Shop, CellphoneS, Shein...)</b> vào khung chat này, bot sẽ tự phân tích sản phẩm/shop và gắn link mua kèm mã khớp riêng ngay cho bạn!\n\n\
                  👇 <i>Hãy dán thử 1 link sản phẩm vào đây ngay:</i>";
 
             bot.send_message(msg.chat.id, welcome)

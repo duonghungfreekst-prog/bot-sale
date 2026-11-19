@@ -112,6 +112,7 @@ pub struct ApprovedCampaignSummary {
     pub merchant: String,
     pub name: String,
     pub platform_group: String,
+    pub domain: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -123,6 +124,45 @@ pub struct ApprovedCampaigns {
     pub alibaba: Option<(String, String)>,
     pub all_approved: Vec<ApprovedCampaignSummary>,
     pub fetched_at_epoch: i64,
+}
+
+impl ApprovedCampaigns {
+    /// Trả về danh sách các chiến dịch sàn/thương hiệu mở rộng đã duyệt ngoài 5 sàn cốt lõi
+    pub fn dynamic_campaigns(&self) -> Vec<&ApprovedCampaignSummary> {
+        self.all_approved
+            .iter()
+            .filter(|c| {
+                !c.domain.is_empty()
+                    && !matches!(
+                        c.platform_group.as_str(),
+                        "Shopee" | "Lazada" | "Tiki" | "TikTok Shop" | "Alibaba" | "Khác"
+                    )
+            })
+            .collect()
+    }
+
+    /// Tự động tìm chiến dịch ACCESSTRADE đã duyệt khớp đúng tên miền sản phẩm từ URL người dùng gửi
+    pub fn find_dynamic_campaign_for_url(&self, raw_url: &str) -> Option<&ApprovedCampaignSummary> {
+        let user_host = extract_normalized_host(raw_url)?;
+        if is_core_marketplace_domain(&user_host) {
+            return None;
+        }
+        let mut candidates: Vec<&ApprovedCampaignSummary> = self
+            .dynamic_campaigns()
+            .into_iter()
+            .filter(|c| {
+                user_host == c.domain || user_host.ends_with(&format!(".{}", c.domain))
+            })
+            .collect();
+        candidates.sort_by(|a, b| {
+            let a_exact = a.domain == user_host;
+            let b_exact = b.domain == user_host;
+            b_exact
+                .cmp(&a_exact)
+                .then_with(|| b.domain.len().cmp(&a.domain.len()))
+        });
+        candidates.into_iter().next()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -149,6 +189,7 @@ struct CampaignRaw {
     merchant: Option<String>,
     approval: Option<String>,
     status: Option<i64>,
+    url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -367,7 +408,10 @@ impl AccessTradeClient {
                 Platform::Tiki => approved.tiki,
                 Platform::TikTokShop => approved.tiktok,
                 Platform::Alibaba => approved.alibaba,
-                Platform::Unknown => None,
+                Platform::Dynamic { campaign_id, name } => Some((campaign_id.clone(), name.clone())),
+                Platform::Unknown => approved
+                    .find_dynamic_campaign_for_url(clean_url)
+                    .map(|c| (c.id.clone(), c.platform_group.clone())),
             };
 
             match matched {
@@ -585,6 +629,15 @@ impl AccessTradeClient {
     /// Lấy danh sách các chiến dịch đã duyệt đang nằm trong RAM cache (không gọi mạng)
     pub async fn peek_approved_campaigns(&self) -> Option<ApprovedCampaigns> {
         self.cache.read().await.as_ref().map(|(_, c)| c.clone())
+    }
+
+    /// Lấy danh sách chiến dịch đã duyệt từ cache RAM; nếu cache trống và có API Token thì tự tải 1 lần
+    pub async fn get_or_load_approved_campaigns(&self, api_token: Option<&str>) -> Option<ApprovedCampaigns> {
+        if let Some(cached) = self.peek_approved_campaigns().await {
+            return Some(cached);
+        }
+        let token = api_token.map(str::trim).filter(|s| !s.is_empty())?;
+        self.get_approved_campaigns(token, false).await.ok()
     }
 
     pub async fn peek_cached_high_discount_vouchers(&self) -> Vec<VoucherOffer> {
@@ -1067,19 +1120,20 @@ pub fn parse_approved_campaigns_page(json_str: &str, now_epoch: i64) -> Result<(
         };
         let merchant = item.merchant.unwrap_or_default();
         let name = item.name.unwrap_or_default();
+        let raw_url = item.url.unwrap_or_default();
         let m_lower = merchant.to_lowercase();
         let n_lower = name.to_lowercase();
 
-        let platform_group = if is_shopee_campaign(&m_lower, &n_lower) {
+        let (platform_group, domain) = if is_shopee_campaign(&m_lower, &n_lower) {
             if result.shopee.is_none() || m_lower == "shopee" || m_lower == "shopee_kolnew" {
                 result.shopee = Some((id_str.clone(), name.clone()));
             }
-            "Shopee"
+            ("Shopee".to_string(), "shopee.vn".to_string())
         } else if is_lazada_campaign(&m_lower, &n_lower) {
             if result.lazada.is_none() || m_lower == "lazada_kol" || m_lower == "lazada_cashback" {
                 result.lazada = Some((id_str.clone(), name.clone()));
             }
-            "Lazada"
+            ("Lazada".to_string(), "lazada.vn".to_string())
         } else if is_tiki_campaign(&m_lower, &n_lower) {
             // Ưu tiên TIKI CREATOR (6985318064449073386 - gateway v2/3744 hoạt động 100%) thay vì gói cũ tikivn (4348614231480407268 lỗi 500)
             let is_preferred = m_lower == "tiki_creator" || id_str == "6985318064449073386";
@@ -1091,26 +1145,30 @@ pub fn parse_approved_campaigns_page(json_str: &str, now_epoch: i64) -> Result<(
             if result.tiki.is_none() || is_preferred || (target_is_legacy && id_str != "4348614231480407268") {
                 result.tiki = Some((id_str.clone(), name.clone()));
             }
-            "Tiki"
+            ("Tiki".to_string(), "tiki.vn".to_string())
         } else if is_tiktok_campaign(&m_lower, &n_lower) {
             if result.tiktok.is_none() || m_lower == "tiktok_cps" {
                 result.tiktok = Some((id_str.clone(), name.clone()));
             }
-            "TikTok Shop"
+            ("TikTok Shop".to_string(), "tiktok.com".to_string())
         } else if is_alibaba_campaign(&m_lower, &n_lower) {
             if result.alibaba.is_none() || m_lower == "admitad_alibaba" {
                 result.alibaba = Some((id_str.clone(), name.clone()));
             }
-            "Alibaba"
+            ("Alibaba".to_string(), "alibaba.com".to_string())
+        } else if let Some(dyn_domain) = resolve_dynamic_campaign_domain(&m_lower, &raw_url) {
+            let label = format_dynamic_platform_label(&name, &dyn_domain);
+            (label, dyn_domain)
         } else {
-            "Khác"
+            ("Khác".to_string(), String::new())
         };
 
         result.all_approved.push(ApprovedCampaignSummary {
             id: id_str,
             merchant,
             name,
-            platform_group: platform_group.to_string(),
+            platform_group,
+            domain,
         });
     }
 
@@ -1174,6 +1232,143 @@ fn is_alibaba_campaign(merchant: &str, name: &str) -> bool {
         || (merchant.contains("alibaba") && name.contains("alibaba"))
 }
 
+/// Chuẩn hóa domain từ URL bất kỳ để khớp chính xác các chiến dịch mở rộng trên ACCESSTRADE
+pub fn extract_normalized_host(raw_url: &str) -> Option<String> {
+    let parsed = url::Url::parse(raw_url.trim()).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    let mut host = parsed.host_str()?.trim().to_lowercase();
+    for prefix in [
+        "www.", "m.", "mobile.", "vn.", "vi.", "us.", "uk.", "get.", "shop.", "store.",
+    ] {
+        if let Some(rest) = host.strip_prefix(prefix) {
+            if rest.contains('.')
+                && !matches!(
+                    rest,
+                    "com.vn" | "net.vn" | "org.vn" | "edu.vn" | "gov.vn" | "co.uk" | "com.au"
+                )
+            {
+                host = rest.to_string();
+                break;
+            }
+        }
+    }
+    if host.contains('.') {
+        Some(host)
+    } else {
+        None
+    }
+}
+
+fn is_core_marketplace_domain(host: &str) -> bool {
+    let h = host.to_lowercase();
+    [
+        "shopee.vn",
+        "shope.ee",
+        "shp.ee",
+        "lazada.vn",
+        "lzd.co",
+        "tiki.vn",
+        "ti.ki",
+        "tiktok.com",
+        "alibaba.com",
+    ]
+    .iter()
+    .any(|core| h == *core || h.ends_with(&format!(".{}", core)))
+}
+
+fn resolve_dynamic_campaign_domain(merchant_lower: &str, raw_url: &str) -> Option<String> {
+    if merchant_lower.is_empty()
+        || matches!(
+            merchant_lower,
+            "shopeepay_cpr"
+                | "shopeefood_taixe"
+                | "oneat_referral_firebase"
+                | "tiktok_business"
+                | "eco_comm"
+        )
+        || merchant_lower.contains("fpt_software")
+        || merchant_lower.contains("fptsoftware")
+        || merchant_lower.contains("cashloan")
+        || merchant_lower.contains("_vay")
+        || merchant_lower.contains("vaytinchap")
+        || merchant_lower.contains("thetindung")
+        || merchant_lower.contains("_credit")
+        || merchant_lower.ends_with("_android")
+        || merchant_lower.ends_with("_ios")
+    {
+        return None;
+    }
+
+    // Bản đồ tên miền thật cho vài thương hiệu có link tracker gián tiếp trên ACCESSTRADE
+    let mapped = match merchant_lower {
+        "adidas_vietnam" => Some("adidas.com.vn"),
+        "aeonmall_eshop" => Some("aeoneshop.com"),
+        "bitis.myharavan.com" => Some("bitis.com.vn"),
+        _ => None,
+    };
+    if let Some(m) = mapped {
+        return Some(m.to_string());
+    }
+
+    let host = extract_normalized_host(raw_url)?;
+    if is_core_marketplace_domain(&host) {
+        return None;
+    }
+    let blocked_tracker_hosts = [
+        "accesstrade.vn",
+        "caiapp.online",
+        "pxf.io",
+        "onelink.me",
+        "page.link",
+        "firebase.com",
+        "play.google.com",
+        "apps.apple.com",
+        "itunes.apple.com",
+        "shorten.asia",
+        "go.isclix.com",
+        "bit.ly",
+        "tinyurl.com",
+        "t.me",
+        "facebook.com",
+        "fb.com",
+        "instagram.com",
+        "zalo.me",
+        "youtube.com",
+        "google.com",
+    ];
+    if blocked_tracker_hosts
+        .iter()
+        .any(|b| host == *b || host.ends_with(&format!(".{}", b)))
+    {
+        return None;
+    }
+    Some(host)
+}
+
+fn format_dynamic_platform_label(name: &str, domain: &str) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return domain.to_string();
+    }
+    if trimmed.chars().count() > 26 {
+        if let Some((head, _)) = trimmed.split_once(" - ") {
+            let h = head.trim();
+            if !h.is_empty() {
+                return h.to_string();
+            }
+        }
+        if let Some((head, _)) = trimmed.split_once(" _ ") {
+            let h = head.trim();
+            if !h.is_empty() {
+                return h.to_string();
+            }
+        }
+    }
+    trimmed.to_string()
+}
+
 /// Che giấu API Token khi hiển thị trên giao diện Web Admin (chỉ hiện 4 ký tự đầu + cuối)
 pub fn mask_token(token: &str) -> String {
     let chars: Vec<char> = token.trim().chars().collect();
@@ -1213,12 +1408,32 @@ mod tests {
         assert_eq!(parsed.all_approved.len(), 6);
 
         // Kiểm tra merge đa trang: trang 1 chỉ có gói cũ tikivn (4348614231480407268), trang 2 có TIKI CREATOR (6985318064449073386) -> phải nâng cấp lên 6985318064449073386
-        let page1 = r#"{"data": [{"id": "4348614231480407268", "merchant": "tikivn", "name": "TIKI (CPS)", "approval": "successful", "status": 1}]}"#;
-        let page2 = r#"{"data": [{"id": "6985318064449073386", "merchant": "tiki_creator", "name": "TIKI CREATOR", "approval": "successful", "status": 1}]}"#;
+        let page1 = r#"{"data": [{"id": "4348614231480407268", "merchant": "tikivn", "name": "TIKI (CPS)", "approval": "successful", "status": 1, "url": "https://tiki.vn"}]}"#;
+        let page2 = r#"{"data": [{"id": "6985318064449073386", "merchant": "tiki_creator", "name": "TIKI CREATOR", "approval": "successful", "status": 1, "url": "https://tiki.vn"}, {"id": "7073924423820975592", "merchant": "shein_mobikok", "name": "Shein", "approval": "successful", "status": 1, "url": "https://www.shein.com/"}, {"id": "6259155740535091857", "merchant": "cellphones_cps", "name": "CellphoneS", "approval": "successful", "status": 1, "url": "https://cellphones.com.vn/danh-sach-khuyen-mai"}, {"id": "7073874095910363548", "merchant": "shopeepay_cpr", "name": "ShopeePay CPR", "approval": "successful", "status": 1, "url": "https://motaikhoanspp.caiapp.online"}]}"#;
         let (mut combined, _) = parse_approved_campaigns_page(page1, 1000).unwrap();
         let (p2, _) = parse_approved_campaigns_page(page2, 1000).unwrap();
         merge_approved_campaigns(&mut combined, p2);
         assert_eq!(combined.tiki.as_ref().unwrap().0, "6985318064449073386");
+
+        // Kiểm tra tự động nhận diện đa sàn mở rộng từ trường url & loại bỏ ví/app rác (shopeepay_cpr)
+        assert_eq!(
+            combined
+                .find_dynamic_campaign_for_url("https://vn.shein.com/Dress-p-123.html")
+                .map(|c| c.id.as_str()),
+            Some("7073924423820975592")
+        );
+        assert_eq!(
+            combined
+                .find_dynamic_campaign_for_url("https://cellphones.com.vn/iphone-16.html")
+                .map(|c| c.id.as_str()),
+            Some("6259155740535091857")
+        );
+        assert!(combined
+            .find_dynamic_campaign_for_url("https://motaikhoanspp.caiapp.online")
+            .is_none());
+        assert!(combined
+            .find_dynamic_campaign_for_url("https://shopee.vn/product/1/2")
+            .is_none());
     }
 
     #[test]
