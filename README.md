@@ -7,8 +7,8 @@ Hệ thống Bot Telegram săn sale đa sàn (**DealX - Trợ Lý Săn Mã & Ép
 ## 🌟 Tính Năng Nổi Bật
 
 ### 1. Web Portal & Admin Dashboard Quản Trị (Bảo Mật Tối Cao)
-- **Trang chủ công khai `/` + Đổi link trực tiếp (`POST /convert`):** Khách không dùng Telegram vẫn dán được link Shopee, Lazada, Tiki, TikTok Shop, Alibaba ngay trên web để nhận link bọc kèm mã khớp (có Rate Limit chống spam).
-- **Cầu nối Mobile & Bọc link 2 lớp (`/{code}`, `/go/{code}`, `/assets/bridge.js`):** Bọc 100% link đầu ra dạng 8 ký tự, chặn máy tính/giả lập PC 2 lớp (HTTP + `isRealMobile()` + mã hóa XOR payload) và tự mở nút giải cứu khi bị kẹt trình duyệt nhúng Zalo/Messenger.
+- **Trang chủ công khai `/` + Đổi link trực tiếp (`POST /convert`):** Khách không dùng Telegram vẫn dán được link Shopee, Lazada, Tiki, TikTok Shop, Alibaba ngay trên web để nhận link bọc kèm mã khớp (có Rate Limit chống spam, ẩn liên kết `/admin` khỏi giao diện công khai và hỗ trợ bật tắt chế độ ẩn `/` thành `404 Not Found` khi chưa dùng Proxy).
+- **Cầu nối Mobile, Bọc link 2 lớp & Che Web Chính (`/{code}`, `/go/{code}`, `/assets/bridge.js`, `cloudflare_worker.js`):** Bọc 100% link đầu ra dạng 8 ký tự, chặn máy tính/giả lập PC 2 lớp (HTTP + `isRealMobile()` + mã hóa XOR payload), hỗ trợ **Cloudflare Worker Proxy** (`X-DealX-Cloak: 1`) hoặc tên miền bọc riêng (`shortlink_base_url`) để che hoàn toàn web Render và trả `404 Not Found` cho mọi đường dẫn ngoài mã shortlink (giống `godeal.online`).
 - **Chỉ DUY NHẤT 1 tài khoản Admin:** Không cho phép đăng ký mới; khóa Brute-force `POST /admin/login` (tối đa 5 lần sai/15 phút -> `HTTP 429`), lưu phiên băm SHA-256 vào `admin_sessions`, Cookie `HttpOnly; SameSite=Lax`, chống Timing Attack với `subtle::ConstantTimeEq`.
 - **Đối soát đơn hàng & Báo Telegram Admin tự động:** Quét định kỳ mỗi 10 phút từ ACCESSTRADE (`/v1/orders`) và Shopee Open API (`conversionReport`), chống trùng lặp (`tracked_orders`) và nhắn báo ngay về Telegram ID Admin.
 - **Quản lý kho Mã Độc Quyền & Đồng Bộ Kho Mã:** Nhập lẻ hoặc dán hàng loạt mã độc quyền hợp tác từ AM/MCN/Shop (hỗ trợ cả dấu `|` hoặc copy từ Excel/Google Sheets), tự động đồng bộ mã từ ACCESSTRADE API mỗi 60 giây.
@@ -62,6 +62,8 @@ Hệ thống Bot Telegram săn sale đa sàn (**DealX - Trợ Lý Săn Mã & Ép
 ```
 f:/bot sale/
 ├── Cargo.toml                  # Khai báo thư viện phụ thuộc (Rust 2024)
+├── Dockerfile                  # Đóng gói Multi-stage Rust + copy cloudflare_worker.js
+├── cloudflare_worker.js        # Cloudflare Worker mẫu che 100% Web Render cho Shortlink
 ├── Makefile                    # Lệnh build, test, run, clean nhanh
 ├── run_salehunter_bot.bat      # Script khởi động 1-click trên Windows
 ├── .env.example                # File mẫu cấu hình bot và database

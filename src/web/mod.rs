@@ -106,6 +106,10 @@ fn build_router(state: AppState) -> Router {
         // Giải mã link bọc 8 ký tự chuẩn DealX (đặt cuối cùng)
         .route("/go/{code}", get(handle_shortlink_redirect))
         .route("/{code}", get(handle_shortlink_redirect))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            shortlink_cloak_middleware,
+        ))
         .layer(middleware::from_fn(security_headers_middleware))
         .with_state(state)
 }
@@ -171,6 +175,140 @@ async fn security_headers_middleware(req: Request, next: Next) -> Response {
     res
 }
 
+const CLOUDFLARE_WORKER_TEMPLATE: &str = include_str!("../../cloudflare_worker.js");
+
+/// Phản hồi chuẩn 404 Not Found cho tên miền bọc link hoặc chế độ ẩn web chính
+fn not_found_cloak_response() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        [
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+            (
+                HeaderName::from_static("x-robots-tag"),
+                HeaderValue::from_static("noindex, nofollow"),
+            ),
+        ],
+        "Not Found",
+    )
+        .into_response()
+}
+
+/// Chuẩn hóa tên miền (host) từ URL hoặc Host header (lowercase, bỏ :port và www.)
+fn extract_host_only(raw_host_or_url: &str) -> Option<String> {
+    let trimmed = raw_host_or_url.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let parsed = if trimmed.contains("://") {
+        url::Url::parse(trimmed).ok()?
+    } else {
+        url::Url::parse(&format!("http://{}", trimmed)).ok()?
+    };
+    let host = parsed.host_str()?.to_ascii_lowercase();
+    let normalized = host.strip_prefix("www.").unwrap_or(&host).to_string();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+/// Kiểm tra path có thuộc nhóm duy nhất được phép mở qua tên miền shortlink bị che hay không
+fn is_allowed_shortlink_cloak_path(method: &axum::http::Method, path: &str) -> bool {
+    if method != axum::http::Method::GET && method != axum::http::Method::HEAD {
+        return false;
+    }
+    if path == "/assets/bridge.js" {
+        return true;
+    }
+    if matches!(
+        path.to_ascii_lowercase().as_str(),
+        "/health" | "/convert" | "/status" | "/metrics" | "/robots"
+    ) {
+        return false;
+    }
+    let code = path
+        .strip_prefix("/go/")
+        .or_else(|| path.strip_prefix('/'))
+        .unwrap_or("");
+    !code.contains('/') && Repository::is_valid_short_code(code)
+}
+
+/// Kiểm tra Admin có bật tùy chọn tạm ẩn Trang chủ `/` thành 404 Not Found hay không
+async fn is_public_home_cloaked(state: &AppState) -> bool {
+    let Ok(conn) = state.db.conn() else {
+        return false;
+    };
+    Repository::get_setting(&conn, "public_home_cloak")
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s.trim() == "1")
+        .unwrap_or(false)
+}
+
+/// Middleware che hoàn toàn Web Chính & `/admin` khi request đi qua Cloudflare Worker (`X-DealX-Cloak: 1`)
+/// hoặc truy cập bằng tên miền bọc link riêng (`shortlink_base_url` khác host của Web Chính)
+async fn shortlink_cloak_middleware(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let headers = req.headers();
+    let has_cloak_header = headers
+        .get("x-dealx-cloak")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false);
+
+    let is_cloaked_domain = if has_cloak_header {
+        true
+    } else {
+        let req_host = headers
+            .get(header::HOST)
+            .and_then(|v| v.to_str().ok())
+            .and_then(extract_host_only);
+        let public_host = state
+            .config
+            .public_base_url
+            .as_deref()
+            .and_then(extract_host_only);
+
+        match req_host {
+            Some(rh) if public_host.as_deref() != Some(rh.as_str()) => {
+                let db_short_raw = if let Ok(conn) = state.db.conn() {
+                    Repository::get_setting(&conn, "shortlink_base_url")
+                        .await
+                        .ok()
+                        .flatten()
+                        .filter(|s| !s.trim().is_empty())
+                } else {
+                    None
+                };
+                let short_host = db_short_raw
+                    .as_deref()
+                    .or(state.config.shortlink_base_url.as_deref())
+                    .and_then(extract_host_only);
+                match short_host {
+                    Some(sh) => {
+                        sh == rh
+                            && public_host.as_deref() != Some(sh.as_str())
+                            && !(public_host.is_none() && rh.ends_with(".onrender.com"))
+                    }
+                    None => false,
+                }
+            }
+            _ => false,
+        }
+    };
+
+    if is_cloaked_domain && !is_allowed_shortlink_cloak_path(req.method(), req.uri().path()) {
+        return not_found_cloak_response();
+    }
+
+    next.run(req).await
+}
+
 #[derive(serde::Deserialize, Default)]
 pub struct PublicHomeQuery {
     pub q: Option<String>,
@@ -192,6 +330,9 @@ async fn handle_root(
     Query(query): Query<PublicHomeQuery>,
     State(state): State<AppState>,
 ) -> Response {
+    if is_public_home_cloaked(&state).await {
+        return not_found_cloak_response();
+    }
     render_public_home(&state, query, "", "").await
 }
 
@@ -201,6 +342,9 @@ async fn handle_public_convert(
     State(state): State<AppState>,
     Form(form): Form<PublicConvertForm>,
 ) -> Response {
+    if is_public_home_cloaked(&state).await {
+        return not_found_cloak_response();
+    }
     let input_raw = form.url.trim().to_string();
     let client_ip = extract_client_ip(&headers);
 
@@ -382,17 +526,28 @@ async fn handle_public_convert(
     }
 }
 
-/// JS ngoài cho Trang Chủ (tuân thủ nghiêm ngặt CSP `default-src 'self'`)
+/// JS ngoài cho Trang Chủ & nút sao chép trong Web Admin (tuân thủ nghiêm ngặt CSP `default-src 'self'`)
 async fn handle_home_js() -> Response {
     let js = r#"document.addEventListener("click", function (e) {
     var btn = e.target.closest(".js-copy-link");
     if (!btn) return;
     var url = btn.getAttribute("data-copy-url");
+    var fromTarget = false;
+    if (!url) {
+        var targetId = btn.getAttribute("data-copy-target");
+        if (targetId) {
+            var el = document.getElementById(targetId);
+            if (el) {
+                url = typeof el.value === "string" ? el.value : el.textContent;
+                fromTarget = true;
+            }
+        }
+    }
     if (!url) return;
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(url).then(function () {
             var old = btn.textContent;
-            btn.textContent = "✅ Đã sao chép link";
+            btn.textContent = fromTarget ? "✅ Đã sao chép code" : "✅ Đã sao chép link";
             setTimeout(function () { btn.textContent = old; }, 2000);
         });
     }
@@ -935,7 +1090,6 @@ async fn render_public_home(
             <div class="site-footer__links">
                 <span>DealX Vietnam © 2026</span>
                 <a href="https://t.me/{}" target="_blank" rel="noopener noreferrer">Kênh hỗ trợ Telegram</a>
-                <a href="/admin">Quản trị hệ thống</a>
             </div>
         </div>
     </footer>
@@ -1167,15 +1321,15 @@ async fn handle_shortlink_redirect(
     };
 
     if is_preview_bot(&headers) {
-        let title_display = if record.title.trim().is_empty() {
-            format!("Ưu đãi {} từ DealX Vietnam", record.platform.trim())
-        } else {
-            record.title.clone()
-        };
         let plat_desc = if record.platform.trim().is_empty() {
             "ứng dụng mua sắm".to_string()
         } else {
             record.platform.trim().to_string()
+        };
+        let title_display = if record.title.trim().is_empty() {
+            format!("Ưu đãi {} hôm nay", plat_desc)
+        } else {
+            record.title.clone()
         };
         let preview_html = format!(
             r#"<!DOCTYPE html>
@@ -1187,7 +1341,7 @@ async fn handle_shortlink_redirect(
     <meta property="og:description" content="Bấm để mở ưu đãi trên {}">
     <title>{}</title>
 </head>
-<body><p>Ưu đãi được chia sẻ qua DealX Vietnam.</p></body>
+<body><p>Đang mở liên kết ưu đãi.</p></body>
 </html>"#,
             escape_html(&title_display),
             escape_html(&plat_desc),
@@ -1767,6 +1921,7 @@ async fn handle_dashboard(
         .ok()
         .flatten()
         .filter(|s| !s.trim().is_empty())
+        .or_else(|| state.config.shortlink_base_url.clone())
         .unwrap_or_default();
     let shortlink_mobile_only = Repository::get_setting(&conn, "shortlink_mobile_only")
         .await
@@ -1774,6 +1929,19 @@ async fn handle_dashboard(
         .flatten()
         .map(|s| s.trim() != "0")
         .unwrap_or(true);
+    let public_home_cloak = Repository::get_setting(&conn, "public_home_cloak")
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s.trim() == "1")
+        .unwrap_or(false);
+    let origin_base_for_worker = state
+        .config
+        .public_base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("https://bot-sale.onrender.com");
 
     let admin_telegram_id_val = Repository::get_setting(&conn, "admin_telegram_id")
         .await
@@ -1793,6 +1961,8 @@ async fn handle_dashboard(
         &shopee_social_params,
         &shortlink_base_url,
         shortlink_mobile_only,
+        public_home_cloak,
+        origin_base_for_worker,
     );
     let order_alerts_card_html = render_order_alerts_card(&admin_telegram_id_val, &tracked_orders);
 
@@ -2349,6 +2519,7 @@ async fn handle_dashboard(
     <footer class="max-w-7xl mx-auto px-4 py-8 text-center text-xs text-gray-500 border-t border-gray-800/50 mt-12">
         DealX Affiliate System · Bản Quyền 2026 · Vận hành bảo mật trên Rust + LibSQL
     </footer>
+    <script src="/assets/home.js" defer></script>
 </body>
 </html>"#,
         escape_html(&state.config.admin_username),
@@ -2441,6 +2612,8 @@ fn render_shopee_card(
     social_params: &str,
     shortlink_base_url: &str,
     shortlink_mobile_only: bool,
+    public_home_cloak: bool,
+    origin_base_url: &str,
 ) -> String {
     let status_badge = if !app_id.trim().is_empty() && !app_secret.trim().is_empty() {
         format!(
@@ -2472,9 +2645,14 @@ fn render_shopee_card(
         "🟢 Đã gắn bộ tham số IG/FB Reels"
     };
     let mobile_checked = if shortlink_mobile_only { "checked" } else { "" };
+    let home_cloak_checked = if public_home_cloak { "checked" } else { "" };
+    let worker_code = CLOUDFLARE_WORKER_TEMPLATE.replace(
+        "https://bot-sale.onrender.com",
+        origin_base_url.trim_end_matches('/'),
+    );
 
     format!(
-        r#"<section class="bg-gray-900 border border-orange-500/30 rounded-2xl p-6 shadow-xl space-y-4">
+        r##"<section class="bg-gray-900 border border-orange-500/30 rounded-2xl p-6 shadow-xl space-y-4">
             <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-4">
                 <div>
                     <h2 class="text-lg font-bold text-white flex items-center space-x-2">
@@ -2482,7 +2660,7 @@ fn render_shopee_card(
                         <span>Kết Nối Shopee Affiliate Chính Chủ &amp; Bọc Link Riêng</span>
                     </h2>
                     <p class="text-xs text-gray-400 mt-1">
-                        Bot tự động bọc 100% link đầu ra dạng <code>/8_ký_tự</code>, đồng thời ưu tiên sinh link <code>s.shopee.vn</code> chính chủ (kèm nối đuôi phiên IG/FB Reels nếu bạn gắn mẫu bên dưới).
+                        Bot tự động bọc 100% link đầu ra dạng <code>/8_ký_tự</code>, ưu tiên link <code>s.shopee.vn</code> chính chủ và che hoàn toàn tên miền Web Chính khi gắn Cloudflare Worker hoặc tên miền bọc riêng.
                     </p>
                 </div>
                 <div>{}</div>
@@ -2512,11 +2690,15 @@ fn render_shopee_card(
                         </label>
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-gray-400 mb-1">Tên Miền Bọc Link Riêng (Tùy chọn)</label>
-                        <input type="text" name="shortlink_base_url" value="{}" placeholder="Mặc định tự dùng domain Render (VD: https://tenmiencuaban.online)" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Tên Miền Bọc Link Riêng / Cloudflare Worker (Tùy chọn)</label>
+                        <input type="text" name="shortlink_base_url" value="{}" placeholder="VD: https://ten-worker.ten-ban.workers.dev (hoặc https://godeal.online)" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
                         <label class="inline-flex items-center space-x-2 text-xs text-gray-300 mt-1.5">
                             <input type="checkbox" name="shortlink_mobile_only" value="1" {} class="rounded bg-gray-800 border-gray-600">
                             <span>🛡️ Chặn máy tính soi link bọc (Chỉ cho điện thoại mở giống godeal.online)</span>
+                        </label>
+                        <label class="inline-flex items-center space-x-2 text-xs text-gray-300 mt-1.5 block">
+                            <input type="checkbox" name="public_home_cloak" value="1" {} class="rounded bg-gray-800 border-gray-600">
+                            <span>🙈 Ẩn luôn Trang chủ <code>/</code> trên Render thành <code>404 Not Found</code> (Chỉ bật nếu không chờ duyệt web Shopee/AT)</span>
                         </label>
                     </div>
                 </div>
@@ -2524,7 +2706,24 @@ fn render_shopee_card(
                     💾 Lưu Cấu Hình Shopee &amp; Bọc Link
                 </button>
             </form>
-        </section>"#,
+            <details class="bg-gray-950/70 border border-gray-800 rounded-xl p-4">
+                <summary class="cursor-pointer text-xs font-bold text-orange-300 select-none">
+                    ☁️ Hướng dẫn tạo link bọc riêng 100% miễn phí bằng Cloudflare Worker (Che hoàn toàn web Render, vào / ra 404 như godeal.online)
+                </summary>
+                <div class="mt-3 space-y-3 text-xs text-gray-300">
+                    <ol class="list-decimal list-inside space-y-1 text-gray-400">
+                        <li>Vào <span class="text-white font-semibold">dash.cloudflare.com</span> (tài khoản miễn phí) → chọn <span class="text-white font-semibold">Workers &amp; Pages</span> → <span class="text-white font-semibold">Create Worker</span> → <span class="text-white font-semibold">Deploy</span> → <span class="text-white font-semibold">Edit code</span>.</li>
+                        <li>Xóa hết code mẫu, dán toàn bộ đoạn code bên dưới vào rồi bấm <span class="text-white font-semibold">Deploy</span>.</li>
+                        <li>Copy địa chỉ Worker (dạng <code class="text-orange-300">https://ten-worker.ten-ban.workers.dev</code>) dán vào ô <span class="text-white font-semibold">Tên Miền Bọc Link Riêng</span> ở trên và bấm Lưu.</li>
+                        <li>Từ đó link bot Telegram trả ra hoàn toàn dùng domain mới; mọi truy cập vào <code>/</code>, <code>/admin</code>, <code>/convert</code> trên domain mới đều trả <code>404 Not Found</code>!</li>
+                    </ol>
+                    <textarea id="cf-worker-code" readonly rows="10" class="w-full bg-gray-900 border border-gray-800 rounded-xl p-3 text-green-300 font-mono text-xs focus:outline-none">{}</textarea>
+                    <button type="button" class="js-copy-link px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white font-semibold rounded-xl text-xs transition" data-copy-target="cf-worker-code">
+                        📋 Sao chép Code Cloudflare Worker
+                    </button>
+                </div>
+            </details>
+        </section>"##,
         status_badge,
         escape_html(aff_id),
         escape_html(app_id),
@@ -2532,7 +2731,9 @@ fn render_shopee_card(
         social_badge,
         social_placeholder,
         escape_html(shortlink_base_url),
-        mobile_checked
+        mobile_checked,
+        home_cloak_checked,
+        escape_html(&worker_code)
     )
 }
 
@@ -2549,6 +2750,8 @@ pub struct ShopeeSettingsForm {
     pub shortlink_base_url: String,
     #[serde(default)]
     pub shortlink_mobile_only: Option<String>,
+    #[serde(default)]
+    pub public_home_cloak: Option<String>,
 }
 
 async fn handle_update_shopee_settings(
@@ -2606,6 +2809,12 @@ async fn handle_update_shopee_settings(
         "0"
     };
     let _ = Repository::set_setting(&conn, "shortlink_mobile_only", mobile_flag).await;
+    let home_cloak_flag = if form.public_home_cloak.as_deref() == Some("1") {
+        "1"
+    } else {
+        "0"
+    };
+    let _ = Repository::set_setting(&conn, "public_home_cloak", home_cloak_flag).await;
 
     info!("✅ Quản trị viên đã cập nhật cấu hình Shopee Chính Chủ & Bọc Link trên Web Admin.");
     redirect_with_notice("Đã lưu cấu hình Shopee Chính Chủ & Bộ Bọc Link an toàn!")
@@ -3343,6 +3552,197 @@ DongLoiThieuCot | 123
         .unwrap();
         assert!(body.contains("convert-alert--error"));
         assert!(body.contains("Vui lòng dán đúng đường link sản phẩm"));
+
+        let _ = std::fs::remove_file(&test_db_path);
+    }
+
+    #[test]
+    fn test_shortlink_cloak_path_and_host_helpers() {
+        assert!(is_allowed_shortlink_cloak_path(
+            &axum::http::Method::GET,
+            "/AbCd1234"
+        ));
+        assert!(is_allowed_shortlink_cloak_path(
+            &axum::http::Method::GET,
+            "/go/AbCd1234"
+        ));
+        assert!(is_allowed_shortlink_cloak_path(
+            &axum::http::Method::HEAD,
+            "/assets/bridge.js"
+        ));
+        assert!(!is_allowed_shortlink_cloak_path(
+            &axum::http::Method::GET,
+            "/"
+        ));
+        assert!(!is_allowed_shortlink_cloak_path(
+            &axum::http::Method::GET,
+            "/admin"
+        ));
+        assert!(!is_allowed_shortlink_cloak_path(
+            &axum::http::Method::GET,
+            "/admin/login"
+        ));
+        assert!(!is_allowed_shortlink_cloak_path(
+            &axum::http::Method::GET,
+            "/assets/home.js"
+        ));
+        assert!(!is_allowed_shortlink_cloak_path(
+            &axum::http::Method::POST,
+            "/convert"
+        ));
+        assert!(!is_allowed_shortlink_cloak_path(
+            &axum::http::Method::GET,
+            "/health"
+        ));
+        assert!(!is_allowed_shortlink_cloak_path(
+            &axum::http::Method::GET,
+            "/convert"
+        ));
+
+        assert_eq!(
+            extract_host_only("https://www.GoDeal.online:8443/Ab12"),
+            Some("godeal.online".to_string())
+        );
+        assert_eq!(
+            extract_host_only("my-worker.workers.dev"),
+            Some("my-worker.workers.dev".to_string())
+        );
+        assert_eq!(extract_host_only("   "), None);
+    }
+
+    #[tokio::test]
+    async fn test_shortlink_cloak_router_e2e_header_and_custom_host() {
+        let test_db_path = format!("target/test_cloak_e2e_{}.db", uuid::Uuid::new_v4().simple());
+        let mut state = make_test_state(&test_db_path, None).await;
+        state.config.public_base_url = Some("https://bot-sale.onrender.com".to_string());
+
+        let code = {
+            let conn = state.db.conn().unwrap();
+            Repository::set_setting(&conn, "shortlink_base_url", "https://short.godeal-test.online")
+                .await
+                .unwrap();
+            Repository::create_or_get_short_link(
+                &conn,
+                "https://s.shopee.vn/cloak-test",
+                "",
+                "Shopee",
+            )
+            .await
+            .unwrap()
+        };
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = build_router(state);
+        let server_task = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", addr);
+
+        // 1. Web chính: / mở được 200 OK nhưng KHÔNG chứa đường dẫn /admin
+        let home_resp = client.get(format!("{}/", base)).send().await.unwrap();
+        assert_eq!(home_resp.status().as_u16(), 200);
+        let home_body = home_resp.text().await.unwrap();
+        assert!(!home_body.contains("href=\"/admin\""));
+        assert!(!home_body.contains("Quản trị hệ thống"));
+
+        // 2. Truy cập qua Cloudflare Worker (X-DealX-Cloak: 1): khóa sạch /, /admin, /convert, /health -> 404
+        for hidden_path in ["/", "/admin", "/admin/login", "/health", "/convert", "/assets/home.js"] {
+            let resp = client
+                .get(format!("{}{}", base, hidden_path))
+                .header("x-dealx-cloak", "1")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status().as_u16(),
+                404,
+                "Path {} phai tra 404 khi co X-DealX-Cloak",
+                hidden_path
+            );
+        }
+        let convert_cloaked = client
+            .post(format!("{}/convert", base))
+            .header("x-dealx-cloak", "1")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body("url=https%3A%2F%2Fshopee.vn%2Ftest")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(convert_cloaked.status().as_u16(), 404);
+
+        // Bridge JS va ma shortlink van hoat dong 200 va khong lo thuong hieu / domain Web Chinh
+        let bridge_resp = client
+            .get(format!("{}/assets/bridge.js", base))
+            .header("x-dealx-cloak", "1")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(bridge_resp.status().as_u16(), 200);
+
+        let preview_resp = client
+            .get(format!("{}/{}", base, code))
+            .header("x-dealx-cloak", "1")
+            .header("user-agent", "facebookexternalhit/1.1")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(preview_resp.status().as_u16(), 200);
+        let preview_body = preview_resp.text().await.unwrap();
+        assert!(!preview_body.contains("DealX"));
+        assert!(!preview_body.contains("onrender.com"));
+        assert!(!preview_body.contains("/admin"));
+
+        // 3. Truy cập trực tiếp bằng Host của domain shortlink riêng -> /, /admin đều trả 404
+        let custom_root = client
+            .get(format!("{}/", base))
+            .header("host", "short.godeal-test.online")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(custom_root.status().as_u16(), 404);
+
+        let custom_admin = client
+            .get(format!("{}/admin", base))
+            .header("host", "short.godeal-test.online")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(custom_admin.status().as_u16(), 404);
+
+        server_task.abort();
+        let _ = std::fs::remove_file(&test_db_path);
+    }
+
+    #[tokio::test]
+    async fn test_public_home_cloak_toggle_hides_root_and_convert_keeps_admin_alive() {
+        let test_db_path = format!("target/test_home_cloak_{}.db", uuid::Uuid::new_v4().simple());
+        let state = make_test_state(&test_db_path, None).await;
+        {
+            let conn = state.db.conn().unwrap();
+            Repository::set_setting(&conn, "public_home_cloak", "1")
+                .await
+                .unwrap();
+        }
+
+        let resp_root = handle_root(Query(PublicHomeQuery::default()), State(state.clone())).await;
+        assert_eq!(resp_root.status(), StatusCode::NOT_FOUND);
+
+        let resp_convert = handle_public_convert(
+            HeaderMap::new(),
+            State(state.clone()),
+            Form(PublicConvertForm {
+                url: "https://shopee.vn/test".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(resp_convert.status(), StatusCode::NOT_FOUND);
+
+        // Trang đăng nhập /admin/login vẫn hoạt động bình thường để Admin tắt lại bất kỳ lúc nào
+        let resp_login = handle_login_page(HeaderMap::new(), State(state)).await;
+        assert_eq!(resp_login.status(), StatusCode::OK);
 
         let _ = std::fs::remove_file(&test_db_path);
     }

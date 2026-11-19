@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy toàn bộ mã nguồn vào container
 COPY Cargo.toml Cargo.lock ./
+COPY cloudflare_worker.js ./
 COPY src ./src
 
 # Build binary ở chế độ tối ưu hóa Release
