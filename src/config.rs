@@ -137,10 +137,9 @@ impl Config {
             .unwrap_or(10000);
 
         let public_base_url = resolve_public_base_url();
-        let shortlink_base_url = read_env_non_empty("SHORTLINK_BASE_URL")
-            .map(|s| s.trim_end_matches('/').to_string())
-            .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
-            .or_else(|| public_base_url.clone());
+        let shortlink_base_url = Some(resolve_shortlink_base_url(read_env_non_empty(
+            "SHORTLINK_BASE_URL",
+        )));
         let telegram_webhook_secret = resolve_webhook_secret(&telegram_token, &admin_password);
 
         Ok(Self {
@@ -175,6 +174,16 @@ fn read_env_non_empty(key: &str) -> Option<String> {
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+pub const DEFAULT_SHORTLINK_BASE_URL: &str = "https://thegioisieusale.click";
+
+/// Xác định tên miền bọc link đầu ra (ưu tiên biến môi trường SHORTLINK_BASE_URL, mặc định https://thegioisieusale.click).
+fn resolve_shortlink_base_url(env_override: Option<String>) -> String {
+    env_override
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
+        .unwrap_or_else(|| DEFAULT_SHORTLINK_BASE_URL.to_string())
 }
 
 /// Xác định URL công khai HTTPS của dịch vụ (ưu tiên WEBHOOK_BASE_URL, sau đó RENDER_EXTERNAL_URL).
@@ -247,5 +256,21 @@ mod tests {
         assert_ne!(s1, s3);
         assert_eq!(s1.len(), 32);
         assert!(is_valid_telegram_secret(&s1));
+    }
+
+    #[test]
+    fn test_resolve_shortlink_base_url_defaults_to_thegioisieusale() {
+        assert_eq!(
+            resolve_shortlink_base_url(None),
+            "https://thegioisieusale.click"
+        );
+        assert_eq!(
+            resolve_shortlink_base_url(Some("https://go.example.com/".to_string())),
+            "https://go.example.com"
+        );
+        assert_eq!(
+            resolve_shortlink_base_url(Some("khong-hop-le".to_string())),
+            "https://thegioisieusale.click"
+        );
     }
 }

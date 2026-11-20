@@ -2691,7 +2691,7 @@ fn render_shopee_card(
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-gray-400 mb-1">Tên Miền Bọc Link Riêng / Cloudflare Worker (Tùy chọn)</label>
-                        <input type="text" name="shortlink_base_url" value="{}" placeholder="VD: https://ten-worker.ten-ban.workers.dev (hoặc https://godeal.online)" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <input type="text" name="shortlink_base_url" value="{}" placeholder="Mặc định: https://thegioisieusale.click (hoặc URL Cloudflare Worker khác)" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
                         <label class="inline-flex items-center space-x-2 text-xs text-gray-300 mt-1.5">
                             <input type="checkbox" name="shortlink_mobile_only" value="1" {} class="rounded bg-gray-800 border-gray-600">
                             <span>🛡️ Chặn máy tính soi link bọc (Chỉ cho điện thoại mở giống godeal.online)</span>
