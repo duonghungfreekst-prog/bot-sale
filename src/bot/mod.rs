@@ -22,6 +22,8 @@ use crate::services::deal_parser::DealParser;
 
 pub type WebhookUpdateReceiver = mpsc::UnboundedReceiver<Result<Update, Infallible>>;
 
+const BOT_DISPLAY_NAME: &str = "Thế Giới Siêu Sale";
+
 /// Khởi chạy Telegram Bot (tự động chọn Webhook 24/7 trên Cloud hoặc Long Polling ở Local)
 pub async fn run_bot(
     config: Config,
@@ -45,6 +47,8 @@ pub async fn run_bot(
     } else {
         info!("✅ Đã đăng ký thành công Menu Commands với Telegram API!");
     }
+
+    sync_bot_display_name(&bot).await;
 
     let handler = dptree::entry()
         .branch(Update::filter_message().endpoint(handlers::handle_message))
@@ -103,6 +107,46 @@ pub async fn run_bot(
         .await;
 
     Ok(())
+}
+
+/// Đồng bộ tên hiển thị chính thức của Bot Telegram qua API (`setMyName`)
+async fn sync_bot_display_name(bot: &Bot) {
+    match bot.get_my_name().await {
+        Ok(current) if current.name.trim() == BOT_DISPLAY_NAME => {
+            info!("✅ Tên hiển thị Bot Telegram đã đồng bộ: {}", BOT_DISPLAY_NAME);
+        }
+        Ok(_) => {
+            if let Err(err) = bot.set_my_name().name(BOT_DISPLAY_NAME).send().await {
+                warn!("Không thể cập nhật tên Bot Telegram sang '{}': {}", BOT_DISPLAY_NAME, err);
+            } else {
+                info!("✅ Đã cập nhật tên hiển thị Bot Telegram thành: {}", BOT_DISPLAY_NAME);
+            }
+        }
+        Err(err) => {
+            warn!("Không thể đọc tên hiện tại của Bot Telegram: {}", err);
+            if let Err(set_err) = bot.set_my_name().name(BOT_DISPLAY_NAME).send().await {
+                warn!("Không thể cập nhật tên Bot Telegram sang '{}': {}", BOT_DISPLAY_NAME, set_err);
+            } else {
+                info!("✅ Đã cập nhật tên hiển thị Bot Telegram thành: {}", BOT_DISPLAY_NAME);
+            }
+        }
+    }
+
+    match bot.get_my_name().language_code("vi").send().await {
+        Ok(vi_name) => {
+            let trimmed = vi_name.name.trim();
+            if !trimmed.is_empty() && trimmed != BOT_DISPLAY_NAME {
+                if let Err(err) = bot.set_my_name().language_code("vi").name("").send().await {
+                    warn!("Không thể gỡ tên riêng tiếng Việt cũ của Bot Telegram: {}", err);
+                } else {
+                    info!("✅ Đã gỡ tên riêng tiếng Việt cũ để đồng bộ theo '{}'.", BOT_DISPLAY_NAME);
+                }
+            }
+        }
+        Err(err) => {
+            warn!("Không thể kiểm tra tên riêng tiếng Việt của Bot Telegram: {}", err);
+        }
+    }
 }
 
 /// Đăng ký Webhook với Telegram API (thử lại tối đa 3 lần khi mạng Cloud mới khởi động)

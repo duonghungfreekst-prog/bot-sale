@@ -73,7 +73,7 @@ pub async fn start_web_server(
     if let Some(tx) = ready_tx {
         let _ = tx.send(());
     }
-    info!("🚀 Web Admin Dashboard DealX đang chạy tại: http://{}", addr);
+    info!("🚀 Web Admin Dashboard Thế Giới Siêu Sale đang chạy tại: http://{}", addr);
 
     axum::serve(listener, app).await?;
     Ok(())
@@ -378,7 +378,7 @@ async fn handle_public_convert(
     };
 
     // Đảm bảo tài khoản khách Web (user_id = 0) tồn tại để thỏa khóa ngoại bảng clicks
-    let _ = Repository::get_or_create_user(&conn, 0, Some("web_guest"), "Khách Web DealX", None)
+    let _ = Repository::get_or_create_user(&conn, 0, Some("web_guest"), "Khách Web Thế Giới Siêu Sale", None)
         .await;
     let owned_aff = load_owned_aff_settings(&conn, &state.config).await;
     let _ = state
@@ -791,7 +791,7 @@ async fn render_public_home(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>DealX Vietnam — Tổng Hợp Mã Giảm Giá &amp; Gợi Ý Sản Phẩm Chính Hãng</title>
+    <title>Thế Giới Siêu Sale — Tổng Hợp Mã Giảm Giá &amp; Gợi Ý Sản Phẩm Chính Hãng</title>
     <meta name="description" content="Cổng tổng hợp mã giảm giá công khai theo từng ngành hàng từ Shopee, Tiki, Lazada, TikTok Shop giúp người mua tiết kiệm mỗi ngày.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&amp;family=Lexend:wght@600;700;800&amp;display=swap">
@@ -1006,8 +1006,8 @@ async fn render_public_home(
     <header class="site-header">
         <div class="container site-header__inner">
             <a class="brand" href="/">
-                <span class="brand__mark" aria-hidden="true">DX</span>
-                <span>DealX Vietnam</span>
+                <span class="brand__mark" aria-hidden="true">TG</span>
+                <span>Thế Giới Siêu Sale</span>
             </a>
             <nav class="nav" aria-label="Điều hướng chính">
                 <a class="nav__link" href="#uu-dai">Ưu đãi nổi bật</a>
@@ -1023,7 +1023,7 @@ async fn render_public_home(
             <span class="hero__eyebrow">Cập nhật tự động từ đối tác chính hãng</span>
             <h1 class="hero__title">Tổng hợp mã giảm giá &amp; gợi ý sản phẩm tiết kiệm mỗi ngày</h1>
             <p class="hero__subtitle">
-                DealX Vietnam tổng hợp các chương trình ưu đãi, mã giảm giá công khai theo từng gian hàng và ngành hàng từ Shopee, Tiki, Lazada, TikTok Shop và Alibaba giúp người mua dễ dàng so sánh và đặt hàng trực tiếp trên sàn.
+                Thế Giới Siêu Sale tổng hợp các chương trình ưu đãi, mã giảm giá công khai theo từng gian hàng và ngành hàng từ Shopee, Tiki, Lazada, TikTok Shop và Alibaba giúp người mua dễ dàng so sánh và đặt hàng trực tiếp trên sàn.
             </p>
             <div class="stats-bar">
                 <span>Đang hiển thị: <strong>{}</strong> / <strong>{}</strong> ưu đãi hoạt động</span>
@@ -1086,9 +1086,9 @@ async fn render_public_home(
 
     <footer id="chinh-sach" class="site-footer">
         <div class="container">
-            <p><strong>Tuyên bố minh bạch tiếp thị liên kết (Affiliate Disclosure):</strong> DealX Vietnam là website tổng hợp thông tin khuyến mãi độc lập, hoạt động theo quy chuẩn đối tác tiếp thị liên kết chính thức. Khi người dùng bấm vào liên kết ưu đãi và hoàn tất mua sắm tự nhiên trên sàn thương mại điện tử, nền tảng có thể nhận hoa hồng giới thiệu mà không làm tăng giá sản phẩm của người mua.</p>
+            <p><strong>Tuyên bố minh bạch tiếp thị liên kết (Affiliate Disclosure):</strong> Thế Giới Siêu Sale là website tổng hợp thông tin khuyến mãi độc lập, hoạt động theo quy chuẩn đối tác tiếp thị liên kết chính thức. Khi người dùng bấm vào liên kết ưu đãi và hoàn tất mua sắm tự nhiên trên sàn thương mại điện tử, nền tảng có thể nhận hoa hồng giới thiệu mà không làm tăng giá sản phẩm của người mua.</p>
             <div class="site-footer__links">
-                <span>DealX Vietnam © 2026</span>
+                <span>Thế Giới Siêu Sale © 2026</span>
                 <a href="https://t.me/{}" target="_blank" rel="noopener noreferrer">Kênh hỗ trợ Telegram</a>
             </div>
         </div>
@@ -1498,7 +1498,7 @@ async fn handle_shortlink_redirect(
 
 /// Health check cho Render Web Service
 async fn handle_health() -> (StatusCode, &'static str) {
-    (StatusCode::OK, "DealX Bot & Web Admin Healthy")
+    (StatusCode::OK, "The Gioi Sieu Sale Bot & Web Admin Healthy")
 }
 
 /// Trích xuất session token từ HTTP Cookie header
@@ -1577,7 +1577,7 @@ async fn handle_login_page(headers: HeaderMap, State(state): State<AppState>) ->
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Đăng Nhập Quản Trị - DealX Admin</title>
+    <title>Đăng Nhập Quản Trị - Thế Giới Siêu Sale Admin</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <style>
         body { background: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -1589,8 +1589,8 @@ async fn handle_login_page(headers: HeaderMap, State(state): State<AppState>) ->
             <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-yellow-500 to-red-500 text-white font-extrabold text-3xl shadow-lg mb-4">
                 ⚡
             </div>
-            <h1 class="text-2xl font-black tracking-wide text-white">DEALX ADMIN</h1>
-            <p class="text-sm text-gray-400 mt-1">Cổng Quản Trị Hệ Thống Săn Sale & Ép Giá</p>
+            <h1 class="text-2xl font-black tracking-wide text-white">THẾ GIỚI SIÊU SALE</h1>
+            <p class="text-sm text-gray-400 mt-1">Cổng Quản Trị Hệ Thống Săn Sale Đa Sàn</p>
         </div>
 
         <form method="POST" action="/admin/login" class="space-y-5">
@@ -2183,7 +2183,7 @@ async fn handle_dashboard(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DealX - Quản Trị Hệ Thống Săn Sale & Ép Giá</title>
+    <title>Thế Giới Siêu Sale - Quản Trị Hệ Thống Săn Sale</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <style>
         body {{ background: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
@@ -2198,7 +2198,7 @@ async fn handle_dashboard(
                     ⚡
                 </div>
                 <div>
-                    <h1 class="font-extrabold text-lg text-white leading-tight">DEALX DASHBOARD</h1>
+                    <h1 class="font-extrabold text-lg text-white leading-tight">THẾ GIỚI SIÊU SALE</h1>
                     <p class="text-xs text-gray-400">Quản Trị Bot Săn Sale Đa Sàn</p>
                 </div>
             </div>
@@ -2517,7 +2517,7 @@ async fn handle_dashboard(
     </main>
 
     <footer class="max-w-7xl mx-auto px-4 py-8 text-center text-xs text-gray-500 border-t border-gray-800/50 mt-12">
-        DealX Affiliate System · Bản Quyền 2026 · Vận hành bảo mật trên Rust + LibSQL
+        Thế Giới Siêu Sale Affiliate System · Bản Quyền 2026 · Vận hành bảo mật trên Rust + LibSQL
     </footer>
     <script src="/assets/home.js" defer></script>
 </body>
@@ -3374,6 +3374,8 @@ DongLoiThieuCot | 123
 
         assert!(html.contains(r#"<html lang="vi">"#));
         assert!(html.contains("vvipass_vip_bot"));
+        assert!(html.contains("Thế Giới Siêu Sale"));
+        assert!(!html.contains("DealX"));
         assert!(html.contains("action=\"/convert\""));
         assert!(html.contains("<form"));
         assert!(html.contains("Affiliate Disclosure"));
@@ -3692,6 +3694,7 @@ DongLoiThieuCot | 123
         assert_eq!(preview_resp.status().as_u16(), 200);
         let preview_body = preview_resp.text().await.unwrap();
         assert!(!preview_body.contains("DealX"));
+        assert!(!preview_body.contains("Thế Giới Siêu Sale"));
         assert!(!preview_body.contains("onrender.com"));
         assert!(!preview_body.contains("/admin"));
 

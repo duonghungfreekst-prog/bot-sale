@@ -30,7 +30,7 @@ pub fn main_menu_keyboard(bot_username: &str) -> InlineKeyboardMarkup {
             InlineKeyboardButton::callback("📖 Hướng Dẫn Áp Mã Thành Công 100%", "menu_guide"),
         ],
         vec![
-            InlineKeyboardButton::url("🚀 Chia Sẻ DealX Cho Bạn Bè", share_url),
+            InlineKeyboardButton::url("🚀 Chia Sẻ Thế Giới Siêu Sale Cho Bạn Bè", share_url),
         ],
     ])
 }

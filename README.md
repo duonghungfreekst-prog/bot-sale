@@ -1,6 +1,6 @@
-# 🚀 DealX - Bot Săn Mã Giảm Giá & Web Quản Trị Đa Sàn (Rust + LibSQL)
+# 🚀 Thế Giới Siêu Sale - Bot Săn Mã Giảm Giá & Web Quản Trị Đa Sàn (Rust + LibSQL)
 
-Hệ thống Bot Telegram săn sale đa sàn (**DealX - Trợ Lý Săn Mã & Ép Giá**) tích hợp **Web Admin Dashboard Quản Trị Tối Mật**, phân tích link sản phẩm đa sàn (Shopee, Lazada, Tiki, TikTok Shop) và tự động gắn mã giảm giá sâu 20% - 50%, voucher Video, Freeship, được phát triển 100% bằng **ngôn ngữ Rust** kết hợp cơ sở dữ liệu **LibSQL** (Turso) và framework web **Axum**.
+Hệ thống Bot Telegram săn sale đa sàn (**Thế Giới Siêu Sale**) tích hợp **Web Admin Dashboard Quản Trị Tối Mật**, phân tích link sản phẩm đa sàn (Shopee, Lazada, Tiki, TikTok Shop) và tự động gắn mã giảm giá sâu 20% - 50%, voucher Video, Freeship, được phát triển 100% bằng **ngôn ngữ Rust** kết hợp cơ sở dữ liệu **LibSQL** (Turso) và framework web **Axum**.
 
 ---
 

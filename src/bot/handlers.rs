@@ -24,7 +24,7 @@ pub enum Command {
     Start,
     #[command(description = "Xem hướng dẫn chi tiết cách áp mã giảm giá")]
     Help,
-    #[command(description = "Chia sẻ DealX cho bạn bè cùng săn sale")]
+    #[command(description = "Chia sẻ Thế Giới Siêu Sale cho bạn bè cùng săn sale")]
     Share,
     #[command(description = "Xem thống kê hoạt động bot (Dành cho Admin)")]
     Stats,
@@ -692,7 +692,7 @@ pub async fn handle_command(
                 .reply_markup(persistent_reply_keyboard())
                 .await;
 
-            let welcome = "⚡ <b>CHÀO MỪNG BẠN ĐẾN VỚI DEALX - TRỢ LÝ SĂN MÃ &amp; GẮN LINK</b> ⚡\n\n\
+            let welcome = "⚡ <b>CHÀO MỪNG BẠN ĐẾN VỚI THẾ GIỚI SIÊU SALE</b> ⚡\n\n\
                  🔥 <b>Mua hàng tiết kiệm hơn chỉ với 1 bước:</b>\n\
                  Chỉ cần <b>Dán trực tiếp link sản phẩm Shopee, Lazada, Tiki, TikTok Shop, Alibaba hoặc các sàn đối tác đã kích hoạt (FPT Shop, CellphoneS, Shein...)</b> vào khung chat này, bot sẽ tự phân tích sản phẩm/shop và gắn link mua kèm mã khớp riêng ngay cho bạn!\n\n\
                  👇 <i>Hãy dán thử 1 link sản phẩm vào đây ngay:</i>";
@@ -723,7 +723,7 @@ pub async fn handle_command(
             let share_link = format!("https://t.me/{}", config.bot_username);
 
             let share_html = format!(
-                "⚡ <b>CHIA SẺ DEALX CHO BẠN BÈ CÙNG SĂN SALE</b> ⚡\n\n\
+                "⚡ <b>CHIA SẺ THẾ GIỚI SIÊU SALE CHO BẠN BÈ CÙNG SĂN SALE</b> ⚡\n\n\
                  Giúp bạn bè mua sắm tiết kiệm mỗi ngày trên Shopee, Lazada, Tiki &amp; TikTok Shop!\n\n\
                  🔗 <b>Link bot:</b>\n\
                  <code>{}</code>\n\n\
@@ -805,7 +805,7 @@ pub async fn handle_callback(
                 .await?;
         }
         "menu_main" => {
-            bot.send_message(chat_id, "🏠 <b>MENU CHÍNH DEALX</b>")
+            bot.send_message(chat_id, "🏠 <b>MENU CHÍNH THẾ GIỚI SIÊU SALE</b>")
                 .parse_mode(ParseMode::Html)
                 .reply_markup(main_menu_keyboard(&config.bot_username))
                 .await?;
