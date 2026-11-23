@@ -6,8 +6,34 @@
 // Lưu ý: Trang gốc `/` hiển thị Trang Đích Bot Telegram 3D; các đường dẫn hệ thống (/admin, /convert, /health...) luôn trả 404.
 
 const ORIGIN_URL = "https://bot-sale.onrender.com";
+const ASSET_FALLBACK_BASE = "https://raw.githubusercontent.com/duonghungfreekst-prog/bot-sale/main/assets";
 const BOT_USERNAME = "vvipass_vip_bot";
 const BOT_DISPLAY_NAME = "Thế Giới Siêu Sale";
+
+const LANDING_JS = `(function () {
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  var stage = document.getElementById("stage3d");
+  if (!stage) return;
+  stage.addEventListener("pointermove", function (e) {
+    if (e.pointerType === "touch") return;
+    var r = stage.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    var px = (e.clientX - r.left) / r.width;
+    var py = (e.clientY - r.top) / r.height;
+    stage.classList.add("is-interacting");
+    stage.style.setProperty("--rx", ((0.5 - py) * 12).toFixed(2) + "deg");
+    stage.style.setProperty("--ry", ((px - 0.5) * 14).toFixed(2) + "deg");
+    stage.style.setProperty("--gx", (px * 100).toFixed(1) + "%");
+    stage.style.setProperty("--gy", (py * 100).toFixed(1) + "%");
+  });
+  stage.addEventListener("pointerleave", function () {
+    stage.classList.remove("is-interacting");
+    stage.style.setProperty("--rx", "0deg");
+    stage.style.setProperty("--ry", "0deg");
+    stage.style.setProperty("--gx", "50%");
+    stage.style.setProperty("--gy", "45%");
+  });
+})();`;
 
 function renderBotLandingHtml() {
   return `<!DOCTYPE html>
@@ -202,29 +228,6 @@ function renderBotLandingHtml() {
       gap: var(--space-6);
       align-items: center;
     }
-    .flash-pill {
-      position: relative;
-      overflow: hidden;
-      display: inline-flex;
-      align-items: center;
-      gap: var(--space-2);
-      font-size: 13px;
-      font-weight: 600;
-      color: #fed7aa;
-      background: rgba(249, 115, 22, 0.14);
-      border: 1px solid rgba(249, 115, 22, 0.42);
-      padding: 6px 14px;
-      border-radius: 999px;
-      margin-bottom: var(--space-4);
-    }
-    .flash-pill::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(105deg, transparent 25%, rgba(255, 255, 255, 0.24) 50%, transparent 75%);
-      transform: translateX(-100%);
-      animation: shimmer 4.5s infinite;
-    }
     h1 {
       margin: 0 0 var(--space-3);
       font-family: var(--font-display);
@@ -330,9 +333,12 @@ function renderBotLandingHtml() {
     }
     .chip-dot { width: 8px; height: 8px; border-radius: 50%; }
 
-    /* Sân khấu 3D thực thụ (perspective + preserve-3d + lớp nổi translateZ) */
+    /* Sân khấu 3D gọn gàng cân đối (perspective + preserve-3d + lớp nổi translateZ) */
     .stage-3d {
       position: relative;
+      max-width: 440px;
+      width: 100%;
+      margin: 0 auto;
       perspective: 1100px;
       padding: 14px 6px 26px;
     }
@@ -389,7 +395,7 @@ function renderBotLandingHtml() {
     .layer-ticket-3d {
       position: relative;
       z-index: 4;
-      margin: 0 0 -22px 10px;
+      margin: 0 0 -20px 10px;
       width: fit-content;
       display: inline-flex;
       align-items: center;
@@ -420,8 +426,8 @@ function renderBotLandingHtml() {
     .layer-cart-3d {
       display: none;
       position: absolute;
-      top: 52px;
-      right: -6px;
+      top: 14px;
+      right: 12px;
       z-index: 4;
       align-items: center;
       gap: 7px;
@@ -663,7 +669,6 @@ function renderBotLandingHtml() {
 
     <main class="hero-grid">
       <section>
-        <span class="flash-pill">⚡ Bắt mã tự động khung 0H · 9H · 12H · 15H · 20H</span>
         <h1>
           Trợ Lý Săn Mã
           <span class="grad-text">${BOT_DISPLAY_NAME}</span>
@@ -791,6 +796,43 @@ function renderBotLandingHtml() {
 </html>`;
 }
 
+async function serveEdgeAsset(request, path) {
+  if (path === "/assets/landing.js") {
+    return new Response(request.method === "HEAD" ? null : LANDING_JS, {
+      status: 200,
+      headers: {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "public, max-age=3600",
+        "x-content-type-options": "nosniff",
+      },
+    });
+  }
+
+  const fileName = path === "/assets/bot-logo.webp" ? "bot-logo.webp" : "bot-cart-3d.webp";
+  let assetResp = await fetch(`${ASSET_FALLBACK_BASE}/${fileName}`, {
+    cf: { cacheEverything: true, cacheTtl: 86400 },
+  }).catch(() => null);
+
+  if (!assetResp || !assetResp.ok) {
+    assetResp = await fetch(ORIGIN_URL.replace(/\/+$/, "") + path, {
+      headers: { "x-dealx-cloak": "1" },
+    }).catch(() => null);
+  }
+
+  if (!assetResp || !assetResp.ok) {
+    return new Response("Not Found", { status: 404 });
+  }
+
+  return new Response(request.method === "HEAD" ? null : assetResp.body, {
+    status: 200,
+    headers: {
+      "content-type": "image/webp",
+      "cache-control": "public, max-age=86400",
+      "x-content-type-options": "nosniff",
+    },
+  });
+}
+
 export default {
   async fetch(request) {
     const url = new URL(request.url);
@@ -813,18 +855,23 @@ export default {
       });
     }
 
-    // Chỉ cho phép GET/HEAD vào mã shortlink 6-12 ký tự (/{code}, /go/{code}) hoặc các asset công khai cần thiết
+    // Phục vụ tức thì 2 ảnh 3D WebP & hiệu ứng chuột 3D ngay tại Cloudflare Edge
+    if (
+      isAllowedMethod &&
+      (path === "/assets/landing.js" ||
+        path === "/assets/bot-logo.webp" ||
+        path === "/assets/bot-cart-3d.webp")
+    ) {
+      return serveEdgeAsset(request, path);
+    }
+
+    // Chỉ cho phép GET/HEAD vào mã shortlink 6-12 ký tự (/{code}, /go/{code}) hoặc /assets/bridge.js
     const isReserved = ["/health", "/convert", "/status", "/metrics", "/robots"].includes(path.toLowerCase());
     const isShortCode = !isReserved && /^\/(?:go\/)?[A-Za-z0-9]{6,12}$/.test(path);
-    const isLandingAsset = [
-      "/assets/bridge.js",
-      "/assets/bot-logo.webp",
-      "/assets/bot-cart-3d.webp",
-      "/assets/landing.js",
-    ].includes(path);
+    const isBridgeAsset = path === "/assets/bridge.js";
 
     // Mọi đường dẫn khác (/admin, /admin/login, /convert, /health, /assets/home.js...) -> 404 Not Found
-    if (!isAllowedMethod || (!isShortCode && !isLandingAsset)) {
+    if (!isAllowedMethod || (!isShortCode && !isBridgeAsset)) {
       return new Response("Not Found", {
         status: 404,
         headers: {

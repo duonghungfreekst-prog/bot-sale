@@ -3852,6 +3852,8 @@ DongLoiThieuCot | 123
         assert!(!landing_html.contains("/admin"));
         assert!(!landing_html.contains("onrender.com"));
         assert!(!landing_html.contains("DealX"));
+        assert!(!landing_html.contains("Bắt mã tự động khung 0H"));
+        assert!(!landing_html.contains("raw.githubusercontent.com"));
         assert!(landing_html.contains("/assets/bot-logo.webp"));
         assert!(landing_html.contains("/assets/bot-cart-3d.webp"));
         assert!(landing_html.contains("/assets/landing.js"));
