@@ -86,6 +86,9 @@ fn build_router(state: AppState) -> Router {
         .route("/convert", post(handle_public_convert).get(|| async { Redirect::to("/") }))
         .route("/assets/bridge.js", get(handle_bridge_js))
         .route("/assets/home.js", get(handle_home_js))
+        .route("/assets/bot-logo.webp", get(handle_bot_logo_webp))
+        .route("/assets/bot-cart-3d.webp", get(handle_bot_cart_3d_webp))
+        .route("/assets/landing.js", get(handle_landing_js))
         .route("/health", get(handle_health))
         .route("/telegram/webhook", post(handle_telegram_webhook))
         .route("/admin/login", get(handle_login_page).post(handle_login_submit))
@@ -218,7 +221,13 @@ fn is_allowed_shortlink_cloak_path(method: &axum::http::Method, path: &str) -> b
     if method != axum::http::Method::GET && method != axum::http::Method::HEAD {
         return false;
     }
-    if path == "/assets/bridge.js" {
+    if matches!(
+        path,
+        "/assets/bridge.js"
+            | "/assets/bot-logo.webp"
+            | "/assets/bot-cart-3d.webp"
+            | "/assets/landing.js"
+    ) {
         return true;
     }
     if matches!(
@@ -562,6 +571,58 @@ async fn handle_home_js() -> Response {
         HeaderValue::from_static("public, max-age=300"),
     );
     resp
+}
+
+const BOT_LOGO_WEBP: &[u8] = include_bytes!("../../assets/bot-logo.webp");
+const BOT_CART_3D_WEBP: &[u8] = include_bytes!("../../assets/bot-cart-3d.webp");
+
+fn serve_static_asset(body: &'static [u8], content_type: &'static str, max_age: u32) -> Response {
+    let mut resp = (StatusCode::OK, body).into_response();
+    resp.headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    if let Ok(cache_val) = HeaderValue::from_str(&format!("public, max-age={}", max_age)) {
+        resp.headers_mut().insert(header::CACHE_CONTROL, cache_val);
+    }
+    resp
+}
+
+/// Logo chính thức của Bot Thế Giới Siêu Sale (WebP tối ưu dung lượng)
+async fn handle_bot_logo_webp() -> Response {
+    serve_static_asset(BOT_LOGO_WEBP, "image/webp", 86400)
+}
+
+/// Ảnh minh họa 3D Bot đẩy xe hàng chứa kho mã giảm giá (WebP)
+async fn handle_bot_cart_3d_webp() -> Response {
+    serve_static_asset(BOT_CART_3D_WEBP, "image/webp", 86400)
+}
+
+/// Script ngoài tạo hiệu ứng xoay 3D & ánh sáng phản chiếu theo chuột cho Trang Đích Bot (CSP `script-src 'self'`)
+async fn handle_landing_js() -> Response {
+    let js = r#"(function () {
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    var stage = document.getElementById("stage3d");
+    if (!stage) return;
+    stage.addEventListener("pointermove", function (e) {
+        if (e.pointerType === "touch") return;
+        var r = stage.getBoundingClientRect();
+        if (!r.width || !r.height) return;
+        var px = (e.clientX - r.left) / r.width;
+        var py = (e.clientY - r.top) / r.height;
+        stage.classList.add("is-interacting");
+        stage.style.setProperty("--rx", ((0.5 - py) * 12).toFixed(2) + "deg");
+        stage.style.setProperty("--ry", ((px - 0.5) * 14).toFixed(2) + "deg");
+        stage.style.setProperty("--gx", (px * 100).toFixed(1) + "%");
+        stage.style.setProperty("--gy", (py * 100).toFixed(1) + "%");
+    });
+    stage.addEventListener("pointerleave", function () {
+        stage.classList.remove("is-interacting");
+        stage.style.setProperty("--rx", "0deg");
+        stage.style.setProperty("--ry", "0deg");
+        stage.style.setProperty("--gx", "50%");
+        stage.style.setProperty("--gy", "45%");
+    });
+})();"#;
+    serve_static_asset(js.as_bytes(), "application/javascript; charset=utf-8", 3600)
 }
 
 async fn render_public_home(
@@ -3581,6 +3642,18 @@ DongLoiThieuCot | 123
             &axum::http::Method::HEAD,
             "/assets/bridge.js"
         ));
+        assert!(is_allowed_shortlink_cloak_path(
+            &axum::http::Method::GET,
+            "/assets/bot-logo.webp"
+        ));
+        assert!(is_allowed_shortlink_cloak_path(
+            &axum::http::Method::GET,
+            "/assets/bot-cart-3d.webp"
+        ));
+        assert!(is_allowed_shortlink_cloak_path(
+            &axum::http::Method::GET,
+            "/assets/landing.js"
+        ));
         assert!(!is_allowed_shortlink_cloak_path(
             &axum::http::Method::GET,
             "/"
@@ -3779,6 +3852,11 @@ DongLoiThieuCot | 123
         assert!(!landing_html.contains("/admin"));
         assert!(!landing_html.contains("onrender.com"));
         assert!(!landing_html.contains("DealX"));
+        assert!(landing_html.contains("/assets/bot-logo.webp"));
+        assert!(landing_html.contains("/assets/bot-cart-3d.webp"));
+        assert!(landing_html.contains("/assets/landing.js"));
+        assert!(landing_html.contains("perspective"));
+        assert!(landing_html.contains("preserve-3d"));
         assert!(landing_html.contains("@keyframes"));
         assert!(landing_html.contains("prefers-reduced-motion"));
     }
