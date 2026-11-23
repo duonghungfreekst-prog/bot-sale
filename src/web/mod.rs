@@ -3779,5 +3779,7 @@ DongLoiThieuCot | 123
         assert!(!landing_html.contains("/admin"));
         assert!(!landing_html.contains("onrender.com"));
         assert!(!landing_html.contains("DealX"));
+        assert!(landing_html.contains("@keyframes"));
+        assert!(landing_html.contains("prefers-reduced-motion"));
     }
 }
