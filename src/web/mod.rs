@@ -1963,6 +1963,7 @@ async fn handle_dashboard(
         shortlink_mobile_only,
         public_home_cloak,
         origin_base_for_worker,
+        &state.config.bot_username,
     );
     let order_alerts_card_html = render_order_alerts_card(&admin_telegram_id_val, &tracked_orders);
 
@@ -2614,6 +2615,7 @@ fn render_shopee_card(
     shortlink_mobile_only: bool,
     public_home_cloak: bool,
     origin_base_url: &str,
+    bot_username: &str,
 ) -> String {
     let status_badge = if !app_id.trim().is_empty() && !app_secret.trim().is_empty() {
         format!(
@@ -2646,10 +2648,17 @@ fn render_shopee_card(
     };
     let mobile_checked = if shortlink_mobile_only { "checked" } else { "" };
     let home_cloak_checked = if public_home_cloak { "checked" } else { "" };
-    let worker_code = CLOUDFLARE_WORKER_TEMPLATE.replace(
+    let mut worker_code = CLOUDFLARE_WORKER_TEMPLATE.replace(
         "https://bot-sale.onrender.com",
         origin_base_url.trim_end_matches('/'),
     );
+    let bot_clean = bot_username.trim().trim_start_matches('@');
+    if !bot_clean.is_empty() {
+        worker_code = worker_code.replace(
+            r#"const BOT_USERNAME = "vvipass_vip_bot";"#,
+            &format!(r#"const BOT_USERNAME = "{}";"#, bot_clean),
+        );
+    }
 
     format!(
         r##"<section class="bg-gray-900 border border-orange-500/30 rounded-2xl p-6 shadow-xl space-y-4">
@@ -2708,14 +2717,14 @@ fn render_shopee_card(
             </form>
             <details class="bg-gray-950/70 border border-gray-800 rounded-xl p-4">
                 <summary class="cursor-pointer text-xs font-bold text-orange-300 select-none">
-                    ☁️ Hướng dẫn tạo link bọc riêng 100% miễn phí bằng Cloudflare Worker (Che hoàn toàn web Render, vào / ra 404 như godeal.online)
+                    ☁️ Hướng dẫn tạo link bọc riêng 100% miễn phí bằng Cloudflare Worker (Che hoàn toàn web Render, trang chủ / hiện Trang Đích Bot Telegram)
                 </summary>
                 <div class="mt-3 space-y-3 text-xs text-gray-300">
                     <ol class="list-decimal list-inside space-y-1 text-gray-400">
                         <li>Vào <span class="text-white font-semibold">dash.cloudflare.com</span> (tài khoản miễn phí) → chọn <span class="text-white font-semibold">Workers &amp; Pages</span> → <span class="text-white font-semibold">Create Worker</span> → <span class="text-white font-semibold">Deploy</span> → <span class="text-white font-semibold">Edit code</span>.</li>
                         <li>Xóa hết code mẫu, dán toàn bộ đoạn code bên dưới vào rồi bấm <span class="text-white font-semibold">Deploy</span>.</li>
                         <li>Copy địa chỉ Worker (dạng <code class="text-orange-300">https://ten-worker.ten-ban.workers.dev</code>) dán vào ô <span class="text-white font-semibold">Tên Miền Bọc Link Riêng</span> ở trên và bấm Lưu.</li>
-                        <li>Từ đó link bot Telegram trả ra hoàn toàn dùng domain mới; mọi truy cập vào <code>/</code>, <code>/admin</code>, <code>/convert</code> trên domain mới đều trả <code>404 Not Found</code>!</li>
+                        <li>Từ đó link bot Telegram trả ra hoàn toàn dùng domain mới; trang chủ <code>/</code> hiển thị Trang Đích Bot Telegram riêng và mọi đường dẫn nội bộ (<code>/admin</code>, <code>/convert</code>, <code>/health</code>...) đều trả <code>404 Not Found</code>!</li>
                     </ol>
                     <textarea id="cf-worker-code" readonly rows="10" class="w-full bg-gray-900 border border-gray-800 rounded-xl p-3 text-green-300 font-mono text-xs focus:outline-none">{}</textarea>
                     <button type="button" class="js-copy-link px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white font-semibold rounded-xl text-xs transition" data-copy-target="cf-worker-code">
@@ -3748,5 +3757,27 @@ DongLoiThieuCot | 123
         assert_eq!(resp_login.status(), StatusCode::OK);
 
         let _ = std::fs::remove_file(&test_db_path);
+    }
+
+    #[test]
+    fn test_cloudflare_worker_template_has_bot_landing_and_blocks_admin() {
+        assert!(CLOUDFLARE_WORKER_TEMPLATE.contains(r#"path === "/""#));
+        assert!(CLOUDFLARE_WORKER_TEMPLATE.contains("renderBotLandingHtml()"));
+        assert!(CLOUDFLARE_WORKER_TEMPLATE.contains("https://t.me/"));
+        assert!(CLOUDFLARE_WORKER_TEMPLATE.contains("Thế Giới Siêu Sale"));
+        assert!(CLOUDFLARE_WORKER_TEMPLATE.contains("x-dealx-cloak"));
+
+        let html_start = CLOUDFLARE_WORKER_TEMPLATE
+            .find("<!DOCTYPE html>")
+            .expect("Phải có HTML trang đích bot trong cloudflare_worker.js");
+        let html_end = CLOUDFLARE_WORKER_TEMPLATE[html_start..]
+            .find("</html>")
+            .expect("Phải đóng thẻ </html>")
+            + html_start;
+        let landing_html = &CLOUDFLARE_WORKER_TEMPLATE[html_start..=html_end + 6];
+
+        assert!(!landing_html.contains("/admin"));
+        assert!(!landing_html.contains("onrender.com"));
+        assert!(!landing_html.contains("DealX"));
     }
 }
