@@ -129,6 +129,12 @@ async fn main() -> anyhow::Result<()> {
         accesstrade.clone(),
     );
 
+    // 1.7 Tự động quét và nhặt chữ ký số Shopee Facebook/Instagram Reels mỗi 30 phút
+    services::social_harvester::spawn_social_harvester_task(
+        db.clone(),
+        config.clone(),
+    );
+
     // 2. Kiểm tra xem token Telegram đã được cấu hình chưa
     if config.telegram_token.contains("DEMO_TOKEN") || config.telegram_token.trim().is_empty() {
         info!("-------------------------------------------------------");

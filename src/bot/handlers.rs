@@ -204,6 +204,24 @@ pub async fn handle_message(
             }
         };
 
+        // Nếu Quản trị viên gửi link chứa chữ ký mạng xã hội Shopee FB/Insta -> tự động nạp cấu hình hệ thống ngay
+        let is_admin = config.admin_telegram_id.map(|id| id == user_id).unwrap_or(false);
+        if is_admin {
+            if let Some(social_params) = crate::services::shopee_affiliate::extract_social_passthrough_params(text) {
+                let _ = Repository::set_setting(&conn, "shopee_social_params", &social_params).await;
+                let _ = bot
+                    .send_message(
+                        msg.chat.id,
+                        format!(
+                            "⚡ <b>[QUẢN TRỊ VIÊN]</b> Đã tự động cập nhật bộ tham số phiên Shopee FB/Insta mới:\n<code>{}</code>\n\n✅ Mọi link Shopee cấp cho khách từ giờ sẽ tự động gắn chữ ký này để mở khóa <b>Mã Facebook / Instagram 20% - 30%</b>!",
+                            escape_html(&social_params)
+                        ),
+                    )
+                    .parse_mode(ParseMode::Html)
+                    .await;
+            }
+        }
+
         let owned_aff = load_owned_aff_settings(&conn, &config).await;
         let approved_dynamic = parser
             .accesstrade()
