@@ -173,7 +173,7 @@ async fn security_headers_middleware(req: Request, next: Next) -> Response {
     headers.insert("x-xss-protection", HeaderValue::from_static("1; mode=block"));
     headers.insert(
         "content-security-policy",
-        HeaderValue::from_static("default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:"),
+        HeaderValue::from_static("default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https:;"),
     );
     res
 }
@@ -1644,16 +1644,38 @@ async fn handle_login_page(headers: HeaderMap, State(state): State<AppState>) ->
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             background-color: #080c14;
             background-image: radial-gradient(at 50% 0%, rgba(249, 115, 22, 0.15) 0px, transparent 60%);
             font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             color: #f8fafc;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
         }
         .card-surface {
             background: #0f172a;
             border: 1px solid #1e293b;
             box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7);
+            border-radius: 1.5rem;
+            width: 100%;
+            max-width: 28rem;
+            padding: 2.5rem;
+        }
+        img.login-logo {
+            width: 80px !important;
+            height: 80px !important;
+            min-width: 80px !important;
+            min-height: 80px !important;
+            max-width: 80px !important;
+            max-height: 80px !important;
+            border-radius: 9999px !important;
+            object-fit: cover !important;
+            display: block !important;
+            margin: 0 auto;
         }
     </style>
 </head>
@@ -1661,7 +1683,7 @@ async fn handle_login_page(headers: HeaderMap, State(state): State<AppState>) ->
     <div class="w-full max-w-md card-surface rounded-3xl p-8 sm:p-10">
         <div class="text-center mb-8">
             <div class="inline-block relative mb-4">
-                <img src="/assets/bot-logo.webp" alt="Logo Thế Giới Siêu Sale" class="w-20 h-20 rounded-full border-2 border-orange-500/80 shadow-2xl object-cover ring-4 ring-orange-500/20 mx-auto">
+                <img src="/assets/bot-logo.webp" alt="Logo Thế Giới Siêu Sale" style="width: 80px; height: 80px; min-width: 80px; min-height: 80px; max-width: 80px; max-height: 80px; border-radius: 9999px; object-fit: cover; display: block;" class="login-logo w-20 h-20 rounded-full border-2 border-orange-500/80 shadow-2xl object-cover ring-4 ring-orange-500/20 mx-auto">
             </div>
             <h1 class="text-2xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-orange-400 via-amber-300 to-yellow-400">THẾ GIỚI SIÊU SALE</h1>
             <p class="text-xs text-gray-400 mt-1 font-medium">Cổng Quản Trị Hệ Thống Săn Sale Đa Sàn</p>
@@ -2285,8 +2307,7 @@ async fn handle_dashboard(
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        .hidden {{ display: none !important; }}
-        .tab-pane.hidden {{ display: none !important; }}
+        *, *::before, *::after {{ box-sizing: border-box; }}
         body {{
             background-color: #080c14;
             background-image: 
@@ -2296,10 +2317,116 @@ async fn handle_dashboard(
             font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             color: #f8fafc;
             min-height: 100vh;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
         }}
-        .font-mono {{
-            font-family: 'JetBrains Mono', monospace;
+        .font-mono {{ font-family: 'JetBrains Mono', monospace; }}
+        .hidden {{ display: none !important; }}
+        .tab-pane.hidden {{ display: none !important; }}
+        .flex {{ display: flex; }}
+        .inline-flex {{ display: inline-flex; }}
+        .flex-col {{ flex-direction: column; }}
+        .flex-wrap {{ flex-wrap: wrap; }}
+        .flex-1 {{ flex: 1 1 0%; }}
+        .flex-shrink-0 {{ flex-shrink: 0; }}
+        .items-center {{ align-items: center; }}
+        .justify-between {{ justify-content: space-between; }}
+        .justify-center {{ justify-content: center; }}
+        .space-x-1 > * + * {{ margin-left: 0.25rem; }}
+        .space-x-1\.5 > * + * {{ margin-left: 0.375rem; }}
+        .space-x-2 > * + * {{ margin-left: 0.5rem; }}
+        .space-x-2\.5 > * + * {{ margin-left: 0.625rem; }}
+        .space-x-3 > * + * {{ margin-left: 0.75rem; }}
+        .space-x-3\.5 > * + * {{ margin-left: 0.875rem; }}
+        .space-y-1 > * + * {{ margin-top: 0.25rem; }}
+        .space-y-2 > * + * {{ margin-top: 0.5rem; }}
+        .space-y-2\.5 > * + * {{ margin-top: 0.625rem; }}
+        .space-y-3 > * + * {{ margin-top: 0.75rem; }}
+        .space-y-4 > * + * {{ margin-top: 1rem; }}
+        .space-y-5 > * + * {{ margin-top: 1.25rem; }}
+        .space-y-6 > * + * {{ margin-top: 1.5rem; }}
+        .gap-2 {{ gap: 0.5rem; }}
+        .gap-2\.5 {{ gap: 0.625rem; }}
+        .gap-3 {{ gap: 0.75rem; }}
+        .gap-4 {{ gap: 1rem; }}
+        .gap-5 {{ gap: 1.25rem; }}
+        .gap-6 {{ gap: 1.5rem; }}
+        .grid {{ display: grid; }}
+        .grid-cols-1 {{ grid-template-columns: repeat(1, minmax(0, 1fr)); }}
+        @media (min-width: 640px) {{
+            .sm\:grid-cols-2 {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+            .sm\:flex {{ display: flex; }}
         }}
+        @media (min-width: 768px) {{
+            .md\:inline-flex {{ display: inline-flex; }}
+        }}
+        @media (min-width: 1024px) {{
+            .lg\:grid-cols-2 {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+            .lg\:grid-cols-3 {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+            .lg\:grid-cols-4 {{ grid-template-columns: repeat(4, minmax(0, 1fr)); }}
+            .lg\:col-span-2 {{ grid-column: span 2 / span 2; }}
+        }}
+        .w-full {{ width: 100%; }}
+        .max-w-7xl {{ max-width: 80rem; }}
+        .mx-auto {{ margin-left: auto; margin-right: auto; }}
+        .min-h-screen {{ min-height: 100vh; }}
+        .min-w-52 {{ min-width: 13rem; }}
+        .w-11 {{ width: 2.75rem !important; min-width: 2.75rem; }}
+        .h-11 {{ height: 2.75rem !important; min-height: 2.75rem; }}
+        .w-12 {{ width: 3rem !important; min-width: 3rem; }}
+        .h-12 {{ height: 3rem !important; min-height: 3rem; }}
+        .w-8 {{ width: 2rem !important; min-width: 2rem; }}
+        .h-8 {{ height: 2rem !important; min-height: 2rem; }}
+        .w-3 {{ width: 0.75rem; }}
+        .h-3 {{ height: 0.75rem; }}
+        .w-2 {{ width: 0.5rem; }}
+        .h-2 {{ height: 0.5rem; }}
+        .px-2 {{ padding-left: 0.5rem; padding-right: 0.5rem; }}
+        .px-2\.5 {{ padding-left: 0.625rem; padding-right: 0.625rem; }}
+        .px-3 {{ padding-left: 0.75rem; padding-right: 0.75rem; }}
+        .px-3\.5 {{ padding-left: 0.875rem; padding-right: 0.875rem; }}
+        .px-4 {{ padding-left: 1rem; padding-right: 1rem; }}
+        .px-5 {{ padding-left: 1.25rem; padding-right: 1.25rem; }}
+        .px-6 {{ padding-left: 1.5rem; padding-right: 1.5rem; }}
+        .py-0\.5 {{ padding-top: 0.125rem; padding-bottom: 0.125rem; }}
+        .py-1 {{ padding-top: 0.25rem; padding-bottom: 0.25rem; }}
+        .py-1\.5 {{ padding-top: 0.375rem; padding-bottom: 0.375rem; }}
+        .py-2 {{ padding-top: 0.5rem; padding-bottom: 0.5rem; }}
+        .py-2\.5 {{ padding-top: 0.625rem; padding-bottom: 0.625rem; }}
+        .py-3 {{ padding-top: 0.75rem; padding-bottom: 0.75rem; }}
+        .py-3\.5 {{ padding-top: 0.875rem; padding-bottom: 0.875rem; }}
+        .py-4 {{ padding-top: 1rem; padding-bottom: 1rem; }}
+        .py-6 {{ padding-top: 1.5rem; padding-bottom: 1.5rem; }}
+        .py-8 {{ padding-top: 2rem; padding-bottom: 2rem; }}
+        .p-2\.5 {{ padding: 0.625rem; }}
+        .p-3 {{ padding: 0.75rem; }}
+        .p-4 {{ padding: 1rem; }}
+        .p-5 {{ padding: 1.25rem; }}
+        .p-6 {{ padding: 1.5rem; }}
+        .mb-1 {{ margin-bottom: 0.25rem; }}
+        .mb-2 {{ margin-bottom: 0.5rem; }}
+        .mb-4 {{ margin-bottom: 1rem; }}
+        .mt-0\.5 {{ margin-top: 0.125rem; }}
+        .mt-1 {{ margin-top: 0.25rem; }}
+        .mt-2 {{ margin-top: 0.5rem; }}
+        .mt-3 {{ margin-top: 0.75rem; }}
+        .mt-12 {{ margin-top: 3rem; }}
+        .pt-1 {{ padding-top: 0.25rem; }}
+        .pt-2 {{ padding-top: 0.5rem; }}
+        .pb-4 {{ padding-bottom: 1rem; }}
+        .rounded {{ border-radius: 0.25rem; }}
+        .rounded-md {{ border-radius: 0.375rem; }}
+        .rounded-lg {{ border-radius: 0.5rem; }}
+        .rounded-xl {{ border-radius: 0.75rem; }}
+        .rounded-2xl {{ border-radius: 1rem; }}
+        .rounded-3xl {{ border-radius: 1.5rem; }}
+        .rounded-full {{ border-radius: 9999px; }}
+        .border {{ border: 1px solid #1e293b; }}
+        .border-2 {{ border: 2px solid #f97316; }}
+        .border-b {{ border-bottom: 1px solid rgba(31, 41, 55, 0.8); }}
+        .border-t {{ border-top: 1px solid rgba(31, 41, 55, 0.8); }}
         .card-surface {{
             background: #0f172a;
             border: 1px solid #1e293b;
@@ -2337,6 +2464,93 @@ async fn handle_dashboard(
             font-weight: 700 !important;
             box-shadow: 0 4px 14px rgba(249, 115, 22, 0.35) !important;
         }}
+        .text-white {{ color: #ffffff; }}
+        .text-gray-100 {{ color: #f3f4f6; }}
+        .text-gray-200 {{ color: #e5e7eb; }}
+        .text-gray-300 {{ color: #d1d5db; }}
+        .text-gray-400 {{ color: #9ca3af; }}
+        .text-gray-500 {{ color: #6b7280; }}
+        .text-gray-700 {{ color: #374151; }}
+        .text-orange-300 {{ color: #fdba74; }}
+        .text-orange-400 {{ color: #fb923c; }}
+        .text-amber-200 {{ color: #fde68a; }}
+        .text-amber-300 {{ color: #fcd34d; }}
+        .text-amber-400 {{ color: #fbbf24; }}
+        .text-yellow-300 {{ color: #fde047; }}
+        .text-yellow-400 {{ color: #facc15; }}
+        .text-green-300 {{ color: #86efac; }}
+        .text-green-400 {{ color: #4ade80; }}
+        .text-cyan-300 {{ color: #67e8f9; }}
+        .text-cyan-400 {{ color: #22d3ee; }}
+        .text-purple-300 {{ color: #d8b4fe; }}
+        .text-purple-400 {{ color: #c084fc; }}
+        .text-pink-300 {{ color: #f9a8d4; }}
+        .text-pink-400 {{ color: #f472b6; }}
+        .text-red-300 {{ color: #fca5a5; }}
+        .text-red-400 {{ color: #f87171; }}
+        .text-blue-200 {{ color: #bfdbfe; }}
+        .text-blue-400 {{ color: #60a5fa; }}
+        .text-\[11px\] {{ font-size: 11px; line-height: 1.25rem; }}
+        .text-xs {{ font-size: 0.75rem; line-height: 1rem; }}
+        .text-sm {{ font-size: 0.875rem; line-height: 1.25rem; }}
+        .text-base {{ font-size: 1rem; line-height: 1.5rem; }}
+        .text-lg {{ font-size: 1.125rem; line-height: 1.75rem; }}
+        .text-2xl {{ font-size: 1.5rem; line-height: 2rem; }}
+        .text-3xl {{ font-size: 1.875rem; line-height: 2.25rem; }}
+        .font-medium {{ font-weight: 500; }}
+        .font-semibold {{ font-weight: 600; }}
+        .font-bold {{ font-weight: 700; }}
+        .font-extrabold {{ font-weight: 800; }}
+        .font-black {{ font-weight: 900; }}
+        .uppercase {{ text-transform: uppercase; }}
+        .tracking-wider {{ letter-spacing: 0.05em; }}
+        .tracking-tight {{ letter-spacing: -0.025em; }}
+        .text-left {{ text-align: left; }}
+        .text-center {{ text-align: center; }}
+        .truncate {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+        .max-w-\[240px\] {{ max-width: 240px; }}
+        .max-w-\[200px\] {{ max-width: 200px; }}
+        table {{ border-collapse: collapse; width: 100%; }}
+        th, td {{ padding: 0.625rem 0.75rem; }}
+        input, select, textarea, button {{ font-family: inherit; }}
+        input[type="text"], input[type="password"], input[type="url"], input[type="number"], select, textarea {{
+            background: rgba(30, 41, 59, 0.9);
+            border: 1px solid #374151;
+            border-radius: 0.75rem;
+            color: #ffffff;
+            padding: 0.5rem 0.75rem;
+            outline: none;
+            width: 100%;
+        }}
+        input:focus, select:focus, textarea:focus {{
+            border-color: #f59e0b;
+            box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
+        }}
+        button {{ cursor: pointer; }}
+        a {{ color: inherit; text-decoration: none; }}
+        .sticky {{ position: sticky; }}
+        .top-0 {{ top: 0; }}
+        .top-16 {{ top: 4rem; }}
+        .z-40 {{ z-index: 40; }}
+        .z-50 {{ z-index: 50; }}
+        .relative {{ position: relative; }}
+        .absolute {{ position: absolute; }}
+        .bottom-0 {{ bottom: 0; }}
+        .right-0 {{ right: 0; }}
+        .backdrop-blur-2xl, .backdrop-blur-lg {{ backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }}
+        .overflow-x-auto {{ overflow-x: auto; }}
+        .overflow-hidden {{ overflow: hidden; }}
+        img.nav-logo {{
+            width: 44px !important;
+            height: 44px !important;
+            min-width: 44px !important;
+            min-height: 44px !important;
+            max-width: 44px !important;
+            max-height: 44px !important;
+            border-radius: 9999px !important;
+            object-fit: cover !important;
+            display: block !important;
+        }}
         ::-webkit-scrollbar {{
             width: 6px;
             height: 6px;
@@ -2358,8 +2572,8 @@ async fn handle_dashboard(
     <header class="border-b border-gray-800/80 bg-gray-950/80 backdrop-blur-2xl sticky top-0 z-50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between">
             <div class="flex items-center space-x-3.5">
-                <div class="relative">
-                    <img src="/assets/bot-logo.webp" alt="Logo Thế Giới Siêu Sale" class="w-11 h-11 rounded-full border-2 border-orange-500 shadow-xl object-cover ring-2 ring-orange-500/30">
+                <div class="relative" style="width: 44px; height: 44px; min-width: 44px; min-height: 44px;">
+                    <img src="/assets/bot-logo.webp" alt="Logo Thế Giới Siêu Sale" style="width: 44px; height: 44px; min-width: 44px; min-height: 44px; max-width: 44px; max-height: 44px; border-radius: 9999px; object-fit: cover; display: block;" class="nav-logo w-11 h-11 rounded-full border-2 border-orange-500 shadow-xl object-cover ring-2 ring-orange-500/30">
                     <span class="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-green-500 border-2 border-gray-950"></span>
                 </div>
                 <div>
