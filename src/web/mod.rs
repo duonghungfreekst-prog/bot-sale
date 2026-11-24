@@ -1641,42 +1641,52 @@ async fn handle_login_page(headers: HeaderMap, State(state): State<AppState>) ->
     <title>Đăng Nhập Quản Trị - Thế Giới Siêu Sale Admin</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <style>
-        body { background: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body {
+            background: radial-gradient(circle at 50% 0%, #151d30 0%, #080c14 60%, #05080f 100%);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: #f3f4f6;
+        }
+        .card-surface {
+            background: linear-gradient(180deg, rgba(23, 32, 51, 0.75) 0%, rgba(15, 23, 42, 0.85) 100%);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7);
+        }
     </style>
 </head>
 <body class="flex items-center justify-center min-h-screen text-gray-100 p-4">
-    <div class="w-full max-w-md bg-gray-900 border border-gray-800 rounded-2xl shadow-2xl p-8 backdrop-blur-lg">
+    <div class="w-full max-w-md card-surface rounded-3xl p-8 sm:p-10">
         <div class="text-center mb-8">
-            <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-yellow-500 to-red-500 text-white font-extrabold text-3xl shadow-lg mb-4">
-                ⚡
+            <div class="inline-block relative mb-4">
+                <img src="/assets/bot-logo.webp" alt="Logo Thế Giới Siêu Sale" class="w-20 h-20 rounded-full border-2 border-orange-500/80 shadow-2xl object-cover ring-4 ring-orange-500/20 mx-auto">
             </div>
-            <h1 class="text-2xl font-black tracking-wide text-white">THẾ GIỚI SIÊU SALE</h1>
-            <p class="text-sm text-gray-400 mt-1">Cổng Quản Trị Hệ Thống Săn Sale Đa Sàn</p>
+            <h1 class="text-2xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-orange-400 via-amber-300 to-yellow-400">THẾ GIỚI SIÊU SALE</h1>
+            <p class="text-xs text-gray-400 mt-1 font-medium">Cổng Quản Trị Hệ Thống Săn Sale Đa Sàn</p>
         </div>
 
         <form method="POST" action="/admin/login" class="space-y-5">
             <div>
                 <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Tài khoản Quản Trị</label>
                 <input type="text" name="username" required autocomplete="username"
-                    class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition"
+                    class="w-full px-4 py-3 bg-gray-900/80 border border-gray-700/80 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition"
                     placeholder="Nhập tên đăng nhập admin...">
             </div>
 
             <div>
                 <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Mật khẩu</label>
                 <input type="password" name="password" required autocomplete="current-password"
-                    class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition"
+                    class="w-full px-4 py-3 bg-gray-900/80 border border-gray-700/80 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition"
                     placeholder="Nhập mật khẩu quản trị...">
             </div>
 
             <button type="submit"
-                class="w-full py-3.5 px-4 bg-gradient-to-r from-yellow-500 via-orange-500 to-red-500 hover:from-yellow-600 hover:to-red-600 font-bold rounded-xl text-white shadow-lg shadow-orange-500/30 transform active:scale-95 transition duration-150">
-                Đăng Nhập Hệ Thống
+                class="w-full py-3.5 px-4 bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500 hover:from-orange-600 hover:to-yellow-600 font-bold rounded-xl text-gray-950 shadow-lg shadow-orange-500/25 transform active:scale-95 transition duration-150">
+                Đăng Nhập Quản Trị
             </button>
         </form>
 
-        <div class="mt-8 pt-6 border-t border-gray-800 text-center">
-            <div class="inline-flex items-center text-xs text-gray-500 space-x-1">
+        <div class="mt-8 pt-6 border-t border-gray-800/80 text-center">
+            <div class="inline-flex items-center text-xs text-gray-500 space-x-1.5">
                 <span>🛡️</span>
                 <span>Bảo mật 1 tài khoản Admin duy nhất · Đăng ký bị vô hiệu hoá</span>
             </div>
@@ -1838,12 +1848,12 @@ async fn handle_logout(State(state): State<AppState>, headers: HeaderMap) -> Res
     response
 }
 
-fn render_platform_status(label: &str, matched: &Option<(String, String)>, manual_id: &str) -> String {
+fn render_platform_status(label: &str, matched: &Option<(String, String)>, manual_id: &str, backup_note: Option<&str>) -> String {
     if !manual_id.trim().is_empty() {
         return format!(
-            "<div class=\"flex items-center justify-between py-1.5 border-b border-gray-800/60\">\
-                <span class=\"text-gray-300\">{}</span>\
-                <span class=\"text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded-md font-mono\">🟢 Thủ công (ID: {})</span>\
+            "<div class=\"flex items-center justify-between p-2 rounded-xl bg-gray-900/60 border border-gray-800/80\">\
+                <span class=\"text-xs font-semibold text-gray-200\">{}</span>\
+                <span class=\"text-xs px-2.5 py-1 bg-green-500/20 text-green-400 border border-green-500/30 rounded-lg font-mono font-bold\">🟢 Thủ công (ID: {})</span>\
              </div>",
             label,
             escape_html(manual_id.trim())
@@ -1851,20 +1861,33 @@ fn render_platform_status(label: &str, matched: &Option<(String, String)>, manua
     }
     match matched {
         Some((id, _)) => format!(
-            "<div class=\"flex items-center justify-between py-1.5 border-b border-gray-800/60\">\
-                <span class=\"text-gray-300\">{}</span>\
-                <span class=\"text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded-md font-mono\">🟢 Đã duyệt (ID: {})</span>\
+            "<div class=\"flex items-center justify-between p-2 rounded-xl bg-gray-900/60 border border-gray-800/80\">\
+                <span class=\"text-xs font-semibold text-gray-200\">{}</span>\
+                <span class=\"text-xs px-2.5 py-1 bg-green-500/20 text-green-400 border border-green-500/30 rounded-lg font-mono font-bold\">🟢 Đã duyệt (ID: {})</span>\
              </div>",
             label,
             escape_html(id)
         ),
-        None => format!(
-            "<div class=\"flex items-center justify-between py-1.5 border-b border-gray-800/60\">\
-                <span class=\"text-gray-300\">{}</span>\
-                <span class=\"text-xs px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded-md\">🟡 Chưa duyệt trên AccessTrade</span>\
-             </div>",
-            label
-        ),
+        None => {
+            if let Some(note) = backup_note {
+                format!(
+                    "<div class=\"flex items-center justify-between p-2 rounded-xl bg-gray-900/60 border border-gray-800/80\">\
+                        <span class=\"text-xs font-semibold text-gray-200\">{}</span>\
+                        <span class=\"text-xs px-2.5 py-1 bg-blue-500/20 text-blue-300 border border-blue-500/30 rounded-lg font-semibold\">🔵 {}</span>\
+                     </div>",
+                    label,
+                    escape_html(note)
+                )
+            } else {
+                format!(
+                    "<div class=\"flex items-center justify-between p-2 rounded-xl bg-gray-900/60 border border-gray-800/80\">\
+                        <span class=\"text-xs font-semibold text-gray-200\">{}</span>\
+                        <span class=\"text-xs px-2.5 py-1 bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 rounded-lg font-semibold\">🟡 Chưa duyệt AT</span>\
+                     </div>",
+                    label
+                )
+            }
+        }
     }
 }
 
@@ -2052,13 +2075,19 @@ async fn handle_dashboard(
                         labels.join(", ")
                     )
                 };
+                let has_shopee_direct = !shopee_affiliate_id.trim().is_empty() || state.config.shopee_affiliate_id.is_some();
+                let shopee_backup_note = if has_shopee_direct {
+                    Some("Shopee Chính Chủ (100% Hoạt Động)")
+                } else {
+                    None
+                };
                 let rows = format!(
-                    "{}{}{}{}{}{}",
-                    render_platform_status("🟠 Shopee", &approved.shopee, &camp_shopee),
-                    render_platform_status("🔵 Lazada", &approved.lazada, &camp_lazada),
-                    render_platform_status("🔹 Tiki", &approved.tiki, &camp_tiki),
-                    render_platform_status("🎵 TikTok Shop", &approved.tiktok, &camp_tiktok),
-                    render_platform_status("🌐 Alibaba", &approved.alibaba, ""),
+                    "<div class=\"grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1\">{}{}{}{}{}</div>{}",
+                    render_platform_status("🟠 Shopee", &approved.shopee, &camp_shopee, shopee_backup_note),
+                    render_platform_status("🔵 Lazada", &approved.lazada, &camp_lazada, Some("Deeplink Template Sẵn Sàng")),
+                    render_platform_status("🔹 Tiki", &approved.tiki, &camp_tiki, None),
+                    render_platform_status("🎵 TikTok Shop", &approved.tiktok, &camp_tiktok, None),
+                    render_platform_status("🌐 Alibaba", &approved.alibaba, "", None),
                     dyn_line,
                 );
                 approved_opt = Some(approved);
@@ -2248,33 +2277,53 @@ async fn handle_dashboard(
     <title>Thế Giới Siêu Sale - Quản Trị Hệ Thống Săn Sale</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <style>
-        body {{ background: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
+        body {{
+            background: radial-gradient(circle at 50% 0%, #151d30 0%, #080c14 60%, #05080f 100%);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: #f3f4f6;
+        }}
+        .card-surface {{
+            background: linear-gradient(180deg, rgba(23, 32, 51, 0.75) 0%, rgba(15, 23, 42, 0.85) 100%);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+        }}
+        .card-surface:hover {{
+            border-color: rgba(255, 255, 255, 0.15);
+        }}
+        .glow-brand {{
+            box-shadow: 0 0 25px -5px rgba(249, 115, 22, 0.35);
+        }}
     </style>
 </head>
 <body class="text-gray-100 min-h-screen">
     <!-- Navbar -->
-    <header class="border-b border-gray-800 bg-gray-900/60 backdrop-blur sticky top-0 z-50">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-            <div class="flex items-center space-x-3">
-                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-yellow-500 to-orange-500 flex items-center justify-center font-black text-xl text-white shadow-lg">
-                    ⚡
-                </div>
+    <header class="border-b border-gray-800/80 bg-gray-950/70 backdrop-blur-xl sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-18 py-3 flex items-center justify-between">
+            <div class="flex items-center space-x-3.5">
+                <img src="/assets/bot-logo.webp" alt="Logo Thế Giới Siêu Sale" class="w-11 h-11 rounded-full border-2 border-orange-500/80 shadow-lg object-cover ring-2 ring-orange-500/20">
                 <div>
-                    <h1 class="font-extrabold text-lg text-white leading-tight">THẾ GIỚI SIÊU SALE</h1>
-                    <p class="text-xs text-gray-400">Quản Trị Bot Săn Sale Đa Sàn</p>
+                    <div class="flex items-center space-x-2">
+                        <h1 class="font-black text-lg text-transparent bg-clip-text bg-gradient-to-r from-orange-400 via-amber-300 to-yellow-400 tracking-tight">THẾ GIỚI SIÊU SALE</h1>
+                        <span class="px-2 py-0.5 bg-orange-500/20 text-orange-300 border border-orange-500/30 rounded-md text-xs font-semibold">Admin Hub</span>
+                    </div>
+                    <p class="text-xs text-gray-400">Trung Tâm Điều Hành &amp; Quản Trị Hệ Thống Săn Sale Đa Sàn</p>
                 </div>
             </div>
 
-            <div class="flex items-center space-x-4">
-                <div class="hidden sm:flex items-center space-x-2 text-xs text-gray-400 bg-gray-800 px-3 py-1.5 rounded-xl border border-gray-700">
+            <div class="flex items-center space-x-3">
+                <a href="/" target="_blank" rel="noopener noreferrer" class="hidden md:inline-flex items-center space-x-1.5 px-3 py-1.5 bg-gray-900 hover:bg-gray-800 border border-gray-700/80 rounded-xl text-xs font-semibold text-gray-300 transition">
+                    <span>🌐 Xem Trang Đích Bot 3D ↗</span>
+                </a>
+                <div class="hidden sm:flex items-center space-x-2 text-xs text-gray-400 bg-gray-900/90 px-3 py-1.5 rounded-xl border border-gray-800">
                     <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
                     <span>Admin: <strong class="text-white">{}</strong></span>
-                    <span class="text-gray-600">|</span>
+                    <span class="text-gray-700">|</span>
                     <span>Bot: <a href="https://t.me/{}" target="_blank" rel="noopener noreferrer" class="text-yellow-400 hover:underline">@{}</a></span>
-                    <span class="text-gray-600">|</span>
+                    <span class="text-gray-700">|</span>
                     {}
                 </div>
-                <a href="/admin/logout" class="px-3.5 py-1.5 bg-red-600/80 hover:bg-red-600 text-white rounded-xl text-xs font-semibold transition">
+                <a href="/admin/logout" class="px-3.5 py-1.5 bg-red-600/20 hover:bg-red-600/40 border border-red-500/40 text-red-300 rounded-xl text-xs font-semibold transition">
                     Đăng Xuất
                 </a>
             </div>
@@ -2286,47 +2335,93 @@ async fn handle_dashboard(
         {}
         <!-- Thống kê tổng quan & Đồng bộ Thời Gian Thực -->
         <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            <div class="bg-gray-900 border border-gray-800 p-5 rounded-2xl shadow-lg">
-                <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Người Dùng Telegram</div>
-                <div class="text-3xl font-black text-white">{}</div>
-                <div class="text-xs text-green-400 mt-2">👥 Khách đã tương tác bot</div>
-            </div>
-
-            <div class="bg-gray-900 border border-gray-800 p-5 rounded-2xl shadow-lg">
-                <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Tổng Lượt Dán Link</div>
-                <div class="text-3xl font-black text-yellow-400">{}</div>
-                <div class="text-xs space-y-0.5 mt-2 text-gray-400">
-                    <div>🟠 Shopee: <strong class="text-white">{}</strong> · 🔵 Lazada: <strong class="text-white">{}</strong></div>
-                    <div>🎵 TikTok: <strong class="text-white">{}</strong> · 🔹 Tiki: <strong class="text-white">{}</strong></div>
-                </div>
-            </div>
-
-            <div class="bg-gray-900 border border-orange-500/30 p-5 rounded-2xl shadow-lg">
-                <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Kho Mã Toàn Thị Trường</div>
-                <div class="text-3xl font-black text-orange-400">{}</div>
-                <div class="text-xs space-y-0.5 mt-2 text-gray-300">
-                    <div>🔥 &gt;=20%: <strong class="text-white">{}</strong> · 💸 Tiền/Khác: <strong class="text-white">{}</strong></div>
-                    <div>🟠 Shopee: <strong class="text-white">{}</strong> · 🔹 Tiki: <strong class="text-white">{}</strong> · 👑 Độc quyền: <strong class="text-purple-300">{}</strong></div>
-                </div>
-            </div>
-
-            <div class="bg-gray-900 border border-green-500/30 p-5 rounded-2xl shadow-lg flex flex-col justify-between">
+            <div class="card-surface p-5 rounded-2xl flex flex-col justify-between">
                 <div>
-                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Tự Động Quét Mỗi Phút</div>
-                    <div class="text-sm font-bold text-green-400">⏱️ Chu kỳ 60 giây / lần</div>
-                    <div class="text-xs text-gray-300 mt-1">Lần cuối: <strong class="text-white">{}</strong></div>
+                    <div class="flex items-center justify-between text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                        <span>Người Dùng Telegram</span>
+                        <span class="text-cyan-400 text-base">👥</span>
+                    </div>
+                    <div class="text-3xl font-black text-white tracking-tight">{}</div>
+                </div>
+                <div class="text-xs text-cyan-300/80 bg-cyan-950/40 border border-cyan-800/40 px-2.5 py-1 rounded-lg mt-3 font-medium">
+                    ✨ Khách thực tế đã tương tác bot
+                </div>
+            </div>
+
+            <div class="card-surface p-5 rounded-2xl flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                        <span>Tổng Lượt Dán Link</span>
+                        <span class="text-yellow-400 text-base">⚡</span>
+                    </div>
+                    <div class="text-3xl font-black text-yellow-400 tracking-tight">{}</div>
+                </div>
+                <div class="text-xs space-y-1 mt-3 bg-gray-950/40 border border-gray-800/80 p-2 rounded-xl text-gray-300">
+                    <div class="flex justify-between"><span>🟠 Shopee: <strong class="text-white font-mono">{}</strong></span><span>🔵 Lazada: <strong class="text-white font-mono">{}</strong></span></div>
+                    <div class="flex justify-between"><span>🎵 TikTok: <strong class="text-white font-mono">{}</strong></span><span>🔹 Tiki: <strong class="text-white font-mono">{}</strong></span></div>
+                </div>
+            </div>
+
+            <div class="card-surface p-5 rounded-2xl border-orange-500/30 flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                        <span>Kho Mã Thị Trường</span>
+                        <span class="text-orange-400 text-base">🔥</span>
+                    </div>
+                    <div class="text-3xl font-black text-orange-400 tracking-tight">{}</div>
+                </div>
+                <div class="text-xs space-y-1 mt-3 bg-gray-950/40 border border-gray-800/80 p-2 rounded-xl text-gray-300">
+                    <div class="flex justify-between"><span>🔥 Giảm ≥20%: <strong class="text-orange-300 font-mono">{}</strong></span><span>💸 Tiền/Khác: <strong class="text-white font-mono">{}</strong></span></div>
+                    <div class="flex justify-between"><span>🟠 Shopee: <strong class="text-white font-mono">{}</strong></span><span>🔹 Tiki: <strong class="text-white font-mono">{}</strong></span><span>👑 Độc quyền: <strong class="text-purple-300 font-mono">{}</strong></span></div>
+                </div>
+            </div>
+
+            <div class="card-surface p-5 rounded-2xl border-green-500/30 flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                        <span>Tự Động Quét Nền</span>
+                        <span class="flex h-2.5 w-2.5 relative">
+                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+                        </span>
+                    </div>
+                    <div class="text-sm font-bold text-green-400 flex items-center space-x-1.5">
+                        <span>⏱️ Chu kỳ 60 giây / lần</span>
+                    </div>
+                    <div class="text-xs text-gray-300 mt-1">Lần cuối: <strong class="text-white font-mono text-xs">{}</strong></div>
                 </div>
                 <div class="mt-3">
-                    <a href="/admin" class="inline-block px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-xs text-gray-200 font-semibold transition">
+                    <a href="/admin" class="inline-flex items-center justify-center w-full px-3 py-1.5 bg-gray-800/90 hover:bg-gray-700/90 border border-gray-700 rounded-xl text-xs text-gray-200 font-semibold transition shadow-sm">
                         🔄 Làm Mới Số Liệu Web
                     </a>
                 </div>
             </div>
         </section>
 
+        <!-- Widget Shopee Social Harvester (Mới) -->
+        <section class="bg-gradient-to-r from-purple-950/40 via-pink-950/30 to-orange-950/30 border border-purple-500/30 rounded-2xl p-5 shadow-xl flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center space-x-3.5">
+                <div class="w-11 h-11 rounded-2xl bg-gradient-to-tr from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center text-xl shadow-lg flex-shrink-0">
+                    🤖
+                </div>
+                <div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <h2 class="text-sm font-bold text-white uppercase tracking-wider">Shopee Social Harvester — Tự Động Bắt Chữ Ký FB &amp; IG Reels</h2>
+                        <span class="px-2.5 py-0.5 bg-green-500/20 text-green-300 border border-green-500/30 rounded-full text-xs font-semibold">🟢 Quét Ngầm 30 Phút/Lần</span>
+                    </div>
+                    <p class="text-xs text-gray-300 mt-1">
+                        Hệ thống tự động quét các nguồn deal lớn để trích xuất chữ ký số mạng xã hội (<code>sm_sig_id</code>, <code>channel_type=ig</code>) giúp 100% link Shopee do bot cấp cho khách mở khóa <b>Mã Giảm 20% - 30% độc quyền</b>!
+                    </p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-2 text-xs">
+                <span class="text-gray-300 bg-gray-900/90 border border-gray-800 px-3 py-2 rounded-xl font-mono text-xs shadow-sm">💡 Hoặc dán thẳng link FB/Insta vào bot Telegram @vvipass_vip_bot để nạp ngay!</span>
+            </div>
+        </section>
+
         <!-- Kết nối ACCESSTRADE API Full 4 Sàn -->
-        <section class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-5">
-            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-4">
+        <section class="card-surface rounded-2xl p-6 shadow-xl space-y-5">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800/80 pb-4">
                 <div>
                     <h2 class="text-lg font-bold text-white flex items-center space-x-2">
                         <span>🚀</span>
@@ -2401,29 +2496,29 @@ async fn handle_dashboard(
         {}
 
         <!-- Kho Mã Giảm Giá Toàn Thị Trường (Quét 100% không bỏ sót + Cập nhật mỗi 60 giây) -->
-        <section class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl space-y-4">
-            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-4">
+        <section class="card-surface rounded-2xl p-6 shadow-xl space-y-5">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800/80 pb-4">
                 <div>
                     <h2 class="text-lg font-bold text-white flex flex-wrap items-center gap-2">
                         <span>🔥</span>
                         <span>Kho Mã Giảm Giá Toàn Thị Trường (Cập Nhật Mỗi 60 Giây)</span>
-                        <span class="px-2.5 py-0.5 bg-orange-500/20 text-orange-300 rounded-lg text-xs font-semibold">{} mã đang sẵn ({} mã &gt;=20%)</span>
+                        <span class="px-2.5 py-0.5 bg-orange-500/20 text-orange-300 border border-orange-500/30 rounded-lg text-xs font-semibold">{} mã đang sẵn ({} mã &gt;=20%)</span>
                     </h2>
                     <p class="text-xs text-gray-400 mt-1">
                         Quét vét cạn từ 7 cổng ACCESSTRADE (mã %, giảm tiền K/VNĐ, mã hot, coupon Tiki/Shopee/Lazada/TikTok). Lần quét gần nhất: <strong class="text-green-400">{}</strong>.
                     </p>
                 </div>
                 <form method="POST" action="/admin/vouchers/sync">
-                    <button type="submit" class="px-4 py-2 bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/40 text-orange-300 rounded-xl text-xs font-semibold transition">
+                    <button type="submit" class="px-4 py-2 bg-gradient-to-r from-orange-500/30 to-amber-500/30 hover:from-orange-500/40 hover:to-amber-500/40 border border-orange-500/50 text-orange-200 rounded-xl text-xs font-semibold transition shadow-md">
                         🔄 Quét Sâu Toàn Bộ Ngay
                     </button>
                 </form>
             </div>
 
             <!-- Thanh tìm kiếm & lọc trên Web -->
-            <form method="GET" action="/admin" class="flex flex-wrap items-center gap-3 bg-gray-950/60 border border-gray-800 p-3 rounded-xl">
-                <input type="text" name="q" value="{}" placeholder="Tìm tên shop, mã code, mức giảm (VD: 35%, LANGXDKKP, Tiki)..." class="flex-1 min-w-52 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
-                <select name="plat" class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-xs">
+            <form method="GET" action="/admin" class="flex flex-wrap items-center gap-3 bg-gray-950/60 border border-gray-800/80 p-3 rounded-xl">
+                <input type="text" name="q" value="{}" placeholder="Tìm tên shop, mã code, mức giảm (VD: 35%, LANGXDKKP, Tiki)..." class="flex-1 min-w-52 bg-gray-800 border border-gray-700/80 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                <select name="plat" class="bg-gray-800 border border-gray-700/80 rounded-lg px-3 py-1.5 text-white text-xs">
                     <option value="all" {}>🌟 Tất Cả Sàn &amp; Loại</option>
                     <option value="pct20" {}>🔥 Giảm Sâu 20% - 35%+</option>
                     <option value="other" {}>💸 Giảm Tiền K/VNĐ &amp; Khác</option>
@@ -2436,9 +2531,9 @@ async fn handle_dashboard(
                 <span class="text-xs text-gray-400">Hiển thị <strong class="text-white">{}</strong> / <strong>{}</strong> mã khớp</span>
             </form>
 
-            <div class="overflow-x-auto">
+            <div class="overflow-x-auto rounded-xl border border-gray-800/80">
                 <table class="w-full text-left">
-                    <thead class="bg-gray-800/60 text-xs uppercase text-gray-400 border-b border-gray-800">
+                    <thead class="bg-gray-950/70 text-xs uppercase text-gray-400 border-b border-gray-800/80">
                         <tr>
                             <th class="py-2.5 px-3">Mức Giảm</th>
                             <th class="py-2.5 px-3">Sàn</th>
@@ -2448,7 +2543,7 @@ async fn handle_dashboard(
                             <th class="py-2.5 px-3">Link Áp Mã</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody class="divide-y divide-gray-800/60">
                         {}
                     </tbody>
                 </table>
@@ -2456,13 +2551,13 @@ async fn handle_dashboard(
         </section>
 
         <!-- Kho Mã Độc Quyền Hợp Tác (Cấp Riêng AM / MCN / Shop) -->
-        <section class="bg-gray-900 border border-purple-500/30 rounded-2xl p-6 shadow-xl space-y-5">
-            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-4">
+        <section class="card-surface border-purple-500/30 rounded-2xl p-6 shadow-xl space-y-5">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800/80 pb-4">
                 <div>
                     <h2 class="text-lg font-bold text-white flex items-center space-x-2">
                         <span>👑</span>
                         <span>Kho Mã Độc Quyền Hợp Tác (Cấp Riêng AM / MCN / Nhãn Hàng)</span>
-                        <span class="px-2.5 py-0.5 bg-purple-500/20 text-purple-300 rounded-lg text-xs font-semibold">{} mã đã lưu</span>
+                        <span class="px-2.5 py-0.5 bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded-lg text-xs font-semibold">{} mã đã lưu</span>
                     </h2>
                     <p class="text-xs text-gray-400 mt-1">
                         Dán hàng loạt mã độc quyền nhận được từ Account Manager ACCESSTRADE (MCN / Super Hoa Hồng) hoặc hợp tác trực tiếp với Shop. Các mã này luôn được <b>ưu tiên hàng đầu</b> trên Telegram Bot!
@@ -2472,33 +2567,33 @@ async fn handle_dashboard(
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <!-- Nhập hàng loạt -->
-                <form method="POST" action="/admin/deals/import" class="bg-gray-950/60 border border-gray-800 rounded-xl p-4 space-y-3">
+                <form method="POST" action="/admin/deals/import" class="bg-gray-950/60 border border-gray-800/80 rounded-xl p-4 space-y-3">
                     <div class="text-xs font-bold uppercase tracking-wider text-purple-300">⚡ Nhập Nhanh Hàng Loạt (Hỗ trợ dấu | hoặc copy thẳng từ Excel/Google Sheets)</div>
                     <p class="text-xs text-gray-400">
                         Mỗi dòng 1 mã theo thứ tự: <code>Sàn | Tên/Shop | Mã Code | Mức giảm | Link áp mã | Đơn tối thiểu</code>
                     </p>
-                    <textarea name="bulk_lines" rows="5" required placeholder="Shopee | Deal Độc Quyền MCN 30% | ATVIP30 | Giảm 30% tối đa 100k | https://shopee.vn/search?... | 200000" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
-                    <button type="submit" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-xl text-xs transition">
+                    <textarea name="bulk_lines" rows="5" required placeholder="Shopee | Deal Độc Quyền MCN 30% | ATVIP30 | Giảm 30% tối đa 100k | https://shopee.vn/search?... | 200000" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
+                    <button type="submit" class="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold rounded-xl text-xs transition shadow-md">
                         📥 Nhập Danh Sách Mã Độc Quyền
                     </button>
                 </form>
 
                 <!-- Thêm lẻ 1 mã -->
-                <form method="POST" action="/admin/deals/add" class="bg-gray-950/60 border border-gray-800 rounded-xl p-4 space-y-3">
+                <form method="POST" action="/admin/deals/add" class="bg-gray-950/60 border border-gray-800/80 rounded-xl p-4 space-y-3">
                     <div class="text-xs font-bold uppercase tracking-wider text-gray-300">➕ Thêm Lẻ 1 Mã Độc Quyền</div>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                        <select name="platform" class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-xs">
+                        <select name="platform" class="bg-gray-800 border border-gray-700/80 rounded-xl px-3 py-2 text-white text-xs">
                             <option value="Shopee">Shopee</option>
                             <option value="TikTok Shop">TikTok Shop</option>
                             <option value="Lazada">Lazada</option>
                             <option value="Tiki">Tiki</option>
                             <option value="Alibaba">Alibaba</option>
                         </select>
-                        <input type="text" name="coupon_code" required placeholder="Mã Code (VD: ATVIP35)" class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs">
-                        <input type="text" name="title" required placeholder="Tên Shop / Chương trình" class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-xs">
-                        <input type="text" name="discount_desc" required placeholder="Mức giảm (VD: Giảm 35% tối đa 120k)" class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-xs">
-                        <input type="url" name="deal_url" required placeholder="Link áp mã (https://...)" class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs">
-                        <input type="number" name="min_spend" min="0" step="1000" value="0" placeholder="Đơn tối thiểu (VNĐ)" class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs">
+                        <input type="text" name="coupon_code" required placeholder="Mã Code (VD: ATVIP35)" class="bg-gray-800 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs">
+                        <input type="text" name="title" required placeholder="Tên Shop / Chương trình" class="bg-gray-800 border border-gray-700/80 rounded-xl px-3 py-2 text-white text-xs">
+                        <input type="text" name="discount_desc" required placeholder="Mức giảm (VD: Giảm 35% tối đa 120k)" class="bg-gray-800 border border-gray-700/80 rounded-xl px-3 py-2 text-white text-xs">
+                        <input type="url" name="deal_url" required placeholder="Link áp mã (https://...)" class="bg-gray-800 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs">
+                        <input type="number" name="min_spend" min="0" step="1000" value="0" placeholder="Đơn tối thiểu (VNĐ)" class="bg-gray-800 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs">
                     </div>
                     <label class="inline-flex items-center space-x-2 text-xs text-gray-300">
                         <input type="checkbox" name="is_exclusive" value="1" checked class="rounded bg-gray-800 border-gray-600">
@@ -2512,9 +2607,9 @@ async fn handle_dashboard(
                 </form>
             </div>
 
-            <div class="overflow-x-auto">
+            <div class="overflow-x-auto rounded-xl border border-gray-800/80">
                 <table class="w-full text-left">
-                    <thead class="bg-gray-800/60 text-xs uppercase text-gray-400 border-b border-gray-800">
+                    <thead class="bg-gray-950/70 text-xs uppercase text-gray-400 border-b border-gray-800/80">
                         <tr>
                             <th class="py-2.5 px-3">Loại</th>
                             <th class="py-2.5 px-3">Sàn</th>
@@ -2524,7 +2619,7 @@ async fn handle_dashboard(
                             <th class="py-2.5 px-3">Hành Động</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody class="divide-y divide-gray-800/60">
                         {}
                     </tbody>
                 </table>
@@ -2532,7 +2627,7 @@ async fn handle_dashboard(
         </section>
 
         <!-- Cấu hình Link Tiếp Thị Dự Phòng (Deeplink Template) -->
-        <section class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+        <section class="card-surface rounded-2xl p-6 shadow-xl space-y-4">
             <h2 class="text-lg font-bold text-white mb-2 flex items-center space-x-2">
                 <span>🔗</span>
                 <span>Cấu Hình Deeplink Dự Phòng (Nếu Chưa Dùng API Token)</span>
@@ -2543,17 +2638,17 @@ async fn handle_dashboard(
             <form method="POST" action="/admin/settings/affiliate" class="space-y-4">
                 <div>
                     <label class="block text-xs font-semibold text-gray-400 mb-1">Mẫu Deeplink Template</label>
-                    <input type="text" name="template" value="{}" placeholder="Ví dụ: https://go.isclix.com/deep_link/PUB_ID/CAMPAIGN_ID?url={{CLEAN_URL}}&utm_source=facebook&sub1={{USER_ID}}" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                    <input type="text" name="template" value="{}" placeholder="Ví dụ: https://go.isclix.com/deep_link/PUB_ID/CAMPAIGN_ID?url={{CLEAN_URL}}&utm_source=facebook&sub1={{USER_ID}}" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500">
                 </div>
-                <button type="submit" class="px-5 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white font-semibold rounded-xl transition text-sm">
+                <button type="submit" class="px-5 py-2.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white font-semibold rounded-xl transition text-xs shadow-md">
                     Lưu Deeplink Dự Phòng
                 </button>
             </form>
         </section>
 
         <!-- Lịch sử dán link gần nhất -->
-        <section class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden shadow-xl">
-            <div class="p-5 border-b border-gray-800">
+        <section class="card-surface rounded-2xl overflow-hidden shadow-xl">
+            <div class="p-5 border-b border-gray-800/80 bg-gray-950/40">
                 <h2 class="text-lg font-bold text-white flex items-center space-x-2">
                     <span>📋</span>
                     <span>Lịch Sử Khách Dán Link Săn Sale Gần Đây (50 lượt mới nhất)</span>
@@ -2561,7 +2656,7 @@ async fn handle_dashboard(
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left">
-                    <thead class="bg-gray-800/60 text-xs uppercase text-gray-400 border-b border-gray-800">
+                    <thead class="bg-gray-950/70 text-xs uppercase text-gray-400 border-b border-gray-800/80">
                         <tr>
                             <th class="py-3 px-4">Telegram ID</th>
                             <th class="py-3 px-4">Sàn</th>
@@ -2570,7 +2665,7 @@ async fn handle_dashboard(
                             <th class="py-3 px-4">Thời Gian</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody class="divide-y divide-gray-800/60">
                         {}
                     </tbody>
                 </table>
@@ -2722,8 +2817,8 @@ fn render_shopee_card(
     }
 
     format!(
-        r##"<section class="bg-gray-900 border border-orange-500/30 rounded-2xl p-6 shadow-xl space-y-4">
-            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-4">
+        r##"<section class="card-surface border-orange-500/30 rounded-2xl p-6 shadow-xl space-y-5">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800/80 pb-4">
                 <div>
                     <h2 class="text-lg font-bold text-white flex items-center space-x-2">
                         <span>🟠</span>
@@ -2739,21 +2834,21 @@ fn render_shopee_card(
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
                         <label class="block text-xs font-semibold text-gray-400 mb-1">Shopee Affiliate ID (Dùng ngay qua an_redir)</label>
-                        <input type="text" name="shopee_affiliate_id" value="{}" placeholder="Ví dụ: 17375520550 (5-20 chữ số)" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <input type="text" name="shopee_affiliate_id" value="{}" placeholder="Ví dụ: 17375520550 (5-20 chữ số)" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-gray-400 mb-1">Shopee Open API AppID (Tùy chọn)</label>
-                        <input type="text" name="shopee_app_id" value="{}" placeholder="Nhập AppID từ affiliate.shopee.vn..." class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <input type="text" name="shopee_app_id" value="{}" placeholder="Nhập AppID từ affiliate.shopee.vn..." class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-gray-400 mb-1">Shopee Open API Secret Key (Tùy chọn)</label>
-                        <input type="password" name="shopee_app_secret" placeholder="{}" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <input type="password" name="shopee_app_secret" placeholder="{}" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
                     </div>
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-gray-800/80">
                     <div>
                         <label class="block text-xs font-semibold text-gray-400 mb-1">Bộ Tham Số Phiên IG/FB Reels Passthrough (<span class="text-orange-300">{}</span>)</label>
-                        <input type="password" name="shopee_social_params" placeholder="{}" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <input type="password" name="shopee_social_params" placeholder="{}" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
                         <label class="inline-flex items-center space-x-2 text-xs text-gray-400 mt-1.5">
                             <input type="checkbox" name="clear_social_params" value="1" class="rounded bg-gray-800 border-gray-600">
                             <span>Xóa bộ tham số phiên IG/FB đang lưu</span>
@@ -2761,7 +2856,7 @@ fn render_shopee_card(
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-gray-400 mb-1">Tên Miền Bọc Link Riêng / Cloudflare Worker (Tùy chọn)</label>
-                        <input type="text" name="shortlink_base_url" value="{}" placeholder="Mặc định: https://thegioisieusale.click (hoặc URL Cloudflare Worker khác)" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <input type="text" name="shortlink_base_url" value="{}" placeholder="Mặc định: https://thegioisieusale.click (hoặc URL Cloudflare Worker khác)" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
                         <label class="inline-flex items-center space-x-2 text-xs text-gray-300 mt-1.5">
                             <input type="checkbox" name="shortlink_mobile_only" value="1" {} class="rounded bg-gray-800 border-gray-600">
                             <span>🛡️ Chặn máy tính soi link bọc (Chỉ cho điện thoại mở giống godeal.online)</span>
@@ -2772,7 +2867,7 @@ fn render_shopee_card(
                         </label>
                     </div>
                 </div>
-                <button type="submit" class="px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-xl text-xs shadow-lg transition">
+                <button type="submit" class="px-5 py-2.5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-gray-950 font-bold rounded-xl text-xs shadow-lg transition">
                     💾 Lưu Cấu Hình Shopee &amp; Bọc Link
                 </button>
             </form>
@@ -2944,8 +3039,8 @@ fn render_order_alerts_card(admin_telegram_id: &str, orders: &[TrackedOrder]) ->
     }
 
     format!(
-        r#"<section class="bg-gray-900 border border-green-500/30 rounded-2xl p-6 shadow-xl space-y-4">
-            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-4">
+        r#"<section class="card-surface border-green-500/30 rounded-2xl p-6 shadow-xl space-y-5">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800/80 pb-4">
                 <div>
                     <h2 class="text-lg font-bold text-white flex items-center space-x-2">
                         <span>🔔</span>
@@ -2961,21 +3056,21 @@ fn render_order_alerts_card(admin_telegram_id: &str, orders: &[TrackedOrder]) ->
                 <form method="POST" action="/admin/settings/notifications" class="flex flex-wrap items-end gap-3 flex-1">
                     <div class="flex-1 min-w-52">
                         <label class="block text-xs font-semibold text-gray-400 mb-1">Telegram ID Admin Nhận Thông Báo Đơn</label>
-                        <input type="text" name="admin_telegram_id" value="{}" placeholder="Ví dụ: 5123456789 (hoặc để trống để tắt)" class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-green-500">
+                        <input type="text" name="admin_telegram_id" value="{}" placeholder="Ví dụ: 5123456789 (hoặc để trống để tắt)" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-green-500">
                     </div>
-                    <button type="submit" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-xs transition">
+                    <button type="submit" class="px-5 py-2.5 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-bold rounded-xl text-xs shadow-lg transition">
                         💾 Lưu Telegram ID Báo Đơn
                     </button>
                 </form>
                 <form method="POST" action="/admin/orders/sync">
-                    <button type="submit" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-green-300 font-semibold rounded-xl text-xs transition">
+                    <button type="submit" class="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-green-300 font-semibold rounded-xl text-xs transition">
                         🔄 Quét Đơn Mới Ngay
                     </button>
                 </form>
             </div>
-            <div class="overflow-x-auto">
+            <div class="overflow-x-auto rounded-xl border border-gray-800/80">
                 <table class="w-full text-left">
-                    <thead class="bg-gray-800/60 text-xs uppercase text-gray-400 border-b border-gray-800">
+                    <thead class="bg-gray-950/70 text-xs uppercase text-gray-400 border-b border-gray-800/80">
                         <tr>
                             <th class="py-2.5 px-3">Sàn</th>
                             <th class="py-2.5 px-3">Mã Đơn Hàng</th>

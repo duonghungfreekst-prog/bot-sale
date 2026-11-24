@@ -266,6 +266,7 @@ impl AccessTradeClient {
     pub fn new() -> Self {
         let http = Client::builder()
             .timeout(Duration::from_secs(12))
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
             .build()
             .unwrap_or_else(|_| Client::new());
 
@@ -342,6 +343,7 @@ impl AccessTradeClient {
                 .http
                 .get(&url)
                 .header("Authorization", format!("Token {}", token))
+                .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
                 .send()
                 .await
@@ -522,6 +524,7 @@ impl AccessTradeClient {
             .http
             .post("https://api.accesstrade.vn/v1/product_link/create")
             .header("Authorization", format!("Token {}", token))
+            .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()
@@ -579,6 +582,7 @@ impl AccessTradeClient {
             .http
             .post("https://api.accesstrade.vn/v2/tiktokshop_product_feeds/create_link")
             .header("Authorization", format!("Token {}", token))
+            .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()
@@ -791,6 +795,7 @@ impl AccessTradeClient {
                         .http
                         .get(&url)
                         .header("Authorization", format!("Token {}", token))
+                        .header("Accept", "application/json")
                         .header("Content-Type", "application/json")
                         .send()
                         .await
@@ -939,6 +944,7 @@ impl AccessTradeClient {
             .http
             .get(&orders_url)
             .header("Authorization", format!("Token {}", token.trim()))
+            .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .send()
             .await
