@@ -2192,7 +2192,14 @@ async fn handle_dashboard(
         ));
     }
     if voucher_rows.is_empty() {
-        voucher_rows = r#"<tr><td colspan="6" class="py-6 text-center text-xs text-gray-500">Không có mã nào khớp bộ lọc (hoặc đang khởi tạo lần quét đầu tiên). Bấm nút <b>Quét Ngay Toàn Bộ Kho Mã</b> nếu cần làm mới ngay.</td></tr>"#.to_string();
+        let empty_hint = if db_at_token.is_none() {
+            r#"Chưa cấu hình ACCESSTRADE API Access Key. Vào tab <b>"Kết Nối Sàn &amp; API"</b> để nhập Token hoặc nạp mã vào mục <b>"Kho Mã Độc Quyền Hợp Tác"</b> bên dưới."#.to_string()
+        } else if approved_opt.is_none() {
+            r#"⚠️ <b>ACCESSTRADE API đang bị lỗi kết nối (HTTP 403 Forbidden / Sai Key):</b> Bot chưa được cấp quyền kéo mã tự động từ sàn về.<br><span class="text-amber-300">👉 Cách khắc phục:</span> Vào <a href="https://pub2.accesstrade.vn" target="_blank" rel="noopener noreferrer" class="underline text-orange-400 font-semibold">pub2.accesstrade.vn</a> &gt; <b>Công cụ &gt; API</b> lấy lại Access Key mới rồi dán vào tab <b>"Kết Nối Sàn &amp; API"</b>. Hoặc dán danh sách mã sẵn có vào mục <b>"Kho Mã Độc Quyền Hợp Tác"</b> bên dưới!"#.to_string()
+        } else {
+            r#"Không có mã nào khớp bộ lọc (hoặc đang nạp chu kỳ đầu tiên). Bấm nút <b>Quét Sâu Toàn Bộ Ngay</b> nếu cần làm mới ngay."#.to_string()
+        };
+        voucher_rows = format!(r#"<tr><td colspan="6" class="py-8 px-4 text-center text-xs text-gray-300 leading-relaxed">{}</td></tr>"#, empty_hint);
     }
 
     // Bảng danh sách Mã Độc Quyền Hợp Tác & Deals trong DB
