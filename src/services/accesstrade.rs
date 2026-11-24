@@ -313,7 +313,7 @@ impl AccessTradeClient {
 
     /// Lấy danh sách các chiến dịch đã được duyệt trên tài khoản ACCESSTRADE (có cache 5 phút)
     pub async fn get_approved_campaigns(&self, api_token: &str, force_refresh: bool) -> Result<ApprovedCampaigns, String> {
-        let token = api_token.trim();
+        let token = clean_api_token(api_token);
         if token.is_empty() {
             return Err("Chưa cấu hình ACCESSTRADE API Token".to_string());
         }
@@ -739,7 +739,7 @@ impl AccessTradeClient {
 
     /// Chu kỳ đồng bộ nền mỗi 60 giây: quét nhanh trang mới nhất mỗi phút hoặc quét vét cạn mỗi 5 phút
     pub async fn sync_market_vouchers_tick(&self, api_token: &str, full_scan: bool) -> Result<usize, String> {
-        let token = api_token.trim();
+        let token = clean_api_token(api_token);
         if token.is_empty() {
             return Err("Chưa cấu hình ACCESSTRADE API Token".to_string());
         }
@@ -1375,9 +1375,21 @@ fn format_dynamic_platform_label(name: &str, domain: &str) -> String {
     trimmed.to_string()
 }
 
+/// Tự động làm sạch API Token: gọt bỏ khoảng trắng, dấu ngoặc kép, tiền tố 'Token ' hoặc 'Bearer ' nếu người dùng dán nhầm
+pub fn clean_api_token(raw_token: &str) -> &str {
+    let mut s = raw_token.trim().trim_matches('"').trim_matches('\'').trim();
+    if let Some(rest) = s.strip_prefix("Token ").or_else(|| s.strip_prefix("token ")) {
+        s = rest.trim();
+    } else if let Some(rest) = s.strip_prefix("Bearer ").or_else(|| s.strip_prefix("bearer ")) {
+        s = rest.trim();
+    }
+    s
+}
+
 /// Che giấu API Token khi hiển thị trên giao diện Web Admin (chỉ hiện 4 ký tự đầu + cuối)
 pub fn mask_token(token: &str) -> String {
-    let chars: Vec<char> = token.trim().chars().collect();
+    let cleaned = clean_api_token(token);
+    let chars: Vec<char> = cleaned.chars().collect();
     if chars.len() <= 8 {
         return "********".to_string();
     }
@@ -1446,6 +1458,14 @@ mod tests {
     fn test_mask_token() {
         assert_eq!(mask_token("1234567890abcdef"), "1234••••••••cdef");
         assert_eq!(mask_token("short"), "********");
+    }
+
+    #[test]
+    fn test_clean_api_token() {
+        assert_eq!(clean_api_token("Token my_secret_token_123"), "my_secret_token_123");
+        assert_eq!(clean_api_token("Bearer my_bearer_token_456"), "my_bearer_token_456");
+        assert_eq!(clean_api_token("\"raw_token_789\""), "raw_token_789");
+        assert_eq!(clean_api_token("  my_token_000  "), "my_token_000");
     }
 
     #[test]

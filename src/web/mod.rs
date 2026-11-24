@@ -3096,10 +3096,10 @@ async fn handle_update_accesstrade(
     }
 
     if let Ok(conn) = state.db.conn() {
-        let token_trimmed = form.api_token.trim();
-        if !token_trimmed.is_empty() {
-            let _ = Repository::set_setting(&conn, "accesstrade_api_token", token_trimmed).await;
-            info!("✅ Quản trị viên đã cập nhật ACCESSTRADE API Token mới qua Web Admin.");
+        let clean_tok = crate::services::accesstrade::clean_api_token(&form.api_token);
+        if !clean_tok.is_empty() {
+            let _ = Repository::set_setting(&conn, "accesstrade_api_token", clean_tok).await;
+            info!("✅ Quản trị viên đã cập nhật ACCESSTRADE API Token mới (đã làm sạch tiền tố) qua Web Admin.");
         }
         let _ = Repository::set_setting(&conn, "campaign_shopee", form.campaign_shopee.trim()).await;
         let _ = Repository::set_setting(&conn, "campaign_lazada", form.campaign_lazada.trim()).await;
