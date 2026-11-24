@@ -1639,17 +1639,20 @@ async fn handle_login_page(headers: HeaderMap, State(state): State<AppState>) ->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Đăng Nhập Quản Trị - Thế Giới Siêu Sale Admin</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
-            background: radial-gradient(circle at 50% 0%, #151d30 0%, #080c14 60%, #05080f 100%);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            color: #f3f4f6;
+            background-color: #080c14;
+            background-image: radial-gradient(at 50% 0%, rgba(249, 115, 22, 0.15) 0px, transparent 60%);
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: #f8fafc;
         }
         .card-surface {
-            background: linear-gradient(180deg, rgba(23, 32, 51, 0.75) 0%, rgba(15, 23, 42, 0.85) 100%);
-            backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: #0f172a;
+            border: 1px solid #1e293b;
             box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7);
         }
     </style>
@@ -1939,23 +1942,18 @@ async fn handle_dashboard(
     let has_turso = state.config.turso_url.is_some() && state.config.turso_auth_token.is_some();
     let has_env_token = state.config.accesstrade_api_token.is_some();
     let persistence_banner = if !has_env_token || !has_turso {
-        let mut notes = Vec::new();
-        if !has_env_token {
-            notes.push("Chưa đặt <code>ACCESSTRADE_API_TOKEN</code> trong Render Environment — Token nhập trên web sẽ mất khi Render deploy lại.");
-        }
-        if !has_turso {
-            notes.push("Đang dùng SQLite cục bộ (gói Free của Render làm mới ổ đĩa khi build lại). Nên gắn <code>TURSO_DATABASE_URL</code> &amp; <code>TURSO_AUTH_TOKEN</code> để lưu vĩnh viễn.");
-        }
-        format!(
-            r#"<div class="bg-yellow-500/10 border border-yellow-500/40 rounded-2xl p-4 text-xs text-yellow-200 space-y-1">
-                <div class="font-bold text-yellow-400">⚠️ Cảnh Báo Lưu Trữ Tạm Thời Trên Render Free</div>
-                {}
-            </div>"#,
-            notes.into_iter().map(|n| format!("<div>• {}</div>", n)).collect::<Vec<_>>().join("")
-        )
+        r#"<div class="flex items-center justify-between bg-amber-950/30 border border-amber-500/30 rounded-xl px-4 py-2.5 text-xs text-amber-200">
+            <div class="flex items-center space-x-2">
+                <span class="text-base">⚠️</span>
+                <span><b>Lưu ý lưu trữ:</b> Đang dùng ổ đĩa tạm thời của Render Free. Hãy thêm <code>TURSO_DATABASE_URL</code> &amp; <code>ACCESSTRADE_API_TOKEN</code> vào Render Environment để lưu dữ liệu vĩnh viễn.</span>
+            </div>
+        </div>"#.to_string()
     } else {
-        r#"<div class="bg-green-500/10 border border-green-500/30 rounded-2xl px-4 py-3 text-xs text-green-300">
-            🟢 <b>Lưu trữ bền vững:</b> Đã cố định <code>ACCESSTRADE_API_TOKEN</code> &amp; kết nối Turso Cloud Database.
+        r#"<div class="flex items-center justify-between bg-emerald-950/30 border border-emerald-500/30 rounded-xl px-4 py-2.5 text-xs text-emerald-200">
+            <div class="flex items-center space-x-2">
+                <span class="text-base">🟢</span>
+                <span><b>Hệ thống lưu trữ bền vững:</b> Đã kết nối Turso Cloud Database &amp; cố định API Token an toàn.</span>
+            </div>
         </div>"#.to_string()
     };
 
@@ -2232,16 +2230,23 @@ async fn handle_dashboard(
     // Render danh sách clicks gần đây (có escape chống XSS)
     let mut clicks_rows = String::new();
     for c in &clicks {
+        let plat_badge = match c.platform.as_str() {
+            "Shopee" => r#"<span class="px-2 py-0.5 rounded bg-orange-500/15 text-orange-400 border border-orange-500/30 text-xs font-semibold">Shopee</span>"#,
+            "TikTok Shop" | "TikTok" => r#"<span class="px-2 py-0.5 rounded bg-pink-500/15 text-pink-400 border border-pink-500/30 text-xs font-semibold">TikTok Shop</span>"#,
+            "Lazada" => r#"<span class="px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30 text-xs font-semibold">Lazada</span>"#,
+            "Tiki" => r#"<span class="px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 text-xs font-semibold">Tiki</span>"#,
+            _ => r#"<span class="px-2 py-0.5 rounded bg-gray-800 text-gray-300 text-xs">Khác</span>"#,
+        };
         clicks_rows.push_str(&format!(
-            r#"<tr class="border-b border-gray-800 hover:bg-gray-800/40 transition">
-                <td class="py-3 px-4 text-xs font-mono text-gray-400">{}</td>
-                <td class="py-3 px-4 font-semibold text-white">{}</td>
-                <td class="py-3 px-4 text-xs text-gray-400 max-w-xs truncate" title="{}">{}</td>
-                <td class="py-3 px-4 text-xs text-blue-400 max-w-xs truncate"><a href="{}" target="_blank" rel="noopener noreferrer" class="hover:underline">Mở Link Đầu Ra ↗</a></td>
-                <td class="py-3 px-4 text-xs text-gray-500 font-mono">{}</td>
+            r#"<tr class="border-b border-gray-800/60 hover:bg-gray-800/30 transition">
+                <td class="py-3 px-4 text-xs font-mono text-gray-300">{}</td>
+                <td class="py-3 px-4">{}</td>
+                <td class="py-3 px-4 text-xs text-gray-300 max-w-[240px] truncate" title="{}">{}</td>
+                <td class="py-3 px-4 text-xs max-w-[200px] truncate"><a href="{}" target="_blank" rel="noopener noreferrer" class="text-amber-400 hover:text-amber-300 hover:underline font-medium">Mở link săn sale ↗</a></td>
+                <td class="py-3 px-4 text-xs text-gray-400 font-mono">{}</td>
             </tr>"#,
             c.user_id,
-            escape_html(&c.platform),
+            plat_badge,
             escape_html(&c.clean_url),
             escape_html(&c.clean_url),
             escape_html(&c.affiliate_url),
@@ -2250,7 +2255,7 @@ async fn handle_dashboard(
     }
 
     if clicks_rows.is_empty() {
-        clicks_rows = r#"<tr><td colspan="5" class="py-8 text-center text-gray-500">Chưa có lượt dán link nào từ khách hàng.</td></tr>"#.to_string();
+        clicks_rows = r#"<tr><td colspan="5" class="py-8 text-center text-gray-400 text-xs">Chưa có lượt dán link nào từ khách hàng. Dán link sản phẩm vào Bot Telegram @vvipass_vip_bot để kiểm tra.</td></tr>"#.to_string();
     }
 
     let bot_mode_badge = if state.webhook_tx.is_some() {
@@ -2278,60 +2283,73 @@ async fn handle_dashboard(
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        .hidden {{ display: none !important; }}
+        .tab-pane.hidden {{ display: none !important; }}
         body {{
-            background-color: #060911;
+            background-color: #080c14;
             background-image: 
-                radial-gradient(at 0% 0%, rgba(249, 115, 22, 0.12) 0px, transparent 50%),
-                radial-gradient(at 100% 0%, rgba(6, 182, 212, 0.1) 0px, transparent 50%),
-                radial-gradient(at 50% 100%, rgba(139, 92, 246, 0.08) 0px, transparent 50%);
+                radial-gradient(at 0% 0%, rgba(249, 115, 22, 0.1) 0px, transparent 50%),
+                radial-gradient(at 100% 0%, rgba(6, 182, 212, 0.08) 0px, transparent 50%),
+                radial-gradient(at 50% 100%, rgba(139, 92, 246, 0.06) 0px, transparent 50%);
             font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            color: #f3f4f6;
+            color: #f8fafc;
             min-height: 100vh;
         }}
         .font-mono {{
             font-family: 'JetBrains Mono', monospace;
         }}
         .card-surface {{
-            background: linear-gradient(180deg, rgba(17, 24, 39, 0.72) 0%, rgba(11, 17, 28, 0.82) 100%);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5), 0 0 20px -5px rgba(0, 0, 0, 0.3);
-            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 1rem;
+            box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.35);
+            transition: border-color 0.15s ease;
         }}
         .card-surface:hover {{
-            border-color: rgba(255, 255, 255, 0.15);
+            border-color: #334155;
         }}
         .tab-btn {{
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.625rem 1.25rem;
+            border-radius: 0.75rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #94a3b8;
+            background: transparent;
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }}
+        .tab-btn:hover {{
+            color: #ffffff;
+            background: rgba(30, 41, 59, 0.6);
+            border-color: #334155;
         }}
         .tab-btn.active {{
-            background: linear-gradient(135deg, #f97316 0%, #ea580c 50%, #d97706 100%);
-            color: #0c0a09;
-            font-weight: 700;
-            box-shadow: 0 4px 15px -2px rgba(249, 115, 22, 0.4);
-        }}
-        .tab-btn:not(.active) {{
-            color: #9ca3af;
-        }}
-        .tab-btn:not(.active):hover {{
-            color: #ffffff;
-            background: rgba(31, 41, 55, 0.6);
+            color: #080c14 !important;
+            background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%) !important;
+            border-color: #f59e0b !important;
+            font-weight: 700 !important;
+            box-shadow: 0 4px 14px rgba(249, 115, 22, 0.35) !important;
         }}
         ::-webkit-scrollbar {{
             width: 6px;
             height: 6px;
         }}
         ::-webkit-scrollbar-track {{
-            background: rgba(11, 17, 28, 0.8);
+            background: #080c14;
         }}
         ::-webkit-scrollbar-thumb {{
-            background: rgba(255, 255, 255, 0.15);
+            background: #334155;
             border-radius: 9999px;
         }}
         ::-webkit-scrollbar-thumb:hover {{
-            background: rgba(249, 115, 22, 0.5);
+            background: #f97316;
         }}
     </style>
 </head>
