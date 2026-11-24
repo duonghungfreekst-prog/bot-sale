@@ -344,13 +344,21 @@ impl AccessTradeClient {
                 .get(&url)
                 .header("Authorization", format!("Token {}", token))
                 .header("Accept", "application/json")
-                .header("Content-Type", "application/json")
                 .send()
                 .await
                 .map_err(|e| format!("Lỗi kết nối ACCESSTRADE API: {}", e))?;
 
             if !resp.status().is_success() {
-                return Err(format!("ACCESSTRADE trả về mã lỗi HTTP {}", resp.status()));
+                let status_code = resp.status();
+                let err_text = resp.text().await.unwrap_or_default();
+                let clean_msg = if err_text.contains("IP") || err_text.contains("whitelist") {
+                    format!("HTTP {} (IP máy chủ chưa được duyệt trong mục IP Whitelist: {})", status_code, err_text.trim())
+                } else if !err_text.trim().is_empty() && err_text.len() < 150 {
+                    format!("HTTP {} ({})", status_code, err_text.trim())
+                } else {
+                    format!("HTTP {}", status_code)
+                };
+                return Err(format!("ACCESSTRADE trả về mã lỗi: {}", clean_msg));
             }
 
             let body_text = resp
@@ -796,7 +804,6 @@ impl AccessTradeClient {
                         .get(&url)
                         .header("Authorization", format!("Token {}", token))
                         .header("Accept", "application/json")
-                        .header("Content-Type", "application/json")
                         .send()
                         .await
                     {
@@ -945,7 +952,6 @@ impl AccessTradeClient {
             .get(&orders_url)
             .header("Authorization", format!("Token {}", token.trim()))
             .header("Accept", "application/json")
-            .header("Content-Type", "application/json")
             .send()
             .await
             .map_err(|e| format!("Lỗi kết nối ACCESSTRADE Orders API: {}", e))?;
