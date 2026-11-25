@@ -759,7 +759,7 @@ impl DealParser {
             .await;
 
         let initial_platform = self.detect_platform_with_approved(&raw_url, approved.as_ref());
-        let (resolved_url, html_title, product_image_url) = self.resolve_url_with_meta(&raw_url).await;
+        let (resolved_url, html_title, mut product_image_url) = self.resolve_url_with_meta(&raw_url).await;
 
         let platform = if initial_platform == Platform::Unknown {
             self.detect_platform_with_approved(&resolved_url, approved.as_ref())
@@ -818,7 +818,7 @@ impl DealParser {
                 .and_then(|c| c.get(1).map(|m| m.as_str().to_string()));
 
             if let Some(pid) = tiki_pid {
-                if let Some((api_title, api_price, api_shop, api_brand)) = self.fetch_tiki_product_info(&pid).await {
+                if let Some((api_title, api_price, api_shop, api_brand, api_thumb)) = self.fetch_tiki_product_info(&pid).await {
                     if user_text_title.is_none() && !api_title.is_empty() {
                         product_title = api_title;
                     }
@@ -827,6 +827,9 @@ impl DealParser {
                     }
                     product_shop = api_shop;
                     product_brand = api_brand;
+                    if product_image_url.is_none() {
+                        product_image_url = api_thumb;
+                    }
                 }
             }
         }
@@ -985,18 +988,24 @@ impl DealParser {
         })
     }
 
-    /// Lấy tên sản phẩm, giá, shop bán và thương hiệu thật từ Tiki Public Product API v2
+    /// Lấy tên sản phẩm, giá, shop bán, thương hiệu và ảnh thumbnail thật từ Tiki Public Product API v2
     async fn fetch_tiki_product_info(
         &self,
         product_id: &str,
-    ) -> Option<(String, Option<f64>, Option<String>, Option<String>)> {
+    ) -> Option<(String, Option<f64>, Option<String>, Option<String>, Option<String>)> {
         let api_url = format!("https://tiki.vn/api/v2/products/{}", product_id);
         let resp = self.http_client.get(&api_url).send().await.ok()?;
         if !resp.status().is_success() {
             return None;
         }
         let body = resp.text().await.ok()?;
-        parse_tiki_product_json(&body)
+        let (title, price, shop, brand) = parse_tiki_product_json(&body)?;
+        let thumb = serde_json::from_str::<TikiProductApiResp>(&body)
+            .ok()
+            .and_then(|r| r.thumbnail_url)
+            .map(|u| u.trim().to_string())
+            .filter(|u| u.starts_with("https://") || u.starts_with("http://"));
+        Some((title, price, shop, brand, thumb))
     }
 }
 
@@ -1071,6 +1080,7 @@ fn extract_image_from_html(html: &str) -> Option<String> {
 struct TikiProductApiResp {
     name: Option<String>,
     price: Option<serde_json::Value>,
+    thumbnail_url: Option<String>,
     current_seller: Option<TikiNamedField>,
     brand: Option<TikiNamedField>,
 }

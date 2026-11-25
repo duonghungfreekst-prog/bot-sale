@@ -41,6 +41,47 @@ pub(crate) async fn resolve_admin_telegram_id(conn: &libsql::Connection, config:
         .or(config.admin_telegram_id)
 }
 
+/// Tùy chọn tắt khung xem trước liên kết cồng kềnh trên Telegram
+fn disabled_link_preview() -> LinkPreviewOptions {
+    LinkPreviewOptions {
+        is_disabled: true,
+        url: None,
+        prefer_small_media: false,
+        prefer_large_media: false,
+        show_above_text: false,
+    }
+}
+
+fn platform_matches(deal_platform: &str, parsed_platform: &str) -> bool {
+    deal_platform.trim().replace(' ', "").eq_ignore_ascii_case(&parsed_platform.trim().replace(' ', ""))
+}
+
+/// Chỉ tự động probe chữ ký FB/IG cho Admin khi tin nhắn có tham số/cầu nối tiềm năng (tránh làm chậm link sản phẩm thường)
+fn should_probe_admin_social_input(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("sm_sig_id=")
+        || lower.contains("encrypted_payload=")
+        || lower.contains("fb_content_id=")
+        || lower.contains("channel_type=")
+    {
+        return true;
+    }
+    if lower.contains("shopee.vn/product/")
+        || lower.contains("shopee.vn/share-video/")
+        || lower.contains("vn.shp.ee/")
+        || lower.contains("shp.ee/")
+        || lower.contains("tiktok.com")
+        || lower.contains("tiki.vn")
+        || lower.contains("ti.ki")
+        || lower.contains("lazada.vn")
+        || lower.contains("lzd.co")
+        || lower.contains("alibaba.com")
+    {
+        return false;
+    }
+    true
+}
+
 /// Định dạng hiển thị link gọn gàng trên Telegram (tránh URL trực tiếp dài làm rối khung chat)
 pub fn format_telegram_link_display(url: &str, platform: &str, is_wrapped: bool) -> String {
     let trimmed = url.trim();
@@ -239,7 +280,7 @@ pub async fn handle_message(
 
         let admin_id_opt = resolve_admin_telegram_id(&conn, &config).await;
         let is_admin = admin_id_opt.map(|id| id == user_id).unwrap_or(false);
-        if is_admin && !text.contains("shopee.vn/product/") && !text.contains("shopee.vn/share-video/") {
+        if is_admin && should_probe_admin_social_input(text) {
             let http_probe = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(8))
                 .redirect(reqwest::redirect::Policy::limited(5))
@@ -331,7 +372,10 @@ pub async fn handle_message(
 
                         let mut voucher_hint = active_deals
                             .iter()
-                            .find(|d| is_exclusive_deal_relevant(d, &parsed))
+                            .find(|d| {
+                                platform_matches(&d.platform, parsed.platform.as_str())
+                                    && is_exclusive_deal_relevant(d, &parsed)
+                            })
                             .map(|d| {
                                 let code = d
                                     .coupon_code
@@ -344,24 +388,36 @@ pub async fn handle_message(
                             .unwrap_or_default();
 
                         if voucher_hint.is_empty() {
-                            let matched_mv = parser
-                                .accesstrade()
-                                .search_matching_vouchers_for_deal(
-                                    parsed.platform.as_str(),
-                                    &parsed.product_title,
-                                    &parsed.clean_url,
-                                    parsed.product_shop.as_deref(),
-                                    parsed.product_brand.as_deref(),
-                                    parsed.product_price_vnd,
-                                    1,
-                                )
-                                .await;
-                            if let Some(mv) = matched_mv.first() {
-                                voucher_hint = format!(
-                                    "\n   🎟️ <b>{}</b> · Mã: <code>{}</code>",
-                                    escape_html(&mv.discount_badge()),
-                                    escape_html(&mv.coupon_code)
-                                );
+                            let allow_market = match parsed.platform {
+                                crate::services::deal_parser::Platform::Shopee => {
+                                    parsed.is_affiliate
+                                        || approved_dynamic
+                                            .as_ref()
+                                            .and_then(|a| a.shopee.as_ref())
+                                            .is_some()
+                                }
+                                _ => true,
+                            };
+                            if allow_market {
+                                let matched_mv = parser
+                                    .accesstrade()
+                                    .search_matching_vouchers_for_deal(
+                                        parsed.platform.as_str(),
+                                        &parsed.product_title,
+                                        &parsed.clean_url,
+                                        parsed.product_shop.as_deref(),
+                                        parsed.product_brand.as_deref(),
+                                        parsed.product_price_vnd,
+                                        1,
+                                    )
+                                    .await;
+                                if let Some(mv) = matched_mv.first() {
+                                    voucher_hint = format!(
+                                        "\n   🎟️ <b>{}</b> · Mã: <code>{}</code>",
+                                        escape_html(&mv.discount_badge()),
+                                        escape_html(&mv.coupon_code)
+                                    );
+                                }
                             }
                         }
 
@@ -432,6 +488,7 @@ pub async fn handle_message(
             let _ = bot.delete_message(msg.chat.id, wait_msg.id).await;
             bot.send_message(msg.chat.id, reply_html)
                 .parse_mode(ParseMode::Html)
+                .link_preview_options(disabled_link_preview())
                 .reply_markup(batch_action_keyboard(&btn_items))
                 .await?;
             return Ok(());
@@ -1089,5 +1146,18 @@ mod tests {
         let formatted = format_telegram_link_display(long_direct, "Shopee", false);
         assert!(formatted.starts_with("<a href=\"https://s.shopee.vn/an_redir?"));
         assert!(formatted.contains("Bấm mở Shopee kèm ưu đãi"));
+    }
+
+    #[test]
+    fn test_should_probe_admin_social_input_and_platform_match() {
+        assert!(!should_probe_admin_social_input("https://vn.shp.ee/oSMPdPRU"));
+        assert!(!should_probe_admin_social_input("https://shopee.vn/product/123/456"));
+        assert!(!should_probe_admin_social_input("https://vt.tiktok.com/ZSYabc/"));
+        assert!(should_probe_admin_social_input("https://godeal.online/WdIhcsBB"));
+        assert!(should_probe_admin_social_input("https://s.shopee.vn/6L6Hj9wivc?sm_sig_id=SIG1"));
+
+        assert!(platform_matches("TikTok Shop", "TikTokShop"));
+        assert!(platform_matches("shopee", "Shopee"));
+        assert!(!platform_matches("Shopee", "TikTokShop"));
     }
 }
