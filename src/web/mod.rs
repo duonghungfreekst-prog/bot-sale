@@ -499,11 +499,17 @@ async fn handle_public_convert(
                 ));
             }
 
+            let aff_badge_text = if owned_aff.shortlink_base.is_some() {
+                "Đã gắn link bọc ưu đãi"
+            } else {
+                "Đã gắn link ưu đãi trực tiếp"
+            };
+
             let result_html = format!(
                 r#"<div class="convert-result" aria-live="polite">
                     <div class="convert-result__head">
                         <span class="badge badge--platform">{}</span>
-                        <span class="badge badge--accent">Đã gắn link bọc ưu đãi</span>
+                        <span class="badge badge--accent">{}</span>
                     </div>
                     <h2 class="convert-result__title">{}</h2>
                     {}
@@ -515,6 +521,7 @@ async fn handle_public_convert(
                     </div>
                 </div>"#,
                 escape_html(parsed.platform.as_str()),
+                aff_badge_text,
                 escape_html(&parsed.product_title),
                 meta_line,
                 escape_html(&wrapped_main),

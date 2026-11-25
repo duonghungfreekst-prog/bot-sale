@@ -39,7 +39,9 @@ pub async fn run_bot(
     // Tự động đăng ký danh sách commands để Telegram hiện nút [Menu] cạnh ô nhập tin nhắn
     let commands = vec![
         BotCommand::new("start", "🚀 Bắt đầu / Dán link sản phẩm nhận ưu đãi"),
+        BotCommand::new("deals", "🎟️ Xem nhanh top mã giảm giá nổi bật"),
         BotCommand::new("help", "📖 Mẹo áp mã giảm giá thành công"),
+        BotCommand::new("share", "🤝 Chia sẻ bot cho bạn bè"),
     ];
 
     if let Err(e) = bot.set_my_commands(commands).await {
