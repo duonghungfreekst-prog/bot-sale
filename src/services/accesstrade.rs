@@ -258,6 +258,7 @@ pub struct AccessTradeClient {
     http: Client,
     redirect_probe: Client,
     cache: Arc<RwLock<Option<(String, ApprovedCampaigns)>>>,
+    campaigns_fetch_lock: Arc<tokio::sync::Mutex<()>>,
     voucher_cache: Arc<RwLock<Option<(String, i64, u32, Vec<VoucherOffer>)>>>,
     voucher_meta: Arc<RwLock<VoucherSyncMeta>>,
 }
@@ -293,6 +294,7 @@ impl AccessTradeClient {
             http,
             redirect_probe,
             cache: Arc::new(RwLock::new(None)),
+            campaigns_fetch_lock: Arc::new(tokio::sync::Mutex::new(())),
             voucher_cache: Arc::new(RwLock::new(None)),
             voucher_meta: Arc::new(RwLock::new(VoucherSyncMeta::default())),
         }
@@ -311,7 +313,7 @@ impl AccessTradeClient {
         self.voucher_meta.read().await.clone()
     }
 
-    /// Lấy danh sách các chiến dịch đã được duyệt trên tài khoản ACCESSTRADE (có cache 5 phút)
+    /// Lấy danh sách các chiến dịch đã được duyệt trên tài khoản ACCESSTRADE (có cache 3 phút & chống gọi trùng)
     pub async fn get_approved_campaigns(&self, api_token: &str, force_refresh: bool) -> Result<ApprovedCampaigns, String> {
         let token = clean_api_token(api_token);
         if token.is_empty() {
@@ -323,6 +325,17 @@ impl AccessTradeClient {
             let guard = self.cache.read().await;
             if let Some((cached_token, cached)) = guard.as_ref() {
                 if cached_token == token && (now - cached.fetched_at_epoch) < CACHE_TTL_SECS {
+                    return Ok(cached.clone());
+                }
+            }
+        }
+
+        let _fetch_guard = self.campaigns_fetch_lock.lock().await;
+        let now_locked = Utc::now().timestamp();
+        if !force_refresh {
+            let guard = self.cache.read().await;
+            if let Some((cached_token, cached)) = guard.as_ref() {
+                if cached_token == token && (now_locked - cached.fetched_at_epoch) < CACHE_TTL_SECS {
                     return Ok(cached.clone());
                 }
             }
@@ -928,7 +941,7 @@ impl AccessTradeClient {
         Ok(collected)
     }
 
-    /// Lấy danh sách đơn hàng phát sinh gần đây từ ACCESSTRADE API (`/v1/orders`)
+    /// Lấy danh sách đơn hàng / giao dịch phát sinh gần đây từ ACCESSTRADE API (`/v1/transactions`, fallback `/v1/orders`)
     pub async fn fetch_recent_orders(
         &self,
         token: &str,
@@ -944,31 +957,45 @@ impl AccessTradeClient {
             now.format("%Y-%m-%dT%H:%M:%SZ").to_string().as_bytes(),
         )
         .collect();
-        let orders_url = format!(
-            "https://api.accesstrade.vn/v1/orders?since={}&until={}&limit=50",
-            since_iso, until_iso
-        );
 
-        let resp = self
-            .http
-            .get(&orders_url)
-            .header("Authorization", format!("Token {}", token.trim()))
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .map_err(|e| format!("Lỗi kết nối ACCESSTRADE Orders API: {}", e))?;
+        let endpoints = [
+            format!(
+                "https://api.accesstrade.vn/v1/transactions?since={}&until={}&limit=50",
+                since_iso, until_iso
+            ),
+            format!(
+                "https://api.accesstrade.vn/v1/orders?since={}&until={}&limit=50",
+                since_iso, until_iso
+            ),
+        ];
 
-        let status = resp.status();
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| format!("Lỗi đọc phản hồi Orders API: {}", e))?;
+        let mut last_status_err = String::new();
+        for url in endpoints {
+            let resp = self
+                .http
+                .get(&url)
+                .header("Authorization", format!("Token {}", token.trim()))
+                .header("Accept", "application/json")
+                .send()
+                .await
+                .map_err(|e| format!("Lỗi kết nối ACCESSTRADE Orders API: {}", e))?;
 
-        if !status.is_success() {
-            return Err(format!("ACCESSTRADE Orders API trả về HTTP {}", status));
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| format!("Lỗi đọc phản hồi Orders API: {}", e))?;
+
+            if status.is_success() {
+                return parse_accesstrade_orders_json(&body);
+            }
+            last_status_err = format!("ACCESSTRADE Orders API trả về HTTP {}", status);
+            if status != reqwest::StatusCode::NOT_FOUND {
+                return Err(last_status_err);
+            }
         }
 
-        parse_accesstrade_orders_json(&body)
+        Err(last_status_err)
     }
 }
 
@@ -1015,7 +1042,7 @@ fn normalize_order_status_val(val: Option<&serde_json::Value>) -> String {
     }
 }
 
-/// Giải mã JSON đơn hàng trả về từ `/v1/orders` của ACCESSTRADE
+/// Giải mã JSON đơn hàng trả về từ `/v1/transactions` hoặc `/v1/orders` của ACCESSTRADE
 pub fn parse_accesstrade_orders_json(
     body: &str,
 ) -> Result<Vec<crate::db::models::TrackedOrder>, String> {
@@ -1026,10 +1053,14 @@ pub fn parse_accesstrade_orders_json(
     };
 
     let now_rfc = Utc::now().to_rfc3339();
-    let mut orders = Vec::new();
+    let mut orders: Vec<crate::db::models::TrackedOrder> = Vec::new();
+    let mut index_by_key: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut has_non_bonus: Vec<bool> = Vec::new();
+
     for item in arr {
         let order_id = item
-            .get("order_id")
+            .get("transaction_id")
+            .or_else(|| item.get("order_id"))
             .or_else(|| item.get("id"))
             .and_then(|v| {
                 v.as_str()
@@ -1051,10 +1082,21 @@ pub fn parse_accesstrade_orders_json(
         let status = normalize_order_status_val(
             item.get("status").or_else(|| item.get("order_status")),
         );
+        let is_bonus_row = item
+            .get("is_brand_bonus")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+            || item
+                .get("product_category")
+                .and_then(|v| v.as_str())
+                .map(|s| s.eq_ignore_ascii_case("bonus"))
+                .unwrap_or(false);
         let order_amount = parse_json_f64(
-            item.get("billing")
+            item.get("transaction_value")
+                .or_else(|| item.get("billing"))
                 .or_else(|| item.get("total_amount"))
-                .or_else(|| item.get("amount")),
+                .or_else(|| item.get("amount"))
+                .or_else(|| item.get("product_price")),
         )
         .unwrap_or(0.0);
         let commission = parse_json_f64(
@@ -1064,13 +1106,19 @@ pub fn parse_accesstrade_orders_json(
         let sub_id = item
             .get("utm_sub1")
             .or_else(|| item.get("sub1"))
+            .or_else(|| {
+                item.get("_extra")
+                    .and_then(|ex| ex.get("sub_params"))
+                    .and_then(|sp| sp.get("sub1"))
+            })
             .or_else(|| item.get("utm_campaign"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .trim()
             .to_string();
         let order_time = item
-            .get("sales_time")
+            .get("transaction_time")
+            .or_else(|| item.get("sales_time"))
             .or_else(|| item.get("click_time"))
             .or_else(|| item.get("confirmed_time"))
             .and_then(|v| v.as_str())
@@ -1078,17 +1126,42 @@ pub fn parse_accesstrade_orders_json(
             .trim()
             .to_string();
 
-        orders.push(crate::db::models::TrackedOrder {
-            order_key: format!("AT:{}", order_id),
-            platform,
-            order_id,
-            status,
-            order_amount,
-            commission,
-            sub_id,
-            order_time,
-            notified_at: now_rfc.clone(),
-        });
+        let key = format!("AT:{}", order_id);
+        if let Some(&idx) = index_by_key.get(&key) {
+            let existing = &mut orders[idx];
+            existing.commission += commission;
+            if !is_bonus_row {
+                if has_non_bonus[idx] {
+                    existing.order_amount += order_amount;
+                } else {
+                    existing.order_amount = order_amount;
+                    has_non_bonus[idx] = true;
+                }
+            }
+            if existing.sub_id.is_empty() && !sub_id.is_empty() {
+                existing.sub_id = sub_id;
+            }
+            if existing.order_time.is_empty() && !order_time.is_empty() {
+                existing.order_time = order_time;
+            }
+            if status == "APPROVED" || (existing.status == "PENDING" && status != "PENDING") {
+                existing.status = status;
+            }
+        } else {
+            index_by_key.insert(key.clone(), orders.len());
+            has_non_bonus.push(!is_bonus_row);
+            orders.push(crate::db::models::TrackedOrder {
+                order_key: key,
+                platform,
+                order_id,
+                status,
+                order_amount,
+                commission,
+                sub_id,
+                order_time,
+                notified_at: now_rfc.clone(),
+            });
+        }
     }
 
     Ok(orders)
@@ -1679,11 +1752,36 @@ mod tests {
                     "amount": "500000",
                     "commission": "25000",
                     "sub1": "web01"
+                },
+                {
+                    "transaction_id": "587282004941178761",
+                    "merchant": "tiktok_cps",
+                    "status": 0,
+                    "is_brand_bonus": true,
+                    "product_category": "bonus",
+                    "transaction_value": 1450.0,
+                    "commission": 930.0,
+                    "transaction_time": "2026-11-20T09:23:56",
+                    "_extra": {
+                        "sub_params": {
+                            "sub1": "5342271625"
+                        }
+                    }
+                },
+                {
+                    "transaction_id": "587282004941178761",
+                    "merchant": "tiktok_cps",
+                    "status": 0,
+                    "is_brand_bonus": false,
+                    "product_category": "285585744069",
+                    "transaction_value": 29000.0,
+                    "commission": 0.0,
+                    "transaction_time": "2026-11-20T09:23:56"
                 }
             ]
         }"#;
         let orders = parse_accesstrade_orders_json(raw).unwrap();
-        assert_eq!(orders.len(), 2);
+        assert_eq!(orders.len(), 3);
         assert_eq!(orders[0].order_key, "AT:TTS998877");
         assert_eq!(orders[0].platform, "TikTok Shop");
         assert_eq!(orders[0].status, "PENDING");
@@ -1693,6 +1791,12 @@ mod tests {
         assert_eq!(orders[1].platform, "Tiki");
         assert_eq!(orders[1].status, "APPROVED");
         assert_eq!(orders[1].commission, 25000.0);
+        assert_eq!(orders[2].order_key, "AT:587282004941178761");
+        assert_eq!(orders[2].platform, "TikTok Shop");
+        assert_eq!(orders[2].order_amount, 29000.0);
+        assert_eq!(orders[2].commission, 930.0);
+        assert_eq!(orders[2].sub_id, "5342271625");
+        assert_eq!(orders[2].order_time, "2026-11-20T09:23:56");
     }
 }
 

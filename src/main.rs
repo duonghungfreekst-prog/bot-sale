@@ -79,7 +79,7 @@ fn main() -> anyhow::Result<()> {
 
     #[cfg(windows)]
     if gui_mode {
-        if desktop::try_wake_existing_instance(config.port) {
+        if desktop::ensure_single_instance_or_wake(config.port) {
             info!("Ứng dụng Desktop đã đang chạy — đã đưa cửa sổ hiện có lên trước.");
             return Ok(());
         }

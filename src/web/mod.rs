@@ -2081,6 +2081,23 @@ async fn resolve_accesstrade_token(conn: &libsql::Connection, config: &Config) -
         .or_else(|| config.accesstrade_api_token.clone())
 }
 
+fn format_timestamp_vn(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return "-".to_string();
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        let vn = dt.with_timezone(&Utc) + chrono::Duration::hours(7);
+        return vn.format("%H:%M:%S · %d/%m/%Y").to_string();
+    }
+    let no_frac = trimmed.split('.').next().unwrap_or(trimmed);
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(no_frac, "%Y-%m-%dT%H:%M:%S") {
+        let vn = naive + chrono::Duration::hours(7);
+        return vn.format("%H:%M:%S · %d/%m/%Y").to_string();
+    }
+    trimmed.to_string()
+}
+
 /// Giao diện chính Dashboard Quản Trị
 async fn handle_dashboard(
     headers: HeaderMap,
@@ -2299,7 +2316,20 @@ async fn handle_dashboard(
     let mut approved_opt: Option<ApprovedCampaigns> = None;
     let (at_status_badge, campaign_status_html) = if let Some(ref token) = db_at_token {
         let masked = mask_token(token);
-        match state.accesstrade.get_approved_campaigns(token, false).await {
+        let campaigns_res = if let Some(cached) = state.accesstrade.peek_approved_campaigns().await {
+            Ok(cached)
+        } else {
+            match tokio::time::timeout(
+                Duration::from_millis(1200),
+                state.accesstrade.get_approved_campaigns(token, false),
+            )
+            .await
+            {
+                Ok(res) => res,
+                Err(_) => Err("Đang tải danh sách chiến dịch ACCESSTRADE ở nền...".to_string()),
+            }
+        };
+        match campaigns_res {
             Ok(approved) => {
                 let badge = format!(
                     "<span class=\"badge badge--ok\">🟢 Đã kết nối ({})</span>",
@@ -2481,7 +2511,7 @@ async fn handle_dashboard(
         exclusive_rows = r#"<tr><td colspan="6" class="empty-cell">Chưa có Mã Độc Quyền Hợp Tác nào. Hãy dán danh sách mã từ AM ACCESSTRADE / MCN / Nhãn hàng vào ô bên trên.</td></tr>"#.to_string();
     }
 
-    // Render danh sách clicks gần đây (có escape chống XSS)
+    // Render danh sách clicks gần đây (chuẩn giờ VN + phân biệt link đã gắn tracking vs link sạch)
     let mut clicks_rows = String::new();
     for c in &clicks {
         let plat_badge = match c.platform.as_str() {
@@ -2491,12 +2521,22 @@ async fn handle_dashboard(
             "Tiki" => r#"<span class="badge badge--cyan">Tiki</span>"#,
             _ => r#"<span class="badge badge--muted">Khác</span>"#,
         };
+        let is_tracked = c.affiliate_url != c.clean_url
+            || c.affiliate_url.contains("go.isclix.com")
+            || c.affiliate_url.contains("s.shopee.vn")
+            || c.affiliate_url.contains("tiktok.com/t/");
+        let out_link_label = if is_tracked {
+            "🔗 Link Đã Gắn Tracking ↗"
+        } else {
+            "🌐 Link Sạch (Chưa bật Aff) ↗"
+        };
+        let vn_time = format_timestamp_vn(&c.created_at);
         clicks_rows.push_str(&format!(
             r#"<tr>
                 <td class="font-mono cell-muted">{}</td>
                 <td>{}</td>
                 <td><div class="truncate-url" title="{}">{}</div></td>
-                <td><a href="{}" target="_blank" rel="noopener noreferrer" class="table-link table-link--amber">Mở link săn sale ↗</a></td>
+                <td><a href="{}" target="_blank" rel="noopener noreferrer" class="table-link table-link--amber">{}</a></td>
                 <td class="font-mono cell-muted">{}</td>
             </tr>"#,
             c.user_id,
@@ -2504,7 +2544,8 @@ async fn handle_dashboard(
             escape_html(&c.clean_url),
             escape_html(&c.clean_url),
             escape_html(&c.affiliate_url),
-            escape_html(&c.created_at)
+            out_link_label,
+            escape_html(&vn_time)
         ));
     }
 
@@ -3551,7 +3592,7 @@ async fn handle_dashboard(
                                 <th>Thời Gian</th>
                             </tr>
                         </thead>
-                        <tbody>
+                        <tbody id="clicks-tbody">
                             {}
                         </tbody>
                     </table>
@@ -3810,13 +3851,33 @@ async fn handle_dashboard(
             switchTab(hash);
         }});
 
-        setInterval(() => {{
-            if (document.hidden) return;
+        let refreshingOverview = false;
+        setInterval(async () => {{
+            if (document.hidden || refreshingOverview) return;
             const overviewPane = document.getElementById('tab-pane-overview');
             if (!overviewPane || overviewPane.classList.contains('is-hidden')) return;
             const activeTag = document.activeElement ? document.activeElement.tagName : '';
             if (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag)) return;
-            window.location.replace('/admin#overview');
+            refreshingOverview = true;
+            try {{
+                const res = await fetch('/admin', {{ cache: 'no-store' }});
+                if (!res.ok) return;
+                const html = await res.text();
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                const savedScrollY = window.scrollY;
+                ['.kpi-grid', '.card--social', '#clicks-tbody'].forEach((sel) => {{
+                    const cur = document.querySelector(sel);
+                    const next = doc.querySelector(sel);
+                    if (cur && next && cur.innerHTML !== next.innerHTML) {{
+                        cur.innerHTML = next.innerHTML;
+                    }}
+                }});
+                if (Math.abs(window.scrollY - savedScrollY) > 4) {{
+                    window.scrollTo(0, savedScrollY);
+                }}
+            }} catch (e) {{}} finally {{
+                refreshingOverview = false;
+            }}
         }}, 30000);
     </script>
     <script src="/assets/home.js" defer></script>
@@ -4250,7 +4311,7 @@ fn render_order_alerts_card(admin_telegram_id: &str, orders: &[TrackedOrder]) ->
             escape_html(&ord.status),
             escape_html(&format_vnd(ord.order_amount)),
             escape_html(&format_vnd(ord.commission)),
-            escape_html(&ord.order_time)
+            escape_html(&format_timestamp_vn(&ord.order_time))
         ));
     }
     if order_rows.is_empty() {

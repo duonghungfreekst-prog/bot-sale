@@ -34,6 +34,21 @@ fn open_external_url(raw: &str) {
     }
 }
 
+fn is_allowed_local_navigation(raw_url: &str, port: u16) -> bool {
+    let lower = raw_url.trim().to_ascii_lowercase();
+    if lower == "about:blank" || lower.starts_with("data:") {
+        return true;
+    }
+    let prefix_ip = format!("http://127.0.0.1:{}/", port);
+    let exact_ip = format!("http://127.0.0.1:{}", port);
+    let prefix_host = format!("http://localhost:{}/", port);
+    let exact_host = format!("http://localhost:{}", port);
+    lower.starts_with(&prefix_ip)
+        || lower == exact_ip
+        || lower.starts_with(&prefix_host)
+        || lower == exact_host
+}
+
 fn splash_loading_html(port: u16) -> String {
     format!(
         r#"<!DOCTYPE html>
@@ -98,6 +113,52 @@ pub fn try_wake_existing_instance(port: u16) -> bool {
     head.contains("200 OK")
 }
 
+/// Đảm bảo chỉ chạy 1 tiến trình Desktop duy nhất; nếu cổng đang bận lúc khởi động thì chờ đánh thức tiến trình hiện có.
+pub fn ensure_single_instance_or_wake(port: u16) -> bool {
+    if try_wake_existing_instance(port) {
+        return true;
+    }
+    match std::net::TcpListener::bind(("0.0.0.0", port)) {
+        Ok(listener) => {
+            drop(listener);
+            false
+        }
+        Err(_) => {
+            for _ in 0..6 {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                if try_wake_existing_instance(port) {
+                    return true;
+                }
+            }
+            true
+        }
+    }
+}
+
+fn try_build_webview_with_dir(
+    window: &tao::window::Window,
+    port: u16,
+    data_dir: PathBuf,
+) -> Result<wry::WebView, wry::Error> {
+    let _ = std::fs::create_dir_all(&data_dir);
+    let mut web_context = WebContext::new(Some(data_dir));
+    WebViewBuilder::new_with_web_context(&mut web_context)
+        .with_html(splash_loading_html(port))
+        .with_new_window_req_handler(move |url, _features| {
+            open_external_url(&url);
+            NewWindowResponse::Deny
+        })
+        .with_navigation_handler(move |url| {
+            if is_allowed_local_navigation(&url, port) {
+                true
+            } else {
+                open_external_url(&url);
+                false
+            }
+        })
+        .build(window)
+}
+
 fn build_desktop_webview(
     window: &tao::window::Window,
     port: u16,
@@ -107,50 +168,36 @@ fn build_desktop_webview(
         .unwrap_or_else(|e| format!("unavailable ({})", e));
     tracing::info!("Phiên bản Edge WebView2 Runtime trên máy: {}", ver);
 
-    let webview_dir = std::env::current_dir()
+    let base_target = std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
-        .join("target")
-        .join("webview2_data");
-    let _ = std::fs::create_dir_all(&webview_dir);
-    tracing::info!("Đang khởi tạo WebView2 tại: {}", webview_dir.display());
-    let mut web_context = WebContext::new(Some(webview_dir));
+        .join("target");
+    let primary_dir = base_target.join("webview2_data");
+    tracing::info!("Đang khởi tạo WebView2 tại: {}", primary_dir.display());
 
-    match WebViewBuilder::new_with_web_context(&mut web_context)
-        .with_html(splash_loading_html(port))
-        .with_new_window_req_handler(move |url, _features| {
-            open_external_url(&url);
-            NewWindowResponse::Deny
-        })
-        .build(window)
-    {
-        Ok(wv) => Ok(wv),
-        Err(first_err) => {
-            tracing::warn!(
-                "WebView2 với thư mục dữ liệu cục bộ không tạo được ({:?}), thử thư mục dự phòng...",
-                first_err
-            );
-            let fallback_dir = std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join("target")
-                .join("webview2_fallback");
-            let _ = std::fs::create_dir_all(&fallback_dir);
-            let mut fallback_ctx = WebContext::new(Some(fallback_dir));
-            WebViewBuilder::new_with_web_context(&mut fallback_ctx)
-                .with_url("about:blank")
-                .with_new_window_req_handler(move |url, _features| {
-                    open_external_url(&url);
-                    NewWindowResponse::Deny
-                })
-                .build(window)
-                .map_err(|second_err| {
-                    anyhow::anyhow!(
-                        "Không thể tạo WebView2 window (local={:?}; fallback={:?})",
-                        first_err,
-                        second_err
-                    )
-                })
+    let mut last_err = None;
+    for attempt in 1..=3 {
+        match try_build_webview_with_dir(window, port, primary_dir.clone()) {
+            Ok(wv) => return Ok(wv),
+            Err(err) => {
+                tracing::warn!(
+                    "Thử khởi tạo WebView2 lần {}/3 chưa thành công ({:?})...",
+                    attempt,
+                    err
+                );
+                last_err = Some(err);
+                std::thread::sleep(std::time::Duration::from_millis(90));
+            }
         }
     }
+
+    let fallback_dir = base_target.join(format!("webview2_session_{}", std::process::id()));
+    try_build_webview_with_dir(window, port, fallback_dir).map_err(|second_err| {
+        anyhow::anyhow!(
+            "Không thể tạo WebView2 window (primary={:?}; fallback={:?})",
+            last_err,
+            second_err
+        )
+    })
 }
 
 /// Khởi chạy cửa sổ Desktop WebView2 + System Tray trên luồng chính Windows.
@@ -249,6 +296,7 @@ where
     let mut shutdown_tx_opt = Some(shutdown_tx);
     let mut webview: Option<wry::WebView> = None;
     let mut webview_init_attempted = false;
+    let mut webview_failed = false;
     let mut backend_ready = false;
     let mut backend_loaded = false;
 
@@ -273,7 +321,12 @@ where
                                 "⚠️ Không thể nhúng WebView2 (chuyển sang chế độ System Tray + Trình duyệt nền): {}",
                                 err
                             );
+                            webview_failed = true;
                             window.set_visible(false);
+                            if backend_ready && !backend_loaded {
+                                backend_loaded = true;
+                                open_external_url(&browser_url);
+                            }
                         }
                     }
                 }
@@ -291,6 +344,9 @@ where
                     if let Some(wv) = webview.as_ref() {
                         backend_loaded = true;
                         let _ = wv.load_url(&admin_url);
+                    } else if webview_failed {
+                        backend_loaded = true;
+                        open_external_url(&browser_url);
                     }
                 }
             }
