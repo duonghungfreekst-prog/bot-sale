@@ -296,10 +296,13 @@ async fn shortlink_cloak_middleware(
                 } else {
                     None
                 };
-                let short_host = db_short_raw
-                    .as_deref()
-                    .or(state.config.shortlink_base_url.as_deref())
-                    .and_then(extract_host_only);
+                let short_host = crate::config::resolve_effective_shortlink_base_url(
+                    db_short_raw.as_deref(),
+                    state.config.shortlink_base_url.as_deref(),
+                    None,
+                )
+                .as_deref()
+                .and_then(extract_host_only);
                 match short_host {
                     Some(sh) => {
                         let origin_sub = format!("origin.{}", sh);
@@ -655,21 +658,18 @@ async fn render_public_home(
         Some(conn) => Repository::get_active_deals(conn, None).await.unwrap_or_default(),
         None => Vec::new(),
     };
-    let shortlink_base = match conn_opt.as_ref() {
+    let shortlink_db = match conn_opt.as_ref() {
         Some(conn) => Repository::get_setting(conn, "shortlink_base_url")
             .await
             .ok()
-            .flatten()
-            .map(|s| s.trim().trim_end_matches('/').to_string())
-            .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
-            .or_else(|| state.config.shortlink_base_url.clone())
-            .or_else(|| state.config.public_base_url.clone()),
-        None => state
-            .config
-            .shortlink_base_url
-            .clone()
-            .or_else(|| state.config.public_base_url.clone()),
+            .flatten(),
+        None => None,
     };
+    let shortlink_base = crate::config::resolve_effective_shortlink_base_url(
+        shortlink_db.as_deref(),
+        state.config.shortlink_base_url.as_deref(),
+        state.config.public_base_url.as_deref(),
+    );
     let market_vouchers = state.accesstrade.peek_cached_high_discount_vouchers().await;
     let approved = state.accesstrade.peek_approved_campaigns().await;
     let sync_meta = state.accesstrade.get_voucher_sync_meta().await;
@@ -2061,13 +2061,16 @@ async fn handle_dashboard(
         .filter(|s| !s.trim().is_empty())
         .or_else(|| state.config.shopee_social_params.clone())
         .unwrap_or_default();
-    let shortlink_base_url = Repository::get_setting(&conn, "shortlink_base_url")
+    let shortlink_db_raw = Repository::get_setting(&conn, "shortlink_base_url")
         .await
         .ok()
-        .flatten()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| state.config.shortlink_base_url.clone())
-        .unwrap_or_default();
+        .flatten();
+    let shortlink_base_url = crate::config::resolve_effective_shortlink_base_url(
+        shortlink_db_raw.as_deref(),
+        state.config.shortlink_base_url.as_deref(),
+        None,
+    )
+    .unwrap_or_default();
     let shortlink_mobile_only = Repository::get_setting(&conn, "shortlink_mobile_only")
         .await
         .ok()
@@ -3804,7 +3807,7 @@ fn render_shopee_card(
                     </div>
                     <div>
                         <label class="field-label">Tên Miền Bọc Link Riêng / Tunnel (Tùy chọn)</label>
-                        <input type="text" name="shortlink_base_url" value="{}" placeholder="Để trống để trả link Affiliate trực tiếp (hoặc nhập https://...)" class="field-input font-mono">
+                        <input type="text" name="shortlink_base_url" value="{}" placeholder="Mặc định: https://thegioisieusale.click (nhập off để tắt)" class="field-input font-mono">
                         <label class="check-row">
                             <input type="checkbox" name="shortlink_mobile_only" value="1" {}>
                             <span>🛡️ Chặn máy tính soi link bọc (Chỉ cho điện thoại mở giống godeal.online)</span>
@@ -3886,8 +3889,11 @@ async fn handle_update_shopee_settings(
     }
 
     let short_base_trimmed = form.shortlink_base_url.trim().trim_end_matches('/');
-    if !short_base_trimmed.is_empty() && !is_valid_http_url(short_base_trimmed) {
-        return redirect_with_notice("Tên miền bọc link riêng phải bắt đầu bằng https:// hoặc http://.");
+    if !short_base_trimmed.is_empty()
+        && !crate::config::is_shortlink_disabled_value(short_base_trimmed)
+        && !is_valid_http_url(short_base_trimmed)
+    {
+        return redirect_with_notice("Tên miền bọc link riêng phải bắt đầu bằng https:// hoặc http:// (hoặc nhập off để tắt).");
     }
 
     let social_trimmed = form.shopee_social_params.trim();

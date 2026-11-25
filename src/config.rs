@@ -177,11 +177,55 @@ fn resolve_accesstrade_api_token(env_override: Option<String>) -> Option<String>
     Some(String::from_utf8_lossy(&default_at_bytes).to_string())
 }
 
-/// Xác định tên miền bọc link đầu ra (chỉ bật khi cấu hình tường minh SHORTLINK_BASE_URL; mặc định None để gửi link Affiliate trực tiếp khi chạy PC).
+pub const DEFAULT_SHORTLINK_BASE_URL: &str = "https://thegioisieusale.click";
+
+/// Kiểm tra giá trị cấu hình có phải lệnh tắt chế độ bọc link hay không (`off`, `none`, `false`, `direct`).
+pub fn is_shortlink_disabled_value(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "off" | "none" | "false" | "direct"
+    )
+}
+
+/// Xác định tên miền bọc link đầu ra (mặc định bật `https://thegioisieusale.click`; nhập `off`/`none` nếu muốn tắt).
 fn resolve_shortlink_base_url(env_override: Option<String>) -> Option<String> {
-    env_override
+    if let Some(raw) = env_override {
+        let trimmed = raw.trim().trim_end_matches('/').to_string();
+        if is_shortlink_disabled_value(&trimmed) {
+            return None;
+        }
+        if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+            return Some(trimmed);
+        }
+    }
+    Some(DEFAULT_SHORTLINK_BASE_URL.to_string())
+}
+
+/// Giải quyết tên miền bọc link đang hiệu lực theo thứ tự: DB Web Admin -> Config mặc định -> Public URL.
+pub fn resolve_effective_shortlink_base_url(
+    db_setting: Option<&str>,
+    config_shortlink: Option<&str>,
+    public_base: Option<&str>,
+) -> Option<String> {
+    if let Some(raw) = db_setting {
+        let trimmed = raw.trim().trim_end_matches('/');
+        if !trimmed.is_empty() {
+            if is_shortlink_disabled_value(trimmed) {
+                return None;
+            }
+            if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    config_shortlink
         .map(|s| s.trim().trim_end_matches('/').to_string())
         .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
+        .or_else(|| {
+            public_base
+                .map(|s| s.trim().trim_end_matches('/').to_string())
+                .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
+        })
 }
 
 /// Xác định URL công khai HTTPS của dịch vụ (ưu tiên WEBHOOK_BASE_URL, sau đó RENDER_EXTERNAL_URL).
@@ -259,12 +303,31 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_shortlink_base_url_defaults_to_none_for_direct_links() {
-        assert_eq!(resolve_shortlink_base_url(None), None);
+    fn test_resolve_shortlink_base_url_defaults_to_thegioisieusale() {
+        assert_eq!(
+            resolve_shortlink_base_url(None).as_deref(),
+            Some(DEFAULT_SHORTLINK_BASE_URL)
+        );
         assert_eq!(
             resolve_shortlink_base_url(Some("https://go.example.com/".to_string())).as_deref(),
             Some("https://go.example.com")
         );
-        assert_eq!(resolve_shortlink_base_url(Some("khong-hop-le".to_string())), None);
+        assert_eq!(
+            resolve_shortlink_base_url(Some("off".to_string())),
+            None
+        );
+        assert_eq!(
+            resolve_shortlink_base_url(Some("khong-hop-le".to_string())).as_deref(),
+            Some(DEFAULT_SHORTLINK_BASE_URL)
+        );
+        assert_eq!(
+            resolve_effective_shortlink_base_url(Some("off"), Some(DEFAULT_SHORTLINK_BASE_URL), None),
+            None
+        );
+        assert_eq!(
+            resolve_effective_shortlink_base_url(None, Some(DEFAULT_SHORTLINK_BASE_URL), None)
+                .as_deref(),
+            Some(DEFAULT_SHORTLINK_BASE_URL)
+        );
     }
 }

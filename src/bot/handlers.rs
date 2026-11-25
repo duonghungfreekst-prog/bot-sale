@@ -123,12 +123,12 @@ pub(crate) async fn load_owned_aff_settings(
     let shopee_social_params = read_opt("shopee_social_params")
         .await
         .or_else(|| config.shopee_social_params.clone());
-    let shortlink_base = read_opt("shortlink_base_url")
-        .await
-        .map(|s| s.trim().trim_end_matches('/').to_string())
-        .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
-        .or_else(|| config.shortlink_base_url.clone())
-        .or_else(|| config.public_base_url.clone());
+    let shortlink_db = read_opt("shortlink_base_url").await;
+    let shortlink_base = crate::config::resolve_effective_shortlink_base_url(
+        shortlink_db.as_deref(),
+        config.shortlink_base_url.as_deref(),
+        config.public_base_url.as_deref(),
+    );
 
     OwnedAffSettings {
         deeplink_template,
