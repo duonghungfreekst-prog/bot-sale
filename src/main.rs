@@ -155,6 +155,26 @@ async fn run_backend(
         }
     }
 
+    // Nạp ngay cache mã thị trường đã lưu ở DB (nếu có) để bot sẵn sàng bắt voucher tức thì từ giây thứ 0
+    if let Ok(conn) = db.conn() {
+        let tok_opt = Repository::get_setting(&conn, "accesstrade_api_token")
+            .await
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| config.accesstrade_api_token.clone());
+        let cached_json_opt = Repository::get_setting(&conn, "market_vouchers_cache_json")
+            .await
+            .ok()
+            .flatten();
+        if let (Some(tok), Some(cached_json)) = (tok_opt.as_deref(), cached_json_opt.as_deref()) {
+            let seeded = accesstrade.seed_voucher_cache_from_json(tok, cached_json).await;
+            if seeded > 0 {
+                info!("⚡ Đã nạp tức thì {} mã thị trường từ bộ nhớ đệm SQLite!", seeded);
+            }
+        }
+    }
+
     // Tự động nạp trước và cập nhật ĐỊNH KỲ MỖI PHÚT (60s) chiến dịch & kho mã toàn thị trường ACCESSTRADE
     {
         let warmup_db = db.clone();
@@ -180,8 +200,19 @@ async fn run_backend(
                             warn!("Không thể đồng bộ sẵn ACCESSTRADE khi khởi động/định kỳ: {}", err);
                         }
                     }
-                    if let Err(err) = warmup_at.sync_market_vouchers_tick(tok, is_full).await {
-                        warn!("Không thể cập nhật kho mã mỗi phút ACCESSTRADE: {}", err);
+                    match warmup_at.sync_market_vouchers_tick(tok, is_full).await {
+                        Ok(_) => {
+                            if is_full || cycle == 0 {
+                                if let Some(json_str) = warmup_at.export_voucher_cache_json().await {
+                                    if let Ok(conn) = warmup_db.conn() {
+                                        let _ = Repository::set_setting(&conn, "market_vouchers_cache_json", &json_str).await;
+                                    }
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            warn!("Không thể cập nhật kho mã mỗi phút ACCESSTRADE: {}", err);
+                        }
                     }
                 } else {
                     warn!("⚠️ Chưa tìm thấy ACCESSTRADE_API_TOKEN trong Environment hoặc DB.");

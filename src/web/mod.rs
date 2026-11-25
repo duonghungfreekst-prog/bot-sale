@@ -19,7 +19,7 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::bot::handlers::{is_exclusive_deal_relevant, load_owned_aff_settings};
+use crate::bot::handlers::load_owned_aff_settings;
 use crate::config::Config;
 use crate::db::models::{ClickRecord, TrackedOrder};
 use crate::db::repository::{NewDealInput, Repository};
@@ -549,20 +549,32 @@ async fn handle_public_convert(
             };
 
             let mut matched_btns = String::new();
+            let mut seen_btn_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
             if let Ok(deals) = Repository::get_active_deals(&conn, Some(parsed.platform.as_str())).await {
-                for d in deals
-                    .into_iter()
-                    .filter(|d| is_exclusive_deal_relevant(d, &parsed))
-                    .take(2)
-                {
+                for d in crate::bot::handlers::select_top_relevant_deals(&deals, &parsed, 2) {
+                    let enriched_deal_url = crate::bot::handlers::enrich_deal_url_for_platform(
+                        &d.deal_url,
+                        &d.platform,
+                        owned_aff.shopee_affiliate_id.as_deref(),
+                        owned_aff.shopee_social_params.as_deref(),
+                        &parsed.sub_id,
+                    );
+                    if !seen_btn_urls.insert(enriched_deal_url.clone()) {
+                        continue;
+                    }
                     let wrapped_ex = Repository::wrap_url_if_public(
                         &conn,
                         owned_aff.shortlink_base.as_deref(),
-                        &d.deal_url,
+                        &enriched_deal_url,
                         &d.title,
                         &d.platform,
                     )
                     .await;
+                    let short_label: String = if d.discount_desc.chars().count() > 38 {
+                        format!("{}...", d.discount_desc.chars().take(36).collect::<String>())
+                    } else {
+                        d.discount_desc.clone()
+                    };
                     let code_label = d
                         .coupon_code
                         .as_deref()
@@ -572,7 +584,7 @@ async fn handle_public_convert(
                     matched_btns.push_str(&format!(
                         r#"<a class="btn btn--secondary" href="{}" target="_blank" rel="noopener noreferrer">👑 {}{} ↗</a>"#,
                         escape_html(&wrapped_ex),
-                        escape_html(&d.title),
+                        escape_html(&short_label),
                         escape_html(&code_label)
                     ));
                 }
@@ -596,10 +608,17 @@ async fn handle_public_convert(
                     .accesstrade
                     .verified_offer_url(&mv, approved_cached.as_ref())
                     .await;
+                let enriched_v_url = crate::bot::handlers::enrich_deal_url_for_platform(
+                    &raw_v_url,
+                    &mv.platform,
+                    owned_aff.shopee_affiliate_id.as_deref(),
+                    owned_aff.shopee_social_params.as_deref(),
+                    &parsed.sub_id,
+                );
                 let wrapped_v = Repository::wrap_url_if_public(
                     &conn,
                     owned_aff.shortlink_base.as_deref(),
-                    &raw_v_url,
+                    &enriched_v_url,
                     &mv.shop_name,
                     &mv.platform,
                 )

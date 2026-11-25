@@ -78,6 +78,33 @@ impl VoucherOffer {
             "ƯU ĐÃI".to_string()
         }
     }
+
+    /// Kiểm tra mã có phải mã riêng của Shop / Thương hiệu (không phải mã chung toàn sàn)
+    pub fn is_shop_specific(&self) -> bool {
+        !is_generic_platform_voucher_shop(&self.shop_name.to_lowercase(), &self.platform.to_lowercase())
+    }
+}
+
+fn sort_voucher_offers_priority(list: &mut Vec<VoucherOffer>) {
+    list.sort_by(|a, b| {
+        let a_tier = if a.discount_percent >= 20 { 2 } else if a.discount_percent > 0 { 1 } else { 0 };
+        let b_tier = if b.discount_percent >= 20 { 2 } else if b.discount_percent > 0 { 1 } else { 0 };
+        b_tier
+            .cmp(&a_tier)
+            .then_with(|| b.discount_percent.cmp(&a.discount_percent))
+            .then_with(|| {
+                b.discount_amount
+                    .partial_cmp(&a.discount_amount)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| {
+                a.min_spend
+                    .partial_cmp(&b.min_spend)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| a.shop_name.cmp(&b.shop_name))
+    });
+    list.truncate(1500);
 }
 
 #[derive(Deserialize, Debug)]
@@ -311,6 +338,55 @@ impl AccessTradeClient {
     /// Lấy thông tin thời gian đồng bộ kho mã gần nhất (phục vụ hiển thị thời gian thực trên Web & Bot)
     pub async fn get_voucher_sync_meta(&self) -> VoucherSyncMeta {
         self.voucher_meta.read().await.clone()
+    }
+
+    /// Nạp tức thì kho mã đã lưu từ DB SQLite khi mở App (không phải chờ 25-30s đầu quét API)
+    pub async fn seed_voucher_cache_from_json(&self, api_token: &str, json_str: &str) -> usize {
+        let token = clean_api_token(api_token);
+        if token.is_empty() || json_str.trim().is_empty() {
+            return 0;
+        }
+        let Ok(mut list) = serde_json::from_str::<Vec<VoucherOffer>>(json_str) else {
+            return 0;
+        };
+        let vn_now = Utc::now() + chrono::Duration::hours(7);
+        let today_ymd = vn_now.format("%Y-%m-%d").to_string();
+        list.retain(|v| {
+            let exp = v.end_time.trim();
+            !(exp.len() == 10 && exp < today_ymd.as_str())
+        });
+        if list.is_empty() {
+            return 0;
+        }
+        let now = Utc::now().timestamp();
+        let count = list.len();
+        {
+            let mut guard = self.voucher_cache.write().await;
+            if guard.as_ref().map(|(_, _, _, cur)| !cur.is_empty()).unwrap_or(false) {
+                return count;
+            }
+            // Đặt fetched_at = now - 60 để lần tick đầu vẫn làm mới ngầm từ API ngay lập tức
+            *guard = Some((token.to_string(), now - 60, 0, list));
+        }
+        {
+            let mut meta = self.voucher_meta.write().await;
+            if meta.last_sync_vn.is_empty() {
+                meta.last_sync_vn = format!("{} (Cache DB)", vn_now.format("%H:%M:%S %d/%m/%Y"));
+            }
+            meta.total_count = count;
+        }
+        count
+    }
+
+    /// Xuất tối đa 700 mã đang cache thành JSON để lưu bền vững xuống DB
+    pub async fn export_voucher_cache_json(&self) -> Option<String> {
+        let guard = self.voucher_cache.read().await;
+        let (_, _, _, list) = guard.as_ref()?;
+        if list.is_empty() {
+            return None;
+        }
+        let slice = &list[..list.len().min(700)];
+        serde_json::to_string(slice).ok()
     }
 
     /// Lấy danh sách các chiến dịch đã được duyệt trên tài khoản ACCESSTRADE (có cache 3 phút & chống gọi trùng)
@@ -808,7 +884,7 @@ impl AccessTradeClient {
             ]
         };
 
-        for &(base_endpoint, max_pages) in endpoint_groups {
+        for (group_idx, &(base_endpoint, max_pages)) in endpoint_groups.iter().enumerate() {
             for page in 1..=max_pages {
                 let url = format!("{}&page={}", base_endpoint, page);
                 let mut body_text_opt = None;
@@ -869,6 +945,27 @@ impl AccessTradeClient {
 
                 tokio::time::sleep(Duration::from_millis(350)).await;
             }
+
+            // Đổ tạm ngay batch đầu tiên (~1.5s) nếu cache RAM còn rỗng để người dùng vừa mở app có mã dùng liền
+            if group_idx == 0 && !collected.is_empty() {
+                let cache_empty = {
+                    let guard = self.voucher_cache.read().await;
+                    guard.as_ref().map(|(_, _, _, l)| l.is_empty()).unwrap_or(true)
+                };
+                if cache_empty {
+                    let mut early = collected.clone();
+                    sort_voucher_offers_priority(&mut early);
+                    let early_len = early.len();
+                    {
+                        let mut guard = self.voucher_cache.write().await;
+                        *guard = Some((token.to_string(), now, 0, early));
+                    }
+                    let mut meta = self.voucher_meta.write().await;
+                    meta.total_count = early_len;
+                    meta.last_sync_vn = format!("{} (Đang quét tiếp...)", vn_now.format("%H:%M:%S %d/%m/%Y"));
+                }
+            }
+
             if collected.len() >= 1500 {
                 break;
             }
@@ -897,25 +994,7 @@ impl AccessTradeClient {
             }
         }
 
-        // Sắp xếp ưu tiên: mã có % giảm sâu (>=20%) -> % giảm -> số tiền giảm VNĐ -> đơn tối thiểu thấp
-        collected.sort_by(|a, b| {
-            let a_tier = if a.discount_percent >= 20 { 2 } else if a.discount_percent > 0 { 1 } else { 0 };
-            let b_tier = if b.discount_percent >= 20 { 2 } else if b.discount_percent > 0 { 1 } else { 0 };
-            b_tier
-                .cmp(&a_tier)
-                .then_with(|| b.discount_percent.cmp(&a.discount_percent))
-                .then_with(|| {
-                    b.discount_amount
-                        .partial_cmp(&a.discount_amount)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .then_with(|| {
-                    a.min_spend
-                        .partial_cmp(&b.min_spend)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .then_with(|| a.shop_name.cmp(&b.shop_name))
-        });
+        sort_voucher_offers_priority(&mut collected);
 
         collected.truncate(1500);
 

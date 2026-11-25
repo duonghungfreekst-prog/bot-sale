@@ -370,12 +370,9 @@ pub async fn handle_message(
                             .map(|p| format!(" · {}", format_vnd(p)))
                             .unwrap_or_default();
 
-                        let mut voucher_hint = active_deals
-                            .iter()
-                            .find(|d| {
-                                platform_matches(&d.platform, parsed.platform.as_str())
-                                    && is_exclusive_deal_relevant(d, &parsed)
-                            })
+                        let top_deals = select_top_relevant_deals(&active_deals, &parsed, 1);
+                        let mut voucher_hint = top_deals
+                            .first()
                             .map(|d| {
                                 let code = d
                                     .coupon_code
@@ -388,7 +385,19 @@ pub async fn handle_message(
                             .unwrap_or_default();
 
                         if voucher_hint.is_empty() {
-                            let allow_market = match parsed.platform {
+                            let matched_mv = parser
+                                .accesstrade()
+                                .search_matching_vouchers_for_deal(
+                                    parsed.platform.as_str(),
+                                    &parsed.product_title,
+                                    &parsed.clean_url,
+                                    parsed.product_shop.as_deref(),
+                                    parsed.product_brand.as_deref(),
+                                    parsed.product_price_vnd,
+                                    1,
+                                )
+                                .await;
+                            let allow_market_generic = match parsed.platform {
                                 crate::services::deal_parser::Platform::Shopee => {
                                     parsed.is_affiliate
                                         || approved_dynamic
@@ -398,26 +407,12 @@ pub async fn handle_message(
                                 }
                                 _ => true,
                             };
-                            if allow_market {
-                                let matched_mv = parser
-                                    .accesstrade()
-                                    .search_matching_vouchers_for_deal(
-                                        parsed.platform.as_str(),
-                                        &parsed.product_title,
-                                        &parsed.clean_url,
-                                        parsed.product_shop.as_deref(),
-                                        parsed.product_brand.as_deref(),
-                                        parsed.product_price_vnd,
-                                        1,
-                                    )
-                                    .await;
-                                if let Some(mv) = matched_mv.first() {
-                                    voucher_hint = format!(
-                                        "\n   🎟️ <b>{}</b> · Mã: <code>{}</code>",
-                                        escape_html(&mv.discount_badge()),
-                                        escape_html(&mv.coupon_code)
-                                    );
-                                }
+                            if let Some(mv) = matched_mv.into_iter().find(|mv| allow_market_generic || mv.is_shop_specific()) {
+                                voucher_hint = format!(
+                                    "\n   🎟️ <b>{}</b> · Mã: <code>{}</code>",
+                                    escape_html(&mv.discount_badge()),
+                                    escape_html(&mv.coupon_code)
+                                );
                             }
                         }
 
@@ -601,37 +596,23 @@ pub async fn handle_message(
                 };
 
                 let mut voucher_buttons: Vec<(String, String)> = Vec::new();
-                let deals_plat_filter = if parsed.platform.as_str() == "TikTokShop" {
-                    None
-                } else {
-                    Some(parsed.platform.as_str())
-                };
 
-                // Chỉ hiển thị gọn tối đa 2 mã khớp thực tế (nút bấm xếp ngang gọn bên dưới)
-                let mut extra_vouchers_block = match Repository::get_active_deals(&conn, deals_plat_filter).await {
+                // Chỉ hiển thị gọn tối đa 2 mã khớp thực tế (loại bài hướng dẫn rác & chống trùng URL)
+                let mut extra_vouchers_block = match Repository::get_active_deals(&conn, None).await {
                     Ok(deals) => {
-                        let plat_norm = parsed.platform.as_str().replace(' ', "").to_lowercase();
-                        let ex_list: Vec<_> = deals
-                            .into_iter()
-                            .filter(|d| {
-                                d.platform.replace(' ', "").to_lowercase() == plat_norm
-                                    && is_exclusive_deal_relevant(d, &parsed)
-                            })
-                            .take(2)
-                            .collect();
+                        let ex_list = select_top_relevant_deals(&deals, &parsed, 2);
                         if ex_list.is_empty() {
                             String::new()
                         } else {
                             let mut s = String::from("\n\n🎁 <b>Mã Nổi Bật Áp Dụng:</b>");
                             for d in ex_list {
-                                let enriched_deal_url = if parsed.platform.as_str().eq_ignore_ascii_case("Shopee") {
-                                    crate::services::shopee_affiliate::append_social_params_to_shopee_link(
-                                        &d.deal_url,
-                                        owned_aff.shopee_social_params.as_deref(),
-                                    )
-                                } else {
-                                    d.deal_url.clone()
-                                };
+                                let enriched_deal_url = enrich_deal_url_for_platform(
+                                    &d.deal_url,
+                                    &d.platform,
+                                    owned_aff.shopee_affiliate_id.as_deref(),
+                                    owned_aff.shopee_social_params.as_deref(),
+                                    &parsed.sub_id,
+                                );
                                 let wrapped_deal_url = Repository::wrap_url_if_public(
                                     &conn,
                                     shortlink_base.as_deref(),
@@ -659,28 +640,28 @@ pub async fn handle_message(
                 };
 
                 let approved_cached = parser.accesstrade().peek_approved_campaigns().await;
-                let has_approved_shop_ec = match parsed.platform {
+                let allow_market_generic = match parsed.platform {
                     crate::services::deal_parser::Platform::Shopee => {
                         parsed.is_affiliate || approved_cached.as_ref().and_then(|a| a.shopee.as_ref()).is_some()
                     }
                     _ => true,
                 };
-                let matched_market = if has_approved_shop_ec {
-                    parser
-                        .accesstrade()
-                        .search_matching_vouchers_for_deal(
-                            parsed.platform.as_str(),
-                            &parsed.product_title,
-                            &parsed.clean_url,
-                            parsed.product_shop.as_deref(),
-                            parsed.product_brand.as_deref(),
-                            parsed.product_price_vnd,
-                            2,
-                        )
-                        .await
-                } else {
-                    Vec::new()
-                };
+                let matched_market: Vec<_> = parser
+                    .accesstrade()
+                    .search_matching_vouchers_for_deal(
+                        parsed.platform.as_str(),
+                        &parsed.product_title,
+                        &parsed.clean_url,
+                        parsed.product_shop.as_deref(),
+                        parsed.product_brand.as_deref(),
+                        parsed.product_price_vnd,
+                        4,
+                    )
+                    .await
+                    .into_iter()
+                    .filter(|mv| allow_market_generic || mv.is_shop_specific())
+                    .take(2)
+                    .collect();
                 if !matched_market.is_empty() {
                     extra_vouchers_block.push_str("\n\n🎟️ <b>Mã Khớp Đúng Shop/Hãng:</b>");
                     for mv in matched_market {
@@ -688,10 +669,17 @@ pub async fn handle_message(
                             .accesstrade()
                             .verified_offer_url(&mv, approved_cached.as_ref())
                             .await;
+                        let enriched_voucher_url = enrich_deal_url_for_platform(
+                            &direct_voucher_url,
+                            &mv.platform,
+                            owned_aff.shopee_affiliate_id.as_deref(),
+                            owned_aff.shopee_social_params.as_deref(),
+                            &parsed.sub_id,
+                        );
                         let wrapped_voucher_url = Repository::wrap_url_if_public(
                             &conn,
                             shortlink_base.as_deref(),
-                            &direct_voucher_url,
+                            &enriched_voucher_url,
                             &format!("{} - {}", mv.shop_name, mv.discount_desc),
                             &mv.platform,
                         )
@@ -1040,10 +1028,79 @@ pub async fn handle_callback(
     Ok(())
 }
 
+/// Gắn Shopee Affiliate ID (`an_redir`) & chữ ký FB/IG Reels cho link mã ưu đãi Shopee (giữ nguyên link sạch nếu chưa cấu hình).
+pub(crate) fn enrich_deal_url_for_platform(
+    raw_url: &str,
+    platform: &str,
+    shopee_aff_id: Option<&str>,
+    shopee_social_params: Option<&str>,
+    sub_id: &str,
+) -> String {
+    if !platform.trim().eq_ignore_ascii_case("Shopee") {
+        return raw_url.to_string();
+    }
+    let trimmed = raw_url.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    let base_url = if let Some(aff_id) = shopee_aff_id
+        .map(str::trim)
+        .filter(|id| crate::services::shopee_affiliate::is_valid_shopee_affiliate_id(id))
+    {
+        if lower.contains("s.shopee.vn/an_redir") || lower.contains("mmp_pid=an_") {
+            trimmed.to_string()
+        } else {
+            crate::services::shopee_affiliate::build_direct_an_redir_link(trimmed, aff_id, sub_id)
+        }
+    } else {
+        trimmed.to_string()
+    };
+    crate::services::shopee_affiliate::append_social_params_to_shopee_link(&base_url, shopee_social_params)
+}
+
+fn parse_discount_pct_hint(text: &str) -> u32 {
+    let bytes = text.as_bytes();
+    let mut best = 0u32;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'%' && i > 0 {
+            let start = bytes[..i]
+                .iter()
+                .rposition(|c| !c.is_ascii_digit())
+                .map(|p| p + 1)
+                .unwrap_or(0);
+            if let Ok(v) = text[start..i].parse::<u32>() {
+                if v <= 99 {
+                    best = best.max(v);
+                }
+            }
+        }
+    }
+    best
+}
+
 /// Kiểm tra mã độc quyền trong DB có thực sự áp được cho sản phẩm đang dán (toàn sàn hoặc khớp shop/từ khóa) hay không
 pub fn is_exclusive_deal_relevant(deal: &crate::db::models::DealItem, parsed: &ParsedDeal) -> bool {
-    if !deal.platform.eq_ignore_ascii_case(parsed.platform.as_str()) {
+    if !platform_matches(&deal.platform, parsed.platform.as_str()) {
         return false;
+    }
+
+    // Loại các bài viết hướng dẫn chung không có link săn mã trực tiếp
+    let desc_lower = deal.discount_desc.to_lowercase();
+    let url_lower = deal.deal_url.to_lowercase();
+    let has_direct_voucher_target = url_lower.contains("evcode=")
+        || url_lower.contains("promotionid=")
+        || url_lower.contains("shopee.vn/search?");
+    if !has_direct_voucher_target
+        && (desc_lower.contains("hướng dẫn lấy mã")
+            || desc_lower.contains("khi ấn link lấy mã")
+            || desc_lower.contains("cách lấy mã"))
+    {
+        return false;
+    }
+
+    // Kiểm tra điều kiện giá tối thiểu nếu đã đọc được giá sản phẩm thật
+    if let Some(price) = parsed.product_price_vnd.filter(|&p| p > 0.0) {
+        if deal.min_spend > 0.0 && price < deal.min_spend {
+            return false;
+        }
     }
 
     // Nếu tiêu đề mã có tiền tố [Tên Shop], kiểm tra xem có phải mã toàn sàn hay khớp shop/brand/tên sản phẩm không
@@ -1074,6 +1131,53 @@ pub fn is_exclusive_deal_relevant(deal: &crate::db::models::DealItem, parsed: &P
     }
 
     true
+}
+
+/// Chọn tối đa `limit` mã độc quyền / FB-IG chất lượng nhất (ưu tiên link săn mã thật, % giảm cao, không trùng URL).
+pub(crate) fn select_top_relevant_deals<'a>(
+    deals: &'a [crate::db::models::DealItem],
+    parsed: &ParsedDeal,
+    limit: usize,
+) -> Vec<&'a crate::db::models::DealItem> {
+    let mut ranked: Vec<(u8, bool, u32, i64, &'a crate::db::models::DealItem)> = deals
+        .iter()
+        .filter(|d| d.is_active && is_exclusive_deal_relevant(d, parsed))
+        .map(|d| {
+            let url_lower = d.deal_url.to_lowercase();
+            let has_voucher_query = url_lower.contains("evcode=")
+                || url_lower.contains("promotionid=")
+                || url_lower.contains("shopee.vn/search?");
+            let pct = parse_discount_pct_hint(&d.discount_desc)
+                .max(parse_discount_pct_hint(&d.title));
+            let specificity = if d.title.starts_with('[') && !d.title.to_lowercase().contains("toàn sàn") {
+                2u8
+            } else {
+                1u8
+            };
+            (specificity, has_voucher_query, pct, d.id, d)
+        })
+        .collect();
+
+    ranked.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.cmp(&a.1))
+            .then_with(|| b.2.cmp(&a.2))
+            .then_with(|| b.3.cmp(&a.3))
+    });
+
+    let mut seen_urls = std::collections::HashSet::new();
+    let mut selected = Vec::with_capacity(limit);
+    for (_, _, _, _, deal) in ranked {
+        let norm_url = deal.deal_url.trim().trim_end_matches('/').to_string();
+        if !norm_url.is_empty() && !seen_urls.insert(norm_url) {
+            continue;
+        }
+        selected.push(deal);
+        if selected.len() >= limit {
+            break;
+        }
+    }
+    selected
 }
 
 #[cfg(test)]
@@ -1159,5 +1263,61 @@ mod tests {
         assert!(platform_matches("TikTok Shop", "TikTokShop"));
         assert!(platform_matches("shopee", "Shopee"));
         assert!(!platform_matches("Shopee", "TikTokShop"));
+    }
+
+    #[test]
+    fn test_select_top_relevant_deals_filters_guides_and_dedups_urls() {
+        let parsed = ParsedDeal {
+            platform: Platform::Shopee,
+            product_title: "Dầu bôi trơn Rubik".to_string(),
+            product_price_vnd: Some(65000.0),
+            product_shop: None,
+            product_brand: None,
+            product_image_url: None,
+            original_url: "https://s.shopee.vn/9zzaB4uv6M".to_string(),
+            resolved_url: "https://shopee.vn/product/1/2".to_string(),
+            clean_url: "https://shopee.vn/product/1/2".to_string(),
+            affiliate_url: "https://shopee.vn/product/1/2".to_string(),
+            is_affiliate: true,
+            affiliate_note: None,
+            click_id: "c1".to_string(),
+            sub_id: "s1".to_string(),
+            primary_voucher: SaleVoucher {
+                name: "Test".to_string(),
+                discount_desc: "Desc".to_string(),
+                min_spend_desc: "0đ".to_string(),
+                remaining_percent: 80,
+                back_hours: "12H".to_string(),
+            },
+            estimated_cashback_text: String::new(),
+            tips: vec![],
+        };
+
+        let make = |id: i64, code: &str, desc: &str, url: &str, min_spend: f64| DealItem {
+            id,
+            platform: "Shopee".to_string(),
+            title: "[Toàn sàn] Test".to_string(),
+            discount_desc: desc.to_string(),
+            coupon_code: Some(code.to_string()),
+            min_spend,
+            deal_url: url.to_string(),
+            is_exclusive: true,
+            is_active: true,
+            expire_at: None,
+        };
+
+        let deals = vec![
+            make(1, "KOL_FB_22", "📌 Hướng dẫn lấy mã độc quyền Shopee x Facebook 22%", "https://shopee.vn/m/kol", 0.0),
+            make(2, "KOL_FB_20", "Voucher 20% toàn sàn", "https://shopee.vn/m/kol", 0.0),
+            make(3, "SHP_AUTO_1", "Mã 23% tối đa 500k đơn từ 150K", "https://shopee.vn/search?evcode=ABC1&promotionId=111", 150000.0),
+            make(4, "SHP_AUTO_2", "Mã 30% tối đa 100k đơn từ 50K", "https://shopee.vn/search?evcode=ABC2&promotionId=222", 50000.0),
+            make(5, "SHP_AUTO_DUP", "Mã 25% trùng URL với SHP_AUTO_2", "https://shopee.vn/search?evcode=ABC2&promotionId=222", 50000.0),
+        ];
+
+        let top = select_top_relevant_deals(&deals, &parsed, 2);
+        // Hướng dẫn #1 bị loại; #3 cần đơn 150k > giá 65k nên bị loại; #5 trùng URL #4 nên bị loại!
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0].coupon_code.as_deref(), Some("SHP_AUTO_2"));
+        assert_eq!(top[1].coupon_code.as_deref(), Some("KOL_FB_20"));
     }
 }

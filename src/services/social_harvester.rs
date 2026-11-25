@@ -116,10 +116,34 @@ pub fn extract_shopee_config_http_url(html: &str) -> Option<String> {
     None
 }
 
-/// Lần tối đa 2 chặng redirect / HTML JS-bridge để lấy URL đích thực sự chứa chữ ký Shopee FB/IG.
+fn upgrade_shopee_short_url(raw: &str) -> String {
+    let trimmed = raw.trim().replace("&amp;", "&");
+    for prefix in ["http://s.shopee.vn/", "http://shp.ee/", "http://vn.shp.ee/"] {
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            return format!("https://{}", &prefix["http://".len()..]) + rest;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        if lower.starts_with(prefix) {
+            return format!("https://{}", &trimmed["http://".len()..]);
+        }
+    }
+    trimmed
+}
+
+fn is_guide_noise_deal_text(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    lower.contains("hướng dẫn lấy mã")
+        || lower.contains("hướng dẫn săn mã")
+        || lower.contains("khi ấn link lấy mã")
+        || lower.contains("nhớ vào live")
+        || lower.contains("sếp nên lựa")
+        || lower.contains("cách lấy mã")
+}
+
+/// Lần tối đa N chặng redirect / HTML JS-bridge để lấy URL đích thực sự chứa chữ ký Shopee FB/IG.
 async fn probe_url_for_social_candidates(http: &Client, url: &str, max_hops: u8) -> Vec<String> {
     let mut out = Vec::new();
-    let mut current_url = url.to_string();
+    let mut current_url = upgrade_shopee_short_url(url);
     for _ in 0..max_hops {
         let Ok(resp) = http
             .get(&current_url)
@@ -142,8 +166,9 @@ async fn probe_url_for_social_candidates(http: &Client, url: &str, max_hops: u8)
         }
         let body = resp.text().await.unwrap_or_default();
         if let Some(cfg) = extract_shopee_config_http_url(&body) {
-            out.push(cfg.clone());
-            if extract_social_passthrough_params(&cfg)
+            let upgraded_cfg = upgrade_shopee_short_url(&cfg);
+            out.push(upgraded_cfg.clone());
+            if extract_social_passthrough_params(&upgraded_cfg)
                 .as_deref()
                 .map(social_param_strength)
                 .unwrap_or(0)
@@ -151,8 +176,10 @@ async fn probe_url_for_social_candidates(http: &Client, url: &str, max_hops: u8)
             {
                 break;
             }
-            if cfg != current_url && (cfg.contains("s.shopee.vn/") || cfg.contains("shp.ee/")) {
-                current_url = cfg;
+            if upgraded_cfg != current_url
+                && (upgraded_cfg.contains("s.shopee.vn/") || upgraded_cfg.contains("shp.ee/"))
+            {
+                current_url = upgraded_cfg;
                 continue;
             }
         }
@@ -307,12 +334,21 @@ pub fn parse_magiamgiashopee_deals(raw_html: &str) -> Vec<NewDealInput> {
             .and_then(|m| m.as_str().parse::<u32>().ok())
             .unwrap_or(0);
 
+        // Bỏ qua các đoạn văn bản hướng dẫn chung chung (không phải deal săn mã cụ thể)
+        let is_guide_only = is_guide_noise_deal_text(&text)
+            && !inline_clean_url
+                .as_deref()
+                .map(|u| u.contains("shopee.vn/search?") || u.contains("evcode=") || u.contains("promotionId="))
+                .unwrap_or(false);
+        if is_guide_only {
+            continue;
+        }
+
         // Ưu tiên 1: Mã Instagram / Facebook từ block MÃ SHOPEE KOL
         if (is_ig || is_fb) && pct_val >= 15 {
-            let deal_url = inline_clean_url
-                .clone()
-                .or_else(|| section_url.clone())
-                .unwrap_or_else(|| "https://shopee.vn/m/kol-affiliate".to_string());
+            let Some(deal_url) = inline_clean_url.clone().or_else(|| section_url.clone()) else {
+                continue;
+            };
             let (code, title) = if is_ig {
                 (
                     format!("KOL_IG_{}", pct_val),
@@ -412,7 +448,7 @@ fn collect_shortlinks_from_html(
 
     let mut extracted = Vec::new();
     for m in re_short.find_iter(html) {
-        let u = m.as_str().replace("&amp;", "&");
+        let u = upgrade_shopee_short_url(m.as_str());
         if let Some(origin) = extract_origin_link_from_an_redir(&u) {
             consider_best_params(scanned_best, &origin);
         } else {
@@ -420,7 +456,7 @@ fn collect_shortlinks_from_html(
         }
     }
     for m in re_bare_shopee.find_iter(html) {
-        let full = format!("https://{}", m.as_str());
+        let full = upgrade_shopee_short_url(&format!("https://{}", m.as_str()));
         extracted.push(full);
     }
 
@@ -572,7 +608,7 @@ pub async fn sync_social_all_once(
             for link in chunk {
                 let client = http.clone();
                 let target = link.clone();
-                join_set.spawn(async move { probe_url_for_social_candidates(&client, &target, 2).await });
+                join_set.spawn(async move { probe_url_for_social_candidates(&client, &target, 3).await });
             }
             while let Some(res) = join_set.join_next().await {
                 if let Ok(candidates) = res {
