@@ -860,24 +860,36 @@ impl DealParser {
                 Err(err_msg) => {
                     warn!("Fallback khỏi ACCESSTRADE API sang link dự phòng: {}", err_msg);
                     affiliate_note = Some(err_msg);
-                    self.build_affiliate_url(
+                    let (fb_url, fb_sub, fb_is_aff) = self.build_affiliate_url(
                         &clean_url,
                         settings.deeplink_template,
                         user_id,
                         referrer_id,
                         &click_id,
-                    )
+                    );
+                    let final_fb_url = if platform == Platform::Shopee {
+                        append_social_params_to_shopee_link(&fb_url, settings.shopee_social_params)
+                    } else {
+                        fb_url
+                    };
+                    (final_fb_url, fb_sub, fb_is_aff)
                 }
             }
         } else {
             // 2. Fallback sang Deeplink Template hoặc Clean URL
-            self.build_affiliate_url(
+            let (fb_url, fb_sub, fb_is_aff) = self.build_affiliate_url(
                 &clean_url,
                 settings.deeplink_template,
                 user_id,
                 referrer_id,
                 &click_id,
-            )
+            );
+            let final_fb_url = if platform == Platform::Shopee {
+                append_social_params_to_shopee_link(&fb_url, settings.shopee_social_params)
+            } else {
+                fb_url
+            };
+            (final_fb_url, fb_sub, fb_is_aff)
         };
 
         let (primary_voucher, tips) = self.pick_best_voucher(&platform, is_affiliate);

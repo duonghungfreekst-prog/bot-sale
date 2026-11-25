@@ -539,29 +539,37 @@ pub async fn handle_message(
 
                 let mut voucher_buttons: Vec<(String, String)> = Vec::new();
 
-                // Chỉ hiển thị & đính link trực tiếp cho mã khớp ĐÚNG với shop / thương hiệu / toàn sàn của sản phẩm này
+                // Chỉ hiển thị & đính link trực tiếp cho mã khớp ĐÚNG với shop / thương hiệu / toàn sàn / FB-IG KOL
                 let mut extra_vouchers_block = match Repository::get_active_deals(&conn, Some(parsed.platform.as_str())).await {
                     Ok(deals) => {
                         let ex_list: Vec<_> = deals
                             .into_iter()
                             .filter(|d| is_exclusive_deal_relevant(d, &parsed))
-                            .take(2)
+                            .take(3)
                             .collect();
                         if ex_list.is_empty() {
                             String::new()
                         } else {
                             let has_exclusive = ex_list.iter().any(|d| d.is_exclusive);
                             let block_title = if has_exclusive {
-                                "\n\n👑 <b>MÃ ĐỘC QUYỀN ÁP DỤNG CHO SẢN PHẨM NÀY:</b>"
+                                "\n\n👑 <b>MÃ ĐỘC QUYỀN · FB/IG ÁP DỤNG CHO SẢN PHẨM NÀY:</b>"
                             } else {
                                 "\n\n🎁 <b>MÃ ƯU ĐÃI ĐÃ LƯU ÁP DỤNG CHO SẢN PHẨM NÀY:</b>"
                             };
                             let mut s = String::from(block_title);
                             for d in ex_list {
+                                let enriched_deal_url = if parsed.platform.as_str().eq_ignore_ascii_case("Shopee") {
+                                    crate::services::shopee_affiliate::append_social_params_to_shopee_link(
+                                        &d.deal_url,
+                                        owned_aff.shopee_social_params.as_deref(),
+                                    )
+                                } else {
+                                    d.deal_url.clone()
+                                };
                                 let wrapped_deal_url = Repository::wrap_url_if_public(
                                     &conn,
                                     shortlink_base.as_deref(),
-                                    &d.deal_url,
+                                    &enriched_deal_url,
                                     &d.title,
                                     &d.platform,
                                 )
@@ -579,9 +587,11 @@ pub async fn handle_message(
                                     code_tag,
                                     escape_html(&wrapped_deal_url)
                                 ));
-                                if voucher_buttons.len() < 2 && !wrapped_deal_url.trim().is_empty() {
-                                    let prefix = if d.is_exclusive { "👑 Lấy Mã Độc Quyền" } else { "🎁 Mở Mã Ưu Đãi" };
+                                if voucher_buttons.len() < 3 && !wrapped_deal_url.trim().is_empty() {
+                                    let prefix = if d.is_exclusive { "👑 Lấy Mã" } else { "🎁 Mở Mã" };
                                     let btn_label = match d.coupon_code.as_deref().filter(|c| !c.trim().is_empty()) {
+                                        Some(c) if c.starts_with("KOL_IG") => "📸 Lấy Mã IG 50% KOL".to_string(),
+                                        Some(c) if c.starts_with("KOL_FB") => "📘 Lấy Mã FB 30% KOL".to_string(),
                                         Some(c) => format!("{} · {}", prefix, c),
                                         None => format!("{} · {}", prefix, d.title),
                                     };
@@ -658,19 +668,19 @@ pub async fn handle_message(
                     .filter(|id| crate::services::shopee_affiliate::is_valid_shopee_affiliate_id(id));
                 for (label, raw_portal_url) in raw_portals {
                     let portal_target = if parsed.platform.as_str().eq_ignore_ascii_case("Shopee") {
-                        if let Some(aff_id) = shopee_direct_aff {
-                            let an_redir = crate::services::shopee_affiliate::build_direct_an_redir_link(
+                        let base_portal = if let Some(aff_id) = shopee_direct_aff {
+                            crate::services::shopee_affiliate::build_direct_an_redir_link(
                                 raw_portal_url,
                                 aff_id,
                                 &parsed.sub_id,
-                            );
-                            crate::services::shopee_affiliate::append_social_params_to_shopee_link(
-                                &an_redir,
-                                owned_aff.shopee_social_params.as_deref(),
                             )
                         } else {
                             raw_portal_url.to_string()
-                        }
+                        };
+                        crate::services::shopee_affiliate::append_social_params_to_shopee_link(
+                            &base_portal,
+                            owned_aff.shopee_social_params.as_deref(),
+                        )
                     } else {
                         raw_portal_url.to_string()
                     };

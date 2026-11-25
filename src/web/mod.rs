@@ -141,6 +141,7 @@ fn build_router(state: AppState) -> Router {
         .route("/admin/settings/notifications", post(handle_update_notifications))
         .route("/admin/orders/sync", post(handle_sync_orders))
         .route("/admin/vouchers/sync", post(handle_sync_vouchers))
+        .route("/admin/social/sync", post(handle_sync_social))
         .route("/admin/deals/add", post(handle_add_deal))
         .route("/admin/deals/import", post(handle_import_deals))
         .route("/admin/deals/toggle", post(handle_toggle_deal))
@@ -2181,6 +2182,30 @@ async fn handle_dashboard(
         .filter(|s| !s.trim().is_empty())
         .or_else(|| state.config.shopee_social_params.clone())
         .unwrap_or_default();
+    let social_deals_count = saved_deals
+        .iter()
+        .filter(|d| {
+            d.is_active
+                && d.platform.eq_ignore_ascii_case("Shopee")
+                && d.coupon_code
+                    .as_deref()
+                    .map(|c| c.starts_with("KOL_") || c.starts_with("SHP_AUTO_"))
+                    .unwrap_or(false)
+        })
+        .count();
+    let social_harvester_status_html = if !shopee_social_params.trim().is_empty() {
+        format!(
+            r#"<span class="badge badge--ok">🟢 Đã bắt chữ ký FB/IG · {} mã FB/IG/KOL</span>"#,
+            social_deals_count
+        )
+    } else if social_deals_count > 0 {
+        format!(
+            r#"<span class="badge badge--info">🎁 Đã nhặt {} mã Shopee FB/IG/KOL</span>"#,
+            social_deals_count
+        )
+    } else {
+        r#"<span class="badge badge--warn">🟡 Đang chờ chu kỳ quét hoặc bấm Quét Ngay</span>"#.to_string()
+    };
     let shortlink_db_raw = Repository::get_setting(&conn, "shortlink_base_url")
         .await
         .ok()
@@ -3476,15 +3501,17 @@ async fn handle_dashboard(
                     <div class="social-icon">🤖</div>
                     <div>
                         <div class="card-title">
-                            <span>Shopee Social Harvester — Tự Động Bắt Chữ Ký FB &amp; IG Reels</span>
-                            <span class="badge badge--ok">🟢 Quét Ngầm 30 Phút/Lần</span>
+                            <span>Shopee Social Harvester — Tự Động Nhặt Mã &amp; Chữ Ký FB / IG Reels</span>
+                            {}
                         </div>
                         <p class="card-desc">
-                            Hệ thống tự động quét các nguồn deal lớn để trích xuất chữ ký số mạng xã hội (<code>sm_sig_id</code>, <code>channel_type=ig</code>) giúp 100% link Shopee do bot cấp cho khách mở khóa <b>Mã Giảm 20% - 30% độc quyền</b>!
+                            Hệ thống tự động quét kênh deal Telegram &amp; trang mã công khai (mỗi 30 phút) để nhặt <b>Mã Instagram / Facebook KOL</b> và chữ ký số (<code>channel_type=fb/ig</code>, <code>sm_sig_id</code>) gắn thẳng vào link Shopee cho khách!
                         </p>
                     </div>
                 </div>
-                <div class="social-hint">💡 Hoặc dán thẳng link FB/Insta vào bot Telegram @vvipass_vip_bot để nạp ngay!</div>
+                <form method="POST" action="/admin/social/sync" style="margin: 0;">
+                    <button type="submit" class="btn btn--primary btn--sm">🤖 Quét Ngay Mã FB/IG</button>
+                </form>
             </section>
 
             <!-- Lịch sử dán link gần nhất -->
@@ -3788,6 +3815,7 @@ async fn handle_dashboard(
         tiki_vouchers,
         saved_deals.len(),
         escape_html(&last_sync_display),
+        social_harvester_status_html,
         clicks_rows,
         at_status_badge,
         campaign_status_html,
@@ -4324,6 +4352,29 @@ async fn handle_sync_vouchers(headers: HeaderMap, State(state): State<AppState>)
         )),
         Err(err) => redirect_with_notice(&format!("Lỗi đồng bộ kho mã: {}", err)),
     }
+}
+
+async fn handle_sync_social(headers: HeaderMap, State(state): State<AppState>) -> Response {
+    if !is_authenticated(&state, &headers).await {
+        return Redirect::to("/admin/login").into_response();
+    }
+
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let report = crate::services::social_harvester::sync_social_all_once(&http, &state.db, &state.config).await;
+    let sig_note = if let Some(ref p) = report.harvested_params {
+        format!("chữ ký FB/IG ({})", p)
+    } else {
+        "chưa có chữ ký passthrough mới".to_string()
+    };
+    redirect_with_notice(&format!(
+        "Đã quét xong Shopee FB/IG: {} · nhặt được {} mã (+{} mới, cập nhật {} mã)!",
+        sig_note, report.deals_found, report.deals_inserted, report.deals_updated
+    ))
 }
 
 #[derive(serde::Deserialize)]

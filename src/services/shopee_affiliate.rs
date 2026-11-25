@@ -237,9 +237,54 @@ const SOCIAL_PASSTHROUGH_KEYS: [&str; 9] = [
     "gads_t_sig",
 ];
 
-/// Trích xuất bộ tham số phiên mạng xã hội hợp lệ từ link mẫu hoặc chuỗi query (như cơ chế passthrough IG/FB Reels)
+fn normalize_escaped_url_str(raw: &str) -> String {
+    raw.trim()
+        .replace("\\/", "/")
+        .replace("\\u0026", "&")
+        .replace("\\u003d", "=")
+        .replace("\\u003D", "=")
+        .replace("&amp;", "&")
+}
+
+/// Giải mã `origin_link` sạch bên trong link `s.shopee.vn/an_redir` (loại bỏ affiliate_id & tracking bên thứ ba).
+pub fn extract_origin_link_from_an_redir(raw_url: &str) -> Option<String> {
+    let clean = normalize_escaped_url_str(raw_url);
+    let parsed = url::Url::parse(&clean).ok()?;
+    let host = parsed.host_str()?.to_ascii_lowercase();
+    if host.contains("shopee.vn") && parsed.path().starts_with("/an_redir") {
+        for (k, v) in parsed.query_pairs() {
+            if k == "origin_link" {
+                let target = v.trim();
+                let target_no_hash = target.split('#').next().unwrap_or(target);
+                if target_no_hash.starts_with("https://") || target_no_hash.starts_with("http://") {
+                    return Some(target_no_hash.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Đánh giá độ mạnh của bộ tham số Shopee Social (3: sm_sig_id/encrypted_payload, 2: channel_type+content_source/type, 1: gads_t_sig).
+pub fn social_param_strength(sample_input: &str) -> u8 {
+    let Some(extra) = extract_social_passthrough_params(sample_input) else {
+        return 0;
+    };
+    if extra.contains("sm_sig_id=") || extra.contains("encrypted_payload=") {
+        return 3;
+    }
+    if extra.contains("channel_type=")
+        && (extra.contains("content_source=") || extra.contains("content_type="))
+    {
+        return 2;
+    }
+    1
+}
+
+/// Trích xuất bộ tham số phiên mạng xã hội hợp lệ từ link mẫu hoặc chuỗi query (hỗ trợ cả IG/FB Reels, sm_sig_id, gads_t_sig)
 pub fn extract_social_passthrough_params(sample_input: &str) -> Option<String> {
-    let trimmed = sample_input.trim();
+    let normalized = normalize_escaped_url_str(sample_input);
+    let trimmed = normalized.trim();
     if trimmed.is_empty() {
         return None;
     }
@@ -252,6 +297,9 @@ pub fn extract_social_passthrough_params(sample_input: &str) -> Option<String> {
 
     let mut kept = Vec::new();
     let mut has_sig_or_payload = false;
+    let mut has_channel_type = false;
+    let mut has_social_context = false;
+    let mut has_long_gads_sig = false;
 
     for pair in query_clean.split('&') {
         let Some((raw_key, raw_val)) = pair.split_once('=') else {
@@ -268,20 +316,31 @@ pub fn extract_social_passthrough_params(sample_input: &str) -> Option<String> {
         if !is_safe_val {
             continue;
         }
-        if key == "sm_sig_id" || key == "encrypted_payload" {
-            has_sig_or_payload = true;
+        match key {
+            "sm_sig_id" | "encrypted_payload" => has_sig_or_payload = true,
+            "channel_type" => {
+                if matches!(val.to_ascii_lowercase().as_str(), "fb" | "ig" | "facebook" | "instagram") {
+                    has_channel_type = true;
+                }
+            }
+            "content_source" | "content_type" | "fb_content_id" => has_social_context = true,
+            "gads_t_sig" if val.len() >= 40 => has_long_gads_sig = true,
+            _ => {}
         }
         kept.push(format!("{}={}", key, val));
     }
 
-    if has_sig_or_payload && !kept.is_empty() {
+    let is_valid = has_sig_or_payload
+        || (has_channel_type && has_social_context)
+        || has_long_gads_sig;
+    if is_valid && !kept.is_empty() {
         Some(kept.join("&"))
     } else {
         None
     }
 }
 
-/// Nối bộ tham số phiên mở khóa mã IG/FB Reels vào đuôi link Shopee Affiliate (s.shopee.vn)
+/// Nối bộ tham số phiên mở khóa mã IG/FB Reels vào đuôi link Shopee Affiliate hoặc Shopee sạch
 pub fn append_social_params_to_shopee_link(
     shopee_url: &str,
     raw_social_sample: Option<&str>,
@@ -289,7 +348,10 @@ pub fn append_social_params_to_shopee_link(
     let Some(extra) = raw_social_sample.and_then(extract_social_passthrough_params) else {
         return shopee_url.to_string();
     };
-    if !shopee_url.contains("shopee.vn") || shopee_url.contains("sm_sig_id=") {
+    if !shopee_url.contains("shopee.vn")
+        || shopee_url.contains("sm_sig_id=")
+        || shopee_url.contains("channel_type=")
+    {
         return shopee_url.to_string();
     }
     let sep = if shopee_url.contains('?') { '&' } else { '?' };
@@ -541,8 +603,22 @@ mod tests {
         let on_redir = append_social_params_to_shopee_link(an_redir, Some(&extracted));
         assert!(on_redir.starts_with(&format!("{}&fb_content_id=", an_redir)));
 
-        // Nếu không chứa sm_sig_id hay encrypted_payload thì từ chối
+        // Nếu không chứa sm_sig_id / encrypted_payload / context social hợp lệ thì từ chối
         assert!(extract_social_passthrough_params("channel_type=ig&fbclid=123").is_none());
+
+        // Hỗ trợ cả link Reels thực tế dùng channel_type=fb + content_source=fb + content_type=REELS
+        let fb_reels = "https://shopee.vn/m/shopeehangviet?channel_type=fb&content_source=fb&content_type=REELS&mmp_pid=an_123";
+        let fb_extracted = extract_social_passthrough_params(fb_reels).unwrap();
+        assert_eq!(fb_extracted, "channel_type=fb&content_source=fb&content_type=REELS");
+        assert_eq!(social_param_strength(sample_full), 3);
+        assert_eq!(social_param_strength(&fb_extracted), 2);
+
+        // Tách origin_link sạch từ an_redir (bỏ affiliate_id bên ngoài)
+        let ext_redir = "https://s.shopee.vn/an_redir?origin_link=https%3A%2F%2Fshopee.vn%2Fm%2Fkol-affiliate%231625&amp;utm_medium=affiliates&amp;affiliate_id=17309660489";
+        assert_eq!(
+            extract_origin_link_from_an_redir(ext_redir).as_deref(),
+            Some("https://shopee.vn/m/kol-affiliate")
+        );
     }
 
     #[test]
