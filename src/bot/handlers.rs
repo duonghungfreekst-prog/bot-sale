@@ -122,10 +122,13 @@ pub(crate) async fn load_owned_aff_settings(
         .await
         .or_else(|| config.shopee_social_params.clone());
     let shortlink_db = read_opt("shortlink_base_url").await;
-    let shortlink_base = crate::config::resolve_effective_shortlink_base_url(
+    let tunnel_snap = crate::services::tunnel::snapshot_tunnel_state();
+    let shortlink_base = crate::config::resolve_pc_runtime_shortlink_base_url(
         shortlink_db.as_deref(),
         config.shortlink_base_url.as_deref(),
         config.public_base_url.as_deref(),
+        tunnel_snap.quick_tunnel_url.as_deref(),
+        tunnel_snap.has_named_token,
     );
 
     OwnedAffSettings {

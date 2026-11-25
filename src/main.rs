@@ -139,6 +139,9 @@ async fn main() -> anyhow::Result<()> {
         config.clone(),
     );
 
+    // 1.8 Tự động kích hoạt Cloudflare Tunnel khi chạy trên PC (Named Tunnel nếu có Token, hoặc Quick Tunnel tự động)
+    services::tunnel::ensure_tunnel_running(&db, &config).await;
+
     // 2. Kiểm tra xem token Telegram đã được cấu hình chưa
     if config.telegram_token.contains("DEMO_TOKEN") || config.telegram_token.trim().is_empty() {
         info!("-------------------------------------------------------");
@@ -151,6 +154,7 @@ async fn main() -> anyhow::Result<()> {
         
         // Giữ Web Admin Server chạy liên tục, tuyệt đối không exit làm sập Render Web Service
         let _ = web_handle.await;
+        services::tunnel::stop_active_tunnel().await;
         return Ok(());
     }
 
@@ -166,6 +170,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    services::tunnel::stop_active_tunnel().await;
     Ok(())
 }
 

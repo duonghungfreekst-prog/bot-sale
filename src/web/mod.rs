@@ -296,17 +296,20 @@ async fn shortlink_cloak_middleware(
                 } else {
                     None
                 };
-                let short_host = crate::config::resolve_effective_shortlink_base_url(
+                let tunnel_snap = crate::services::tunnel::snapshot_tunnel_state();
+                let short_host = crate::config::resolve_pc_runtime_shortlink_base_url(
                     db_short_raw.as_deref(),
                     state.config.shortlink_base_url.as_deref(),
                     None,
+                    tunnel_snap.quick_tunnel_url.as_deref(),
+                    tunnel_snap.has_named_token,
                 )
                 .as_deref()
                 .and_then(extract_host_only);
                 match short_host {
                     Some(sh) => {
                         let origin_sub = format!("origin.{}", sh);
-                        (sh == rh || rh == origin_sub)
+                        (sh == rh || rh == origin_sub || rh.ends_with(".trycloudflare.com"))
                             && public_host.as_deref() != Some(sh.as_str())
                             && !(public_host.is_none() && rh.ends_with(".onrender.com"))
                     }
@@ -665,10 +668,13 @@ async fn render_public_home(
             .flatten(),
         None => None,
     };
-    let shortlink_base = crate::config::resolve_effective_shortlink_base_url(
+    let tunnel_snap = crate::services::tunnel::snapshot_tunnel_state();
+    let shortlink_base = crate::config::resolve_pc_runtime_shortlink_base_url(
         shortlink_db.as_deref(),
         state.config.shortlink_base_url.as_deref(),
         state.config.public_base_url.as_deref(),
+        tunnel_snap.quick_tunnel_url.as_deref(),
+        tunnel_snap.has_named_token,
     );
     let market_vouchers = state.accesstrade.peek_cached_high_discount_vouchers().await;
     let approved = state.accesstrade.peek_approved_campaigns().await;
@@ -2065,10 +2071,22 @@ async fn handle_dashboard(
         .await
         .ok()
         .flatten();
-    let shortlink_base_url = crate::config::resolve_effective_shortlink_base_url(
+    let db_cf_token = Repository::get_setting(&conn, "cloudflare_tunnel_token")
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty());
+    let env_cf_token = std::env::var("CLOUDFLARE_TUNNEL_TOKEN")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+    let has_cf_tunnel_token = db_cf_token.is_some() || env_cf_token.is_some();
+    let tunnel_snap = crate::services::tunnel::snapshot_tunnel_state();
+    let shortlink_base_url = crate::config::resolve_pc_runtime_shortlink_base_url(
         shortlink_db_raw.as_deref(),
         state.config.shortlink_base_url.as_deref(),
         None,
+        tunnel_snap.quick_tunnel_url.as_deref(),
+        tunnel_snap.has_named_token,
     )
     .unwrap_or_default();
     let shortlink_mobile_only = Repository::get_setting(&conn, "shortlink_mobile_only")
@@ -2115,6 +2133,9 @@ async fn handle_dashboard(
         public_home_cloak,
         origin_base_for_worker,
         &state.config.bot_username,
+        has_cf_tunnel_token,
+        tunnel_snap.quick_tunnel_url.as_deref(),
+        tunnel_snap.is_running,
     );
     let order_alerts_card_html = render_order_alerts_card(&admin_telegram_id_val, &tracked_orders);
 
@@ -3726,19 +3747,44 @@ fn render_shopee_card(
     public_home_cloak: bool,
     origin_base_url: &str,
     bot_username: &str,
+    has_cf_tunnel_token: bool,
+    quick_tunnel_url: Option<&str>,
+    tunnel_is_running: bool,
 ) -> String {
     let status_badge = if !app_id.trim().is_empty() && !app_secret.trim().is_empty() {
         format!(
-            r#"<span class="px-2.5 py-1 bg-green-500/20 text-green-400 rounded-lg text-xs font-semibold">🟢 Đang bật Open API (Secret: {})</span>"#,
+            r#"<span class="badge badge--ok">🟢 Đang bật Open API (Secret: {})</span>"#,
             escape_html(&mask_token(app_secret))
         )
     } else if is_valid_shopee_affiliate_id(aff_id) {
         format!(
-            r#"<span class="px-2.5 py-1 bg-green-500/20 text-green-400 rounded-lg text-xs font-semibold">🟢 Đang bật Direct Affiliate ID: {}</span>"#,
+            r#"<span class="badge badge--ok">🟢 Đang bật Direct Affiliate ID: {}</span>"#,
             escape_html(aff_id.trim())
         )
     } else {
-        r#"<span class="px-2.5 py-1 bg-gray-700 text-gray-300 rounded-lg text-xs font-semibold">⚪ Chưa cấu hình — đang dùng luồng ACCESSTRADE</span>"#.to_string()
+        r#"<span class="badge badge--muted">⚪ Chưa cấu hình — đang dùng luồng ACCESSTRADE</span>"#.to_string()
+    };
+
+    let tunnel_badge_html = if has_cf_tunnel_token && tunnel_is_running {
+        r#"<span class="badge badge--ok">🌐 Named Tunnel đang chạy</span>"#.to_string()
+    } else if let Some(qt) = quick_tunnel_url {
+        format!(
+            r#"<span class="badge badge--info">⚡ Auto Tunnel: {}</span>"#,
+            escape_html(qt)
+        )
+    } else {
+        r#"<span class="badge badge--warn">⚠️ Tunnel chưa bật</span>"#.to_string()
+    };
+
+    let tunnel_token_badge = if has_cf_tunnel_token {
+        "🟢 Đã lưu Token cố định"
+    } else {
+        "Chưa gắn — đang tự chạy Quick Tunnel"
+    };
+    let tunnel_token_placeholder = if has_cf_tunnel_token {
+        "Để trống để giữ Token hiện tại (hoặc dán Token mới để đổi)..."
+    } else {
+        "Dán Cloudflare Tunnel Token (eyJ... hoặc cả lệnh service install) để giữ cố định thegioisieusale.click..."
     };
 
     let secret_placeholder = if app_secret.trim().is_empty() {
@@ -3776,38 +3822,50 @@ fn render_shopee_card(
                 <div>
                     <h2 class="card-title"><span>🟠</span><span>Kết Nối Shopee Affiliate Chính Chủ &amp; Bọc Link Riêng</span></h2>
                     <p class="card-desc">
-                        Ưu tiên link Shopee chính chủ qua Open API hoặc <code>s.shopee.vn/an_redir</code>. Khi gắn <code>Tên Miền Bọc Link Riêng</code> (qua Tunnel/Worker), mọi đường dẫn đầu ra tự động được bọc gọn 8 ký tự.
+                        Ưu tiên link Shopee chính chủ qua Open API hoặc <code>s.shopee.vn/an_redir</code>. Khi chạy trên PC, hệ thống <b>tự động bật Cloudflare Tunnel</b> ngay khi mở server — không cần thao tác tay!
                     </p>
                 </div>
-                <div>{}</div>
+                <div class="card-head-actions">{}{}</div>
             </div>
             <form method="POST" action="/admin/settings/shopee" class="form-stack">
                 <div class="grid-3">
                     <div>
                         <label class="field-label">Shopee Affiliate ID (Dùng ngay qua an_redir)</label>
-                        <input type="text" name="shopee_affiliate_id" value="{}" placeholder="Ví dụ: 17375520550 (5-20 chữ số)" class="field-input font-mono">
+                        <input type="text" name="shopee_affiliate_id" value="{}" placeholder="Ví dụ: 17375520550 (5-20 chữ số)" class="field-input field-input--mono">
                     </div>
                     <div>
                         <label class="field-label">Shopee Open API AppID (Tùy chọn)</label>
-                        <input type="text" name="shopee_app_id" value="{}" placeholder="Nhập AppID từ affiliate.shopee.vn..." class="field-input font-mono">
+                        <input type="text" name="shopee_app_id" value="{}" placeholder="Nhập AppID từ affiliate.shopee.vn..." class="field-input field-input--mono">
                     </div>
                     <div>
                         <label class="field-label">Shopee Open API Secret Key (Tùy chọn)</label>
-                        <input type="password" name="shopee_app_secret" placeholder="{}" class="field-input font-mono">
+                        <input type="password" name="shopee_app_secret" placeholder="{}" class="field-input field-input--mono">
                     </div>
                 </div>
                 <div class="grid-2 divider-top">
-                    <div>
-                        <label class="field-label">Bộ Tham Số Phiên IG/FB Reels Passthrough (<span style="color:#fdba74;">{}</span>)</label>
-                        <input type="password" name="shopee_social_params" placeholder="{}" class="field-input font-mono">
-                        <label class="check-row">
-                            <input type="checkbox" name="clear_social_params" value="1">
-                            <span>Xóa bộ tham số phiên IG/FB đang lưu</span>
-                        </label>
+                    <div class="form-stack">
+                        <div>
+                            <label class="field-label">Bộ Tham Số Phiên IG/FB Reels Passthrough (<span style="color:#fdba74;">{}</span>)</label>
+                            <input type="password" name="shopee_social_params" placeholder="{}" class="field-input field-input--mono">
+                            <label class="check-row" style="margin-top:0.45rem;">
+                                <input type="checkbox" name="clear_social_params" value="1">
+                                <span>Xóa bộ tham số phiên IG/FB đang lưu</span>
+                            </label>
+                        </div>
                     </div>
-                    <div>
-                        <label class="field-label">Tên Miền Bọc Link Riêng / Tunnel (Tùy chọn)</label>
-                        <input type="text" name="shortlink_base_url" value="{}" placeholder="Mặc định: https://thegioisieusale.click (nhập off để tắt)" class="field-input font-mono">
+                    <div class="form-stack">
+                        <div>
+                            <label class="field-label">Tên Miền Bọc Link Riêng / Tunnel Đang Dùng</label>
+                            <input type="text" name="shortlink_base_url" value="{}" placeholder="Mặc định: tự động Quick Tunnel hoặc https://thegioisieusale.click (nhập off để tắt)" class="field-input field-input--mono">
+                        </div>
+                        <div>
+                            <label class="field-label">Cloudflare Named Tunnel Token (<span style="color:#7dd3fc;">{}</span>)</label>
+                            <input type="password" name="cloudflare_tunnel_token" placeholder="{}" class="field-input field-input--mono">
+                            <label class="check-row" style="margin-top:0.45rem;">
+                                <input type="checkbox" name="clear_tunnel_token" value="1">
+                                <span>Xóa Tunnel Token đã lưu (quay về Auto Quick Tunnel)</span>
+                            </label>
+                        </div>
                         <label class="check-row">
                             <input type="checkbox" name="shortlink_mobile_only" value="1" {}>
                             <span>🛡️ Chặn máy tính soi link bọc (Chỉ cho điện thoại mở giống godeal.online)</span>
@@ -3820,22 +3878,21 @@ fn render_shopee_card(
                 </div>
                 <div>
                     <button type="submit" class="btn btn--primary">
-                        💾 Lưu Cấu Hình Shopee &amp; Bọc Link
+                        💾 Lưu Cấu Hình Shopee &amp; Tự Động Áp Dụng Tunnel
                     </button>
                 </div>
             </form>
             <details class="cf-details">
                 <summary class="cf-summary">
-                    ☁️ Hướng dẫn nối tên miền bọc link (VD: thegioisieusale.click) về bot chạy trên PC qua Cloudflare Tunnel
+                    ☁️ Hướng dẫn gắn tên miền cố định (thegioisieusale.click) cho Cloudflare Tunnel (Tùy chọn — không gắn vẫn tự chạy Quick Tunnel)
                 </summary>
                 <div class="cf-body">
                     <ol class="cf-steps">
-                        <li>Vào <b>one.dash.cloudflare.com</b> (Zero Trust → Networks → Tunnels) tạo 1 Tunnel mới, trỏ Public Hostname <code>origin.thegioisieusale.click</code> (hoặc <code>origin.&lt;tên_miền&gt;</code>) về <code>HTTP</code> <code>127.0.0.1:10000</code>, rồi dán Tunnel Token vào dòng <code>CLOUDFLARE_TUNNEL_TOKEN=</code> trong file <code>.env</code> (khi chạy <code>run_salehunter_bot.bat</code> sẽ tự mở Tunnel).</li>
-                        <li>Vào <b>dash.cloudflare.com</b> → <b>Workers &amp; Pages</b> → chọn Worker của tên miền bọc (VD: <code>thegioisieusale.click</code>) → <b>Edit code</b>, dán toàn bộ code bên dưới vào rồi bấm <b>Deploy</b>.</li>
-                        <li>Nhập tên miền bọc (VD: <code>https://thegioisieusale.click</code>) vào ô <b>Tên Miền Bọc Link Riêng</b> ở trên và bấm <b>Lưu</b>.</li>
-                        <li>Mọi đường dẫn bot gửi sẽ có dạng <code>https://thegioisieusale.click/8_ky_tu</code>; trang chủ <code>/</code> phục vụ Trang Đích 3D tại Cloudflare Edge và mọi đường dẫn nội bộ (<code>/admin</code>, <code>/convert</code>, <code>/health</code>...) đều trả <code>404 Not Found</code> khi truy cập từ Internet!</li>
+                        <li>Vào <b>one.dash.cloudflare.com</b> (Zero Trust → Networks → Tunnels) tạo 1 Tunnel mới, trỏ Public Hostname <code>origin.thegioisieusale.click</code> về <code>HTTP</code> <code>127.0.0.1:10000</code>, rồi dán Tunnel Token vào ô <b>Cloudflare Named Tunnel Token</b> ở trên và bấm <b>Lưu</b> (hệ thống tự kích hoạt ngay).</li>
+                        <li>Vào <b>dash.cloudflare.com</b> → <b>Workers &amp; Pages</b> → chọn Worker của <code>thegioisieusale.click</code> → <b>Edit code</b>, dán toàn bộ code bên dưới vào rồi bấm <b>Deploy</b>.</li>
+                        <li>Mọi đường dẫn bot gửi sẽ cố định dạng <code>https://thegioisieusale.click/8_ky_tu</code>; trang chủ <code>/</code> phục vụ Trang Đích 3D tại Cloudflare Edge và mọi đường dẫn nội bộ (<code>/admin</code>, <code>/convert</code>, <code>/health</code>...) đều trả <code>404 Not Found</code> khi truy cập từ Internet!</li>
                     </ol>
-                    <textarea id="cf-worker-code" readonly rows="10" class="field-input font-mono code-textarea">{}</textarea>
+                    <textarea id="cf-worker-code" readonly rows="10" class="field-input field-input--mono code-textarea">{}</textarea>
                     <div>
                         <button type="button" class="btn btn--secondary js-copy-link" data-copy-target="cf-worker-code">
                             📋 Sao chép Code Cloudflare Worker
@@ -3845,12 +3902,15 @@ fn render_shopee_card(
             </details>
         </section>"##,
         status_badge,
+        tunnel_badge_html,
         escape_html(aff_id),
         escape_html(app_id),
         secret_placeholder,
         social_badge,
         social_placeholder,
         escape_html(shortlink_base_url),
+        tunnel_token_badge,
+        tunnel_token_placeholder,
         mobile_checked,
         home_cloak_checked,
         escape_html(&worker_code)
@@ -3868,6 +3928,10 @@ pub struct ShopeeSettingsForm {
     pub clear_social_params: Option<String>,
     #[serde(default)]
     pub shortlink_base_url: String,
+    #[serde(default)]
+    pub cloudflare_tunnel_token: String,
+    #[serde(default)]
+    pub clear_tunnel_token: Option<String>,
     #[serde(default)]
     pub shortlink_mobile_only: Option<String>,
     #[serde(default)]
@@ -3912,6 +3976,22 @@ async fn handle_update_shopee_settings(
         None
     };
 
+    let tunnel_tok_trimmed = form.cloudflare_tunnel_token.trim();
+    let validated_tunnel_tok = if form.clear_tunnel_token.as_deref() == Some("1") {
+        Some(String::new())
+    } else if !tunnel_tok_trimmed.is_empty() {
+        match crate::services::tunnel::extract_tunnel_token(tunnel_tok_trimmed) {
+            Some(tok) => Some(tok),
+            None => {
+                return redirect_with_notice(
+                    "Cloudflare Tunnel Token chưa hợp lệ (phải chứa chuỗi token bắt đầu bằng eyJ...).",
+                );
+            }
+        }
+    } else {
+        None
+    };
+
     let Ok(conn) = state.db.conn() else {
         return redirect_with_notice("Lỗi kết nối cơ sở dữ liệu.");
     };
@@ -3924,6 +4004,9 @@ async fn handle_update_shopee_settings(
     }
     if let Some(social_val) = validated_social {
         let _ = Repository::set_setting(&conn, "shopee_social_params", &social_val).await;
+    }
+    if let Some(tok_val) = validated_tunnel_tok {
+        let _ = Repository::set_setting(&conn, "cloudflare_tunnel_token", &tok_val).await;
     }
     let _ = Repository::set_setting(&conn, "shortlink_base_url", short_base_trimmed).await;
     let mobile_flag = if form.shortlink_mobile_only.as_deref() == Some("1") {
@@ -3939,8 +4022,10 @@ async fn handle_update_shopee_settings(
     };
     let _ = Repository::set_setting(&conn, "public_home_cloak", home_cloak_flag).await;
 
+    crate::services::tunnel::ensure_tunnel_running(&state.db, &state.config).await;
+
     info!("✅ Quản trị viên đã cập nhật cấu hình Shopee Chính Chủ & Bọc Link trên Web Admin.");
-    redirect_with_notice("Đã lưu cấu hình Shopee Chính Chủ & Bộ Bọc Link an toàn!")
+    redirect_with_notice("Đã lưu cấu hình Shopee Chính Chủ & đồng bộ Cloudflare Tunnel ngay lập tức!")
 }
 
 async fn handle_sync_accesstrade(headers: HeaderMap, State(state): State<AppState>) -> Response {

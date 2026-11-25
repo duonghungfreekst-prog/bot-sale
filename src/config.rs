@@ -228,6 +228,29 @@ pub fn resolve_effective_shortlink_base_url(
         })
 }
 
+/// Giải quyết tên miền bọc link thực tế khi chạy PC: nếu chưa gắn Cloudflare Named Tunnel Token
+/// mà Quick Tunnel tự động đang chạy thì ưu tiên URL Quick Tunnel sống để 100% link không bị 404.
+pub fn resolve_pc_runtime_shortlink_base_url(
+    db_setting: Option<&str>,
+    config_shortlink: Option<&str>,
+    public_base: Option<&str>,
+    quick_tunnel_url: Option<&str>,
+    has_named_tunnel: bool,
+) -> Option<String> {
+    let effective = resolve_effective_shortlink_base_url(db_setting, config_shortlink, public_base)?;
+    if public_base.is_none() && !has_named_tunnel {
+        if let Some(qt) = quick_tunnel_url
+            .map(str::trim)
+            .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
+        {
+            if effective.eq_ignore_ascii_case(DEFAULT_SHORTLINK_BASE_URL) {
+                return Some(qt.trim_end_matches('/').to_string());
+            }
+        }
+    }
+    Some(effective)
+}
+
 /// Xác định URL công khai HTTPS của dịch vụ (ưu tiên WEBHOOK_BASE_URL, sau đó RENDER_EXTERNAL_URL).
 fn resolve_public_base_url() -> Option<String> {
     let raw = read_env_non_empty("WEBHOOK_BASE_URL")
