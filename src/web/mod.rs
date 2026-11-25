@@ -1351,6 +1351,31 @@ fn is_desktop_browser(headers: &HeaderMap) -> bool {
         && (ua.contains("windows nt") || ua.contains("macintosh") || ua.contains("x11; linux"))
 }
 
+fn is_mobile_browser(headers: &HeaderMap) -> bool {
+    let sec_mobile = headers
+        .get("sec-ch-ua-mobile")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .trim();
+    if sec_mobile == "?1" {
+        return true;
+    }
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+    ua.contains("android")
+        || ua.contains("iphone")
+        || ua.contains("ipad")
+        || ua.contains("ipod")
+        || ua.contains("mobile")
+        || ua.contains("telegram")
+        || ua.contains("zalo")
+        || ua.contains("fban")
+        || ua.contains("fbav")
+}
+
 /// Mã hóa XOR payload link đích bằng khóa ngẫu nhiên 8 byte để không lộ URL thô trong mã nguồn HTML
 fn encode_bridge_payload(url: &str) -> (String, String) {
     let mut rng = rand::rng();
@@ -1566,8 +1591,8 @@ async fn handle_shortlink_redirect(
 
     let _ = Repository::increment_short_link_click(&conn, code_trimmed).await;
 
-    // Khi Admin tắt chặn máy tính (mobile_only = false), chuyển hướng 302 trực tiếp để test nhanh trên PC
-    if !mobile_only {
+    // Trên máy tính PC khi Admin tắt mobile_only, cho 302 trực tiếp để test nhanh; còn trên điện thoại luôn qua Cầu nối Mobile thông minh!
+    if !mobile_only && !is_mobile_browser(&headers) {
         let mut response = StatusCode::FOUND.into_response();
         if let Ok(loc_val) = HeaderValue::from_str(&record.target_url) {
             response.headers_mut().insert(header::LOCATION, loc_val);
@@ -1596,6 +1621,7 @@ async fn handle_shortlink_redirect(
     } else {
         record.platform.trim().to_string()
     };
+    let mobile_only_flag = if mobile_only { "1" } else { "0" };
     let bridge_html = format!(
         r##"<!DOCTYPE html>
 <html lang="vi">
@@ -1639,7 +1665,7 @@ async fn handle_shortlink_redirect(
         }}
     </style>
 </head>
-<body data-p="{}" data-k="{}" data-mobile-only="1">
+<body data-p="{}" data-k="{}" data-mobile-only="{}">
     <main class="card">
         <div id="bridge-spinner" class="spinner" aria-hidden="true"></div>
         <h1 id="bridge-title">🚀 Đang mở {}...</h1>
@@ -1658,6 +1684,7 @@ async fn handle_shortlink_redirect(
         escape_html(&plat_label),
         escape_html(&payload_hex),
         escape_html(&key_hex),
+        mobile_only_flag,
         escape_html(&plat_label)
     );
 
@@ -4930,14 +4957,35 @@ DongLoiThieuCot | 123
         let k_hex = mobile_body.split("data-k=\"").nth(1).unwrap().split('"').next().unwrap();
         assert_eq!(decode_bridge_payload(p_hex, k_hex).as_deref(), Some(secret_target));
 
-        // 4. Tắt shortlink_mobile_only -> trả 302 Found trực tiếp tới secret_target
+        // 4. Tắt shortlink_mobile_only: Mobile vẫn nhận Cầu nối Smart Bridge (data-mobile-only="0"), còn PC nhận 302 Found trực tiếp
         {
             let conn = state.db.conn().unwrap();
             Repository::set_setting(&conn, "shortlink_mobile_only", "0").await.unwrap();
         }
+        let resp_mobile_open = handle_shortlink_redirect(
+            Path(code.clone()),
+            mobile_hdrs,
+            State(state.clone()),
+        )
+        .await;
+        assert_eq!(resp_mobile_open.status(), StatusCode::OK);
+        let mobile_open_body = String::from_utf8(
+            axum::body::to_bytes(resp_mobile_open.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(mobile_open_body.contains("data-mobile-only=\"0\""));
+
+        let mut pc_hdrs = HeaderMap::new();
+        pc_hdrs.insert(
+            header::USER_AGENT,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0".parse().unwrap(),
+        );
         let resp_302 = handle_shortlink_redirect(
             Path(code),
-            mobile_hdrs,
+            pc_hdrs,
             State(state),
         )
         .await;

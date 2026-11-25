@@ -50,13 +50,17 @@ pub fn deal_action_keyboard(
         target_url,
     )]];
 
+    let mut voucher_row = Vec::new();
     for (label, raw_voucher_url) in voucher_links.iter().take(2) {
         if let Ok(parsed_voucher_url) = Url::parse(raw_voucher_url) {
-            rows.push(vec![InlineKeyboardButton::url(
+            voucher_row.push(InlineKeyboardButton::url(
                 label.clone(),
                 parsed_voucher_url,
-            )]);
+            ));
         }
+    }
+    if !voucher_row.is_empty() {
+        rows.push(voucher_row);
     }
 
     let mut portal_row = Vec::new();

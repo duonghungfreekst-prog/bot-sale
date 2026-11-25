@@ -2,7 +2,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use teloxide::{
     prelude::*,
-    types::{LinkPreviewOptions, ParseMode},
+    types::{InputFile, LinkPreviewOptions, ParseMode},
     utils::command::BotCommands,
 };
 use tracing::{error, warn};
@@ -497,57 +497,41 @@ pub async fn handle_message(
                     .as_deref()
                     .map(crate::services::shopee_affiliate::social_param_strength)
                     .unwrap_or(0);
+                let display_title = if parsed.product_title == "Sản Phẩm Shopee" {
+                    "Sản Phẩm Shopee Đang Chọn".to_string()
+                } else {
+                    parsed.product_title.clone()
+                };
                 let header_line = if parsed.is_affiliate {
                     let label = if parsed.platform.as_str().eq_ignore_ascii_case("Shopee") && social_strength >= 3 {
-                        "Mã FB / IG 20-24% · 🟠 98%".to_string()
+                        "🎯 Link FB / IG Reels · Sẵn sàng áp mã 20-50%".to_string()
                     } else if parsed.platform.as_str().eq_ignore_ascii_case("Shopee") {
-                        format!(
-                            "{} · 🟠 {}%",
-                            escape_html(&parsed.primary_voucher.name),
-                            parsed.primary_voucher.remaining_percent
-                        )
+                        "🎯 Link Ưu Đãi Shopee Đã Kích Hoạt".to_string()
                     } else {
-                        format!(
-                            "{} · 🟢 {}%",
-                            escape_html(&parsed.primary_voucher.name),
-                            parsed.primary_voucher.remaining_percent
-                        )
+                        format!("🎯 Link Ưu Đãi {} Đã Kích Hoạt", escape_html(parsed.platform.as_str()))
                     };
-                    format!(
-                        "👉 <b>{} :</b>\n{} (<code>{}</code>)\n<i>{}</i>",
-                        label,
-                        safe_aff_url,
-                        escape_html(&parsed.primary_voucher.min_spend_desc),
-                        escape_html(&parsed.primary_voucher.discount_desc),
-                    )
+                    format!("<b>{}</b>\n👉 {}", label, safe_aff_url)
                 } else {
-                    let note_line = if is_admin {
-                        parsed
-                            .affiliate_note
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty())
-                            .map(|s| format!("\n<i>(Admin: {} — nhập Shopee Affiliate ID trong Web Admin để tạo link s.shopee.vn)</i>", escape_html(s)))
-                            .unwrap_or_default()
+                    let admin_hint = if is_admin && parsed.platform.as_str().eq_ignore_ascii_case("Shopee") {
+                        "\n⚙️ <i>Admin: Chưa gắn Shopee Affiliate ID</i>"
                     } else {
-                        String::new()
+                        ""
                     };
                     format!(
-                        "👉 <b>{}</b>\n{}\n<i>{}</i>{}",
-                        escape_html(&parsed.primary_voucher.name),
+                        "👉 <b>Link Mở App {}:</b>\n{}{}",
+                        escape_html(parsed.platform.as_str()),
                         safe_aff_url,
-                        escape_html(&parsed.primary_voucher.discount_desc),
-                        note_line
+                        admin_hint
                     )
                 };
 
                 let meta_line = {
                     let mut parts = Vec::new();
                     if let Some(shop) = parsed.product_shop.as_deref() {
-                        parts.push(format!("🏪 <b>{}</b>", escape_html(shop)));
+                        parts.push(format!("🏪 {}", escape_html(shop)));
                     }
                     if let Some(brand) = parsed.product_brand.as_deref() {
-                        parts.push(format!("🏷️ <b>{}</b>", escape_html(brand)));
+                        parts.push(format!("🏷️ {}", escape_html(brand)));
                     }
                     if let Some(price) = parsed.product_price_vnd.filter(|&p| p > 0.0) {
                         parts.push(format!("💰 <b>{}</b>", escape_html(&format_vnd(price))));
@@ -560,19 +544,28 @@ pub async fn handle_message(
                 };
 
                 let mut voucher_buttons: Vec<(String, String)> = Vec::new();
+                let deals_plat_filter = if parsed.platform.as_str() == "TikTokShop" {
+                    None
+                } else {
+                    Some(parsed.platform.as_str())
+                };
 
-                // Chỉ hiển thị gọn tối đa 2 mã khớp đúng shop / KOL FB-IG và đưa nút bấm xuống bàn phím bên dưới
-                let mut extra_vouchers_block = match Repository::get_active_deals(&conn, Some(parsed.platform.as_str())).await {
+                // Chỉ hiển thị gọn tối đa 2 mã khớp thực tế (nút bấm xếp ngang gọn bên dưới)
+                let mut extra_vouchers_block = match Repository::get_active_deals(&conn, deals_plat_filter).await {
                     Ok(deals) => {
+                        let plat_norm = parsed.platform.as_str().replace(' ', "").to_lowercase();
                         let ex_list: Vec<_> = deals
                             .into_iter()
-                            .filter(|d| is_exclusive_deal_relevant(d, &parsed))
+                            .filter(|d| {
+                                d.platform.replace(' ', "").to_lowercase() == plat_norm
+                                    && is_exclusive_deal_relevant(d, &parsed)
+                            })
                             .take(2)
                             .collect();
                         if ex_list.is_empty() {
                             String::new()
                         } else {
-                            let mut s = String::from("\n\n🎁 <b>Mã Kho Khớp (chạm nút bên dưới để lưu):</b>");
+                            let mut s = String::from("\n\n🎁 <b>Mã Nổi Bật Áp Dụng:</b>");
                             for d in ex_list {
                                 let enriched_deal_url = if parsed.platform.as_str().eq_ignore_ascii_case("Shopee") {
                                     crate::services::shopee_affiliate::append_social_params_to_shopee_link(
@@ -590,17 +583,14 @@ pub async fn handle_message(
                                     &d.platform,
                                 )
                                 .await;
-                                s.push_str(&format!(
-                                    "\n• <b>{}</b> — {}",
-                                    escape_html(&d.title),
-                                    escape_html(&d.discount_desc)
-                                ));
+                                let short_desc: String = d.discount_desc.chars().take(70).collect();
+                                s.push_str(&format!("\n• {}", escape_html(&short_desc)));
                                 if voucher_buttons.len() < 2 && !wrapped_deal_url.trim().is_empty() {
                                     let btn_label = match d.coupon_code.as_deref().filter(|c| !c.trim().is_empty()) {
-                                        Some(c) if c.starts_with("KOL_IG") => "📸 Lấy Mã IG 50% KOL".to_string(),
-                                        Some(c) if c.starts_with("KOL_FB") => "📘 Lấy Mã FB 30% KOL".to_string(),
-                                        Some(c) => format!("👑 Lấy Mã {}", c),
-                                        None => format!("👑 {}", d.title),
+                                        Some(c) if c.starts_with("KOL_IG") => "📸 Mã IG 50%".to_string(),
+                                        Some(c) if c.starts_with("KOL_FB") => "📘 Mã FB 30%".to_string(),
+                                        Some(c) => format!("🎟️ {}", c),
+                                        None => format!("🎟️ {}", d.title.chars().take(18).collect::<String>()),
                                     };
                                     voucher_buttons.push((btn_label, wrapped_deal_url));
                                 }
@@ -612,20 +602,30 @@ pub async fn handle_message(
                 };
 
                 let approved_cached = parser.accesstrade().peek_approved_campaigns().await;
-                let matched_market = parser
-                    .accesstrade()
-                    .search_matching_vouchers_for_deal(
-                        parsed.platform.as_str(),
-                        &parsed.product_title,
-                        &parsed.clean_url,
-                        parsed.product_shop.as_deref(),
-                        parsed.product_brand.as_deref(),
-                        parsed.product_price_vnd,
-                        2,
-                    )
-                    .await;
+                let has_approved_shop_ec = match parsed.platform {
+                    crate::services::deal_parser::Platform::Shopee => {
+                        parsed.is_affiliate || approved_cached.as_ref().and_then(|a| a.shopee.as_ref()).is_some()
+                    }
+                    _ => true,
+                };
+                let matched_market = if has_approved_shop_ec {
+                    parser
+                        .accesstrade()
+                        .search_matching_vouchers_for_deal(
+                            parsed.platform.as_str(),
+                            &parsed.product_title,
+                            &parsed.clean_url,
+                            parsed.product_shop.as_deref(),
+                            parsed.product_brand.as_deref(),
+                            parsed.product_price_vnd,
+                            2,
+                        )
+                        .await
+                } else {
+                    Vec::new()
+                };
                 if !matched_market.is_empty() {
-                    extra_vouchers_block.push_str("\n\n🎟️ <b>MÃ KHỚP ĐÚNG SHOP / TOÀN SÀN CHO SẢN PHẨM NÀY:</b>");
+                    extra_vouchers_block.push_str("\n\n🎟️ <b>Mã Khớp Đúng Shop/Hãng:</b>");
                     for mv in matched_market {
                         let direct_voucher_url = parser
                             .accesstrade()
@@ -640,16 +640,14 @@ pub async fn handle_message(
                         )
                         .await;
                         extra_vouchers_block.push_str(&format!(
-                            "\n• <b>[{}] {}</b> · Mã: <code>{}</code>\n  💬 {} · 👉 <a href=\"{}\">Mở Shop &amp; Lấy Mã ↗</a>",
+                            "\n• <b>[{}]</b> <code>{}</code> — {}",
                             escape_html(&mv.discount_badge()),
-                            escape_html(&mv.shop_name),
                             escape_html(&mv.coupon_code),
-                            escape_html(&mv.discount_desc),
-                            escape_html(&wrapped_voucher_url)
+                            escape_html(&mv.discount_desc)
                         ));
                         if voucher_buttons.len() < 2 {
                             voucher_buttons.push((
-                                format!("🎟️ Lấy Mã {} · {}", mv.discount_badge(), mv.coupon_code),
+                                format!("🎟️ {} · {}", mv.discount_badge(), mv.coupon_code),
                                 wrapped_voucher_url,
                             ));
                         }
@@ -659,12 +657,12 @@ pub async fn handle_message(
                 // Bọc luôn các nút cổng voucher sàn để 100% nút trên Telegram đi qua domain bọc link
                 let raw_portals: Vec<(&str, &str)> = match parsed.platform.as_str().to_lowercase().as_str() {
                     "shopee" => vec![
-                        ("🎟️ Lưu Mã Shopee", "https://shopee.vn/m/ma-giam-gia"),
+                        ("🎟️ Kho Mã Shopee", "https://shopee.vn/m/ma-giam-gia"),
                         ("🎬 Săn Mã Video", "https://shopee.vn/m/shopee-video"),
                     ],
-                    "lazada" => vec![("🎟️ Thu Thập Voucher Lazada", "https://www.lazada.vn/voucher")],
-                    "tiki" => vec![("🎟️ Cổng Voucher Tiki", "https://tiki.vn/khuyen-mai/ma-giam-gia")],
-                    "alibaba" => vec![("🌐 Trang Chủ Alibaba.com", "https://www.alibaba.com")],
+                    "lazada" => vec![("🎟️ Voucher Lazada", "https://www.lazada.vn/voucher")],
+                    "tiki" => vec![("🎟️ Cổng Mã Tiki", "https://tiki.vn/khuyen-mai/ma-giam-gia")],
+                    "alibaba" => vec![("🌐 Alibaba.com", "https://www.alibaba.com")],
                     _ => Vec::new(),
                 };
                 let mut portal_buttons = Vec::with_capacity(raw_portals.len());
@@ -702,46 +700,69 @@ pub async fn handle_message(
                     portal_buttons.push((label.to_string(), wrapped_portal));
                 }
 
+                let back_line = if parsed.platform.as_str() == "TikTokShop" {
+                    String::new()
+                } else {
+                    format!("\n\n⏰ <b>Back mã:</b> {}", escape_html(&parsed.primary_voucher.back_hours))
+                };
                 let tip_line = parsed
                     .tips
                     .first()
                     .map(|t| escape_html(t))
                     .unwrap_or_else(|| {
-                        "Cập nhật App sàn, xoá sản phẩm cũ trong giỏ hàng hoặc bấm lấy mã bên dưới trước.".to_string()
+                        "Xoá sản phẩm cũ khỏi giỏ hàng trước khi bấm mua để nhận đúng mã.".to_string()
                     });
 
                 let reply_html = format!(
-                    "📦 <b>{}</b>\n\
-                     {}{}{}\n\n\
-                     ⏰ <b>BACK MÃ LÚC:</b> {}\n\n\
-                     ⚠️ <i>{}</i>",
-                    escape_html(&parsed.product_title),
+                    "🛍️ <b>{}</b>\n\
+                     {}{}{}{}\n\
+                     💡 <i>{}</i>",
+                    escape_html(&display_title),
                     meta_line,
                     header_line,
                     extra_vouchers_block,
-                    escape_html(&parsed.primary_voucher.back_hours),
+                    back_line,
                     tip_line,
                 );
 
-                // Xóa tin nhắn chờ và gửi kết quả (tắt link preview để tin nhắn gọn đẹp như godeal.online)
+                // Xóa tin nhắn chờ và gửi kèm ảnh sản phẩm thật (tự fallback sang tin nhắn chữ nếu CDN chặn)
                 let _ = bot.delete_message(msg.chat.id, wait_msg.id).await;
-
-                bot.send_message(msg.chat.id, reply_html)
-                    .parse_mode(ParseMode::Html)
-                    .link_preview_options(LinkPreviewOptions {
-                        is_disabled: true,
-                        url: None,
-                        prefer_small_media: false,
-                        prefer_large_media: false,
-                        show_above_text: false,
-                    })
-                    .reply_markup(deal_action_keyboard(
-                        &wrapped_aff_url,
-                        parsed.platform.as_str(),
-                        &voucher_buttons,
-                        &portal_buttons,
-                    ))
-                    .await?;
+                let keyboard = deal_action_keyboard(
+                    &wrapped_aff_url,
+                    parsed.platform.as_str(),
+                    &voucher_buttons,
+                    &portal_buttons,
+                );
+                let mut sent_photo = false;
+                if let Some(ref img_url_str) = parsed.product_image_url {
+                    if reply_html.chars().count() <= 960 {
+                        if let Ok(parsed_img) = url::Url::parse(img_url_str) {
+                            if bot
+                                .send_photo(msg.chat.id, InputFile::url(parsed_img))
+                                .caption(&reply_html)
+                                .parse_mode(ParseMode::Html)
+                                .reply_markup(keyboard.clone())
+                                .await
+                                .is_ok()
+                            {
+                                sent_photo = true;
+                            }
+                        }
+                    }
+                }
+                if !sent_photo {
+                    bot.send_message(msg.chat.id, reply_html)
+                        .parse_mode(ParseMode::Html)
+                        .link_preview_options(LinkPreviewOptions {
+                            is_disabled: true,
+                            url: None,
+                            prefer_small_media: false,
+                            prefer_large_media: false,
+                            show_above_text: false,
+                        })
+                        .reply_markup(keyboard)
+                        .await?;
+                }
             }
             Err(err) => {
                 let _ = bot.delete_message(msg.chat.id, wait_msg.id).await;
@@ -1012,6 +1033,7 @@ mod tests {
             product_price_vnd: Some(822000.0),
             product_shop: Some("Tiki Trading".to_string()),
             product_brand: Some("Enfa".to_string()),
+            product_image_url: None,
             original_url: "https://tiki.vn/product-p274504811.html".to_string(),
             resolved_url: "https://tiki.vn/product-p274504811.html".to_string(),
             clean_url: "https://tiki.vn/product-p274504811.html".to_string(),

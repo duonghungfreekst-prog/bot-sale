@@ -59,9 +59,13 @@ pub struct AffiliateSettings<'a> {
 /// Thông tin voucher/mã sale nhặt được tự động
 #[derive(Debug, Clone)]
 pub struct SaleVoucher {
+    #[allow(dead_code)]
     pub name: String,
+    #[allow(dead_code)]
     pub discount_desc: String,
+    #[allow(dead_code)]
     pub min_spend_desc: String,
+    #[allow(dead_code)]
     pub remaining_percent: u8,
     pub back_hours: String,
 }
@@ -73,6 +77,7 @@ pub struct ParsedDeal {
     pub product_price_vnd: Option<f64>,
     pub product_shop: Option<String>,
     pub product_brand: Option<String>,
+    pub product_image_url: Option<String>,
     pub original_url: String,
     #[allow(dead_code)]
     pub resolved_url: String,
@@ -297,38 +302,88 @@ impl DealParser {
         raw_url.to_string()
     }
 
-    /// Resolve link rút gọn đến link đích thực tế
+    /// Resolve link rút gọn đến link đích thực tế (giữ tương thích ngược)
+    #[allow(dead_code)]
     pub async fn resolve_url(&self, raw_url: &str) -> (String, Option<String>) {
+        let (final_url, title, _) = self.resolve_url_with_meta(raw_url).await;
+        (final_url, title)
+    }
+
+    /// Resolve link rút gọn đồng thời lấy tên sản phẩm đầy đủ & ảnh đại diện thực tế (qua TelegramBot UA cho Shopee)
+    pub async fn resolve_url_with_meta(&self, raw_url: &str) -> (String, Option<String>, Option<String>) {
         if !self.is_short_link(raw_url) {
-            return (raw_url.to_string(), None);
+            return (raw_url.to_string(), None, None);
         }
 
         let fetch_url = self.normalize_short_url(raw_url);
+        let lower_fetch = fetch_url.to_ascii_lowercase();
+        let is_shopee_short = lower_fetch.contains("shope.ee")
+            || lower_fetch.contains("shp.ee")
+            || lower_fetch.contains("s.shopee.vn");
         info!("Đang giải mã shortlink: {} (fetch: {})", raw_url, fetch_url);
-        match self.http_client.get(&fetch_url).send().await {
+
+        let main_fut = self.http_client.get(&fetch_url).send();
+        let social_fut = async {
+            if is_shopee_short {
+                self.fetch_social_preview_metadata(&fetch_url).await
+            } else {
+                (None, None)
+            }
+        };
+
+        let (main_res, (social_title, social_img)) = tokio::join!(main_fut, social_fut);
+
+        match main_res {
             Ok(resp) => {
                 let mut final_url = resp.url().as_str().to_string();
-                let fetched_title = match resp.text().await {
-                    Ok(body) => {
-                        // Xử lý trang chuyển tiếp HTML/JS đặc thù của Lazada (s.lazada.vn, c.lazada.vn, lzd.co)
-                        if final_url.contains("lazada") || fetch_url.contains("lazada") || fetch_url.contains("lzd.co") {
-                            if let Some(target) = self.extract_lazada_target_from_html(&body) {
-                                info!("Đã trích xuất link đích thực tế từ trang chuyển tiếp Lazada: {}", target);
-                                final_url = target;
-                            }
+                let mut html_title = None;
+                let mut html_img = None;
+                if let Ok(body) = resp.text().await {
+                    if final_url.contains("lazada") || fetch_url.contains("lazada") || fetch_url.contains("lzd.co") {
+                        if let Some(target) = self.extract_lazada_target_from_html(&body) {
+                            info!("Đã trích xuất link đích thực tế từ trang chuyển tiếp Lazada: {}", target);
+                            final_url = target;
                         }
-                        self.extract_title_from_html(&body)
+                    } else if is_shopee_short {
+                        if let Some(cfg_url) = crate::services::social_harvester::extract_shopee_config_http_url(&body) {
+                            final_url = cfg_url;
+                        }
                     }
-                    Err(_) => None,
-                };
-                info!("Giải mã thành công: {} -> {}", raw_url, final_url);
-                (final_url, fetched_title)
+                    html_title = self.extract_title_from_html(&body);
+                    html_img = extract_image_from_html(&body);
+                }
+                let best_title = social_title.or(html_title);
+                let best_img = social_img.or(html_img);
+                info!("Giải mã thành công: {} -> {} (title={})", raw_url, final_url, best_title.as_deref().unwrap_or("-"));
+                (final_url, best_title, best_img)
             }
             Err(err) => {
                 warn!("Không thể giải mã shortlink (dùng link chuẩn hóa): {}", err);
-                (fetch_url, None)
+                (fetch_url, social_title, social_img)
             }
         }
+    }
+
+    async fn fetch_social_preview_metadata(&self, url: &str) -> (Option<String>, Option<String>) {
+        let Ok(resp) = self
+            .http_client
+            .get(url)
+            .header("User-Agent", "TelegramBot (like TwitterBot)")
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+        else {
+            return (None, None);
+        };
+        if !resp.status().is_success() {
+            return (None, None);
+        }
+        let Ok(body) = resp.text().await else {
+            return (None, None);
+        };
+        let title = self.extract_title_from_html(&body);
+        let img = extract_image_from_html(&body);
+        (title, img)
     }
 
     /// Trích xuất URL sản phẩm thực tế từ trang HTML bridge của Lazada
@@ -367,7 +422,7 @@ impl DealParser {
         None
     }
 
-    /// Trích xuất title từ HTML <title> hoặc <meta property="og:title">
+    /// Trích xuất title từ `<meta name="description">` đầy đủ, `og:title` hoặc `<title>`
     pub fn extract_title_from_html(&self, html: &str) -> Option<String> {
         let is_junk_title = |t: &str| {
             let lower = t.to_lowercase();
@@ -378,31 +433,35 @@ impl DealParser {
                 || lower.contains("access denied")
                 || lower.contains("cloudflare")
                 || lower.contains("không tồn tại")
+                || lower.contains("mua và bán trên ứng dụng")
                 || lower == "shopee"
+                || lower == "shopee việt nam"
                 || lower == "lazada"
                 || lower == "tiktok"
         };
 
-        let og_regex = Regex::new(r#"<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']"#).ok()?;
-        if let Some(caps) = og_regex.captures(html) {
-            if let Some(m) = caps.get(1) {
-                let decoded = html_escape_decode(m.as_str().trim());
-                if !is_junk_title(&decoded) {
-                    return Some(decoded);
+        // Ưu tiên bóc từ meta description của Shopee (`Mua <Tên Đầy Đủ> giá tốt...`) vì og:title thường bị cắt `...`
+        if let Some(desc_raw) = extract_meta_content(html, "name", "description")
+            .or_else(|| extract_meta_content(html, "property", "og:description"))
+        {
+            if let Some(cleaned) = clean_shopee_meta_description(&desc_raw) {
+                if !is_junk_title(&cleaned) {
+                    return Some(cleaned);
                 }
             }
         }
 
-        let title_regex = Regex::new(r#"<title>([^<]+)</title>"#).ok()?;
+        if let Some(og_raw) = extract_meta_content(html, "property", "og:title") {
+            let decoded = clean_meta_title_suffix(&html_escape_decode(og_raw.trim()));
+            if !is_junk_title(&decoded) {
+                return Some(decoded);
+            }
+        }
+
+        let title_regex = Regex::new(r#"(?is)<title[^>]*>([^<]+)</title>"#).ok()?;
         if let Some(caps) = title_regex.captures(html) {
             if let Some(m) = caps.get(1) {
-                let t = m
-                    .as_str()
-                    .trim()
-                    .replace("| Shopee Việt Nam", "")
-                    .replace("| Lazada Việt Nam", "")
-                    .replace("- Lazada.vn", "");
-                let decoded = html_escape_decode(t.trim());
+                let decoded = clean_meta_title_suffix(&html_escape_decode(m.as_str().trim()));
                 if !is_junk_title(&decoded) {
                     return Some(decoded);
                 }
@@ -700,7 +759,7 @@ impl DealParser {
             .await;
 
         let initial_platform = self.detect_platform_with_approved(&raw_url, approved.as_ref());
-        let (resolved_url, html_title) = self.resolve_url(&raw_url).await;
+        let (resolved_url, html_title, product_image_url) = self.resolve_url_with_meta(&raw_url).await;
 
         let platform = if initial_platform == Platform::Unknown {
             self.detect_platform_with_approved(&resolved_url, approved.as_ref())
@@ -731,7 +790,7 @@ impl DealParser {
             ));
         }
 
-        // Ưu tiên: Tiêu đề gửi kèm từ tin nhắn -> Tiêu đề bóc từ HTML -> Tiêu đề bóc từ Slug URL
+        // Ưu tiên: Tiêu đề gửi kèm từ tin nhắn -> Tiêu đề bóc từ HTML / TelegramBot Meta -> Tiêu đề bóc từ Slug URL
         let user_text_title = self.extract_title_from_text(input_text, &raw_url);
         let mut product_title = if let Some(ref title) = user_text_title {
             title.clone()
@@ -911,6 +970,7 @@ impl DealParser {
             product_price_vnd,
             product_shop,
             product_brand,
+            product_image_url,
             original_url: raw_url,
             resolved_url,
             clean_url,
@@ -937,6 +997,73 @@ impl DealParser {
         }
         let body = resp.text().await.ok()?;
         parse_tiki_product_json(&body)
+    }
+}
+
+fn extract_meta_content(html: &str, attr_key: &str, attr_val: &str) -> Option<String> {
+    let p1 = format!(
+        r#"(?is)<meta[^>]*\b{}=["']{}["'][^>]*\bcontent=["']([^"']+)["']"#,
+        regex::escape(attr_key),
+        regex::escape(attr_val)
+    );
+    let p2 = format!(
+        r#"(?is)<meta[^>]*\bcontent=["']([^"']+)["'][^>]*\b{}=["']{}["']"#,
+        regex::escape(attr_key),
+        regex::escape(attr_val)
+    );
+    for pat in [p1, p2] {
+        let Ok(re) = Regex::new(&pat) else { continue };
+        if let Some(caps) = re.captures(html) {
+            if let Some(m) = caps.get(1) {
+                let val = m.as_str().trim();
+                if !val.is_empty() {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn clean_meta_title_suffix(raw: &str) -> String {
+    let stripped = raw
+        .replace("| Shopee Việt Nam", "")
+        .replace("| Lazada Việt Nam", "")
+        .replace("- Lazada.vn", "");
+    let trimmed = stripped.trim();
+    let trimmed = trimmed.strip_suffix("|...").unwrap_or(trimmed);
+    trimmed.trim_end_matches("...").trim().trim_end_matches('|').trim().to_string()
+}
+
+fn clean_shopee_meta_description(raw_desc: &str) -> Option<String> {
+    let decoded = html_escape_decode(raw_desc.trim());
+    let without_prefix = decoded
+        .strip_prefix("Mua ")
+        .or_else(|| decoded.strip_prefix("mua "))?;
+    let cut_idx = without_prefix
+        .find(" giá tốt")
+        .or_else(|| without_prefix.find(". Mua hàng qua mạng"))?;
+    let title = without_prefix[..cut_idx].trim();
+    if title.chars().count() >= 4 {
+        Some(title.to_string())
+    } else {
+        None
+    }
+}
+
+fn extract_image_from_html(html: &str) -> Option<String> {
+    let candidate = extract_meta_content(html, "property", "og:image")
+        .or_else(|| extract_meta_content(html, "name", "twitter:image"))
+        .or_else(|| extract_meta_content(html, "property", "twitter:image"))?;
+    let decoded = html_escape_decode(candidate.trim());
+    let lower = decoded.to_ascii_lowercase();
+    if (decoded.starts_with("https://") || decoded.starts_with("http://"))
+        && !lower.contains("icon_favicon")
+        && !lower.contains("favicon.")
+    {
+        Some(decoded)
+    } else {
+        None
     }
 }
 
@@ -1283,5 +1410,19 @@ mod tests {
         let batch = "Xem máy https://fptshop.com.vn/dien-thoai/iphone-16-pro-max và tour https://www.klook.com/vi/activity/1234-vinwonders/";
         let extracted = parser.extract_all_urls_with_approved(batch, 5, Some(&approved));
         assert_eq!(extracted.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_shopee_social_meta_description_and_image() {
+        let parser = DealParser::new();
+        let shopee_tg_html = r#"<!doctype html><html prefix="og:http://ogp.me/ns#"><head><meta charset="utf-8"><title>Rửa xe pin Asake siêu khoẻ - mô tơ ko than - chạy pin phổ thông...</title><meta name="description" content="Mua Rửa xe pin Asake siêu khoẻ - mô tơ ko than - chạy pin phổ thông Makita M21 giá tốt. Mua hàng qua mạng uy tín, tiện lợi."><meta property="og:title" content="Rửa xe pin Asake siêu khoẻ - mô tơ ko than - chạy pin phổ thông..."><meta property="og:image" content="https://down-vn.img.susercontent.com/file/vn-11134201-81ztc-msj7oadg1ds87a"></head></html>"#;
+        assert_eq!(
+            parser.extract_title_from_html(shopee_tg_html).as_deref(),
+            Some("Rửa xe pin Asake siêu khoẻ - mô tơ ko than - chạy pin phổ thông Makita M21")
+        );
+        assert_eq!(
+            extract_image_from_html(shopee_tg_html).as_deref(),
+            Some("https://down-vn.img.susercontent.com/file/vn-11134201-81ztc-msj7oadg1ds87a")
+        );
     }
 }
