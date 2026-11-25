@@ -5,7 +5,7 @@
 //   3. Gắn tên miền (VD: thegioisieusale.click) ở tab Domains của Worker.
 // Lưu ý: Trang gốc `/` hiển thị Trang Đích Bot Telegram 3D; các đường dẫn hệ thống (/admin, /convert, /health...) luôn trả 404.
 
-const ORIGIN_URL = "https://bot-sale.onrender.com";
+const ORIGIN_URL = "https://origin.thegioisieusale.click";
 const ASSET_FALLBACK_BASE = "https://raw.githubusercontent.com/duonghungfreekst-prog/bot-sale/main/assets";
 const BOT_USERNAME = "vvipass_vip_bot";
 const BOT_DISPLAY_NAME = "Thế Giới Siêu Sale";

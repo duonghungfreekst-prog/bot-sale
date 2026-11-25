@@ -256,8 +256,8 @@ async fn is_public_home_cloaked(state: &AppState) -> bool {
         .unwrap_or(false)
 }
 
-/// Middleware che hoàn toàn Web Chính & `/admin` khi request đi qua Cloudflare Worker (`X-DealX-Cloak: 1`)
-/// hoặc truy cập bằng tên miền bọc link riêng (`shortlink_base_url` khác host của Web Chính)
+/// Middleware che hoàn toàn Web Chính & `/admin` khi request đi qua Cloudflare Worker (`X-DealX-Cloak: 1`),
+/// đi qua Cloudflare Tunnel / Proxy (`cf-ray` / `cf-connecting-ip` trên PC), hoặc truy cập bằng tên miền bọc link riêng (`shortlink_base_url` / `origin.<shortlink>`).
 async fn shortlink_cloak_middleware(
     State(state): State<AppState>,
     req: Request,
@@ -269,8 +269,10 @@ async fn shortlink_cloak_middleware(
         .and_then(|v| v.to_str().ok())
         .map(|v| v.trim() == "1")
         .unwrap_or(false);
+    let has_cf_proxy_header = state.config.public_base_url.is_none()
+        && (headers.contains_key("cf-ray") || headers.contains_key("cf-connecting-ip"));
 
-    let is_cloaked_domain = if has_cloak_header {
+    let is_cloaked_domain = if has_cloak_header || has_cf_proxy_header {
         true
     } else {
         let req_host = headers
@@ -300,7 +302,8 @@ async fn shortlink_cloak_middleware(
                     .and_then(extract_host_only);
                 match short_host {
                     Some(sh) => {
-                        sh == rh
+                        let origin_sub = format!("origin.{}", sh);
+                        (sh == rh || rh == origin_sub)
                             && public_host.as_deref() != Some(sh.as_str())
                             && !(public_host.is_none() && rh.ends_with(".onrender.com"))
                     }
@@ -2077,14 +2080,16 @@ async fn handle_dashboard(
         .flatten()
         .map(|s| s.trim() == "1")
         .unwrap_or(false);
-    let fallback_origin = format!("http://127.0.0.1:{}", state.config.port);
+    let derived_tunnel_origin = extract_host_only(&shortlink_base_url)
+        .map(|h| format!("https://origin.{}", h))
+        .unwrap_or_else(|| "https://origin.thegioisieusale.click".to_string());
     let origin_base_for_worker = state
         .config
         .public_base_url
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or(&fallback_origin);
+        .unwrap_or(&derived_tunnel_origin);
 
     let admin_telegram_id_val = Repository::get_setting(&conn, "admin_telegram_id")
         .await
@@ -3751,7 +3756,7 @@ fn render_shopee_card(
     let mobile_checked = if shortlink_mobile_only { "checked" } else { "" };
     let home_cloak_checked = if public_home_cloak { "checked" } else { "" };
     let mut worker_code = CLOUDFLARE_WORKER_TEMPLATE.replace(
-        "https://bot-sale.onrender.com",
+        "https://origin.thegioisieusale.click",
         origin_base_url.trim_end_matches('/'),
     );
     let bot_clean = bot_username.trim().trim_start_matches('@');
@@ -3818,14 +3823,14 @@ fn render_shopee_card(
             </form>
             <details class="cf-details">
                 <summary class="cf-summary">
-                    ☁️ Hướng dẫn tạo link bọc riêng 100% miễn phí bằng Cloudflare Worker (Nếu chạy Tunnel công khai)
+                    ☁️ Hướng dẫn nối tên miền bọc link (VD: thegioisieusale.click) về bot chạy trên PC qua Cloudflare Tunnel
                 </summary>
                 <div class="cf-body">
                     <ol class="cf-steps">
-                        <li>Vào <b>dash.cloudflare.com</b> (tài khoản miễn phí) → chọn <b>Workers &amp; Pages</b> → <b>Create Worker</b> → <b>Deploy</b> → <b>Edit code</b>.</li>
-                        <li>Xóa hết code mẫu, dán toàn bộ đoạn code bên dưới vào rồi bấm <b>Deploy</b>.</li>
-                        <li>Copy địa chỉ Worker (dạng <code>https://ten-worker.ten-ban.workers.dev</code>) dán vào ô <b>Tên Miền Bọc Link Riêng</b> ở trên và bấm Lưu.</li>
-                        <li>Từ đó link bot Telegram trả ra hoàn toàn dùng domain mới; trang chủ <code>/</code> hiển thị Trang Đích Bot Telegram riêng và mọi đường dẫn nội bộ (<code>/admin</code>, <code>/convert</code>, <code>/health</code>...) đều trả <code>404 Not Found</code>!</li>
+                        <li>Vào <b>one.dash.cloudflare.com</b> (Zero Trust → Networks → Tunnels) tạo 1 Tunnel mới, trỏ Public Hostname <code>origin.thegioisieusale.click</code> (hoặc <code>origin.&lt;tên_miền&gt;</code>) về <code>HTTP</code> <code>127.0.0.1:10000</code>, rồi dán Tunnel Token vào dòng <code>CLOUDFLARE_TUNNEL_TOKEN=</code> trong file <code>.env</code> (khi chạy <code>run_salehunter_bot.bat</code> sẽ tự mở Tunnel).</li>
+                        <li>Vào <b>dash.cloudflare.com</b> → <b>Workers &amp; Pages</b> → chọn Worker của tên miền bọc (VD: <code>thegioisieusale.click</code>) → <b>Edit code</b>, dán toàn bộ code bên dưới vào rồi bấm <b>Deploy</b>.</li>
+                        <li>Nhập tên miền bọc (VD: <code>https://thegioisieusale.click</code>) vào ô <b>Tên Miền Bọc Link Riêng</b> ở trên và bấm <b>Lưu</b>.</li>
+                        <li>Mọi đường dẫn bot gửi sẽ có dạng <code>https://thegioisieusale.click/8_ky_tu</code>; trang chủ <code>/</code> phục vụ Trang Đích 3D tại Cloudflare Edge và mọi đường dẫn nội bộ (<code>/admin</code>, <code>/convert</code>, <code>/health</code>...) đều trả <code>404 Not Found</code> khi truy cập từ Internet!</li>
                     </ol>
                     <textarea id="cf-worker-code" readonly rows="10" class="field-input font-mono code-textarea">{}</textarea>
                     <div>
@@ -4868,6 +4873,84 @@ DongLoiThieuCot | 123
         let resp_login = handle_login_page(HeaderMap::new(), State(state)).await;
         assert_eq!(resp_login.status(), StatusCode::OK);
 
+        let _ = std::fs::remove_file(&test_db_path);
+    }
+
+    #[tokio::test]
+    async fn test_pc_tunnel_cloak_blocks_admin_while_keeping_localhost_alive() {
+        let test_db_path = format!("target/test_pc_tunnel_{}.db", uuid::Uuid::new_v4().simple());
+        let mut state = make_test_state(&test_db_path, None).await;
+        state.config.public_base_url = None;
+
+        let code = {
+            let conn = state.db.conn().unwrap();
+            Repository::set_setting(&conn, "shortlink_base_url", "https://thegioisieusale.click")
+                .await
+                .unwrap();
+            Repository::create_or_get_short_link(
+                &conn,
+                "https://s.shopee.vn/pc-tunnel-test",
+                "",
+                "Shopee",
+            )
+            .await
+            .unwrap()
+        };
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = build_router(state);
+        let server_task = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", addr);
+
+        // Localhost trên PC truy cập /admin/login bình thường (200 OK)
+        let local_login = client.get(format!("{}/admin/login", base)).send().await.unwrap();
+        assert_eq!(local_login.status().as_u16(), 200);
+
+        // Request đi qua Cloudflare Tunnel / origin.thegioisieusale.click phải bị khóa /admin và / -> 404
+        for (hdr_name, hdr_val) in [
+            ("host", "origin.thegioisieusale.click"),
+            ("cf-ray", "test-ray-123"),
+        ] {
+            let admin_blocked = client
+                .get(format!("{}/admin", base))
+                .header(hdr_name, hdr_val)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(admin_blocked.status().as_u16(), 404);
+
+            let root_blocked = client
+                .get(format!("{}/", base))
+                .header(hdr_name, hdr_val)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(root_blocked.status().as_u16(), 404);
+
+            let bridge_ok = client
+                .get(format!("{}/assets/bridge.js", base))
+                .header(hdr_name, hdr_val)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(bridge_ok.status().as_u16(), 200);
+
+            let link_ok = client
+                .get(format!("{}/{}", base, code))
+                .header(hdr_name, hdr_val)
+                .header("user-agent", "facebookexternalhit/1.1")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(link_ok.status().as_u16(), 200);
+        }
+
+        server_task.abort();
         let _ = std::fs::remove_file(&test_db_path);
     }
 
