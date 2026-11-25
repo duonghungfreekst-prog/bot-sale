@@ -1,59 +1,119 @@
 @echo off
+setlocal EnableExtensions DisableDelayedExpansion
 chcp 65001 > nul
-title The Gioi Sieu Sale - PC Local Runner
-echo ========================================================
-echo   KHOI DONG BOT SAN SALE TRUC TIEP TREN PC (RUST + LIBSQL)
-echo ========================================================
+cd /d "%~dp0"
+title The Gioi Sieu Sale - Auto All-In-One PC Runner
 
-if not exist .env (
-    if exist .env.example (
-        echo [THONG BAO] Chua co file .env, dang sao chep tu .env.example...
-        copy .env.example .env > nul
-        echo [CANH BAO] Hay kiem tra file .env truoc khi van hanh!
-    )
-)
+echo ========================================================================
+echo   THE GIOI SIEU SALE - TU DONG FULL TRONG 1 FILE (BOT + CLOUDFLARE)
+echo ========================================================================
 
-echo [1/2] Dang kiem tra va bien dich ban Release (mat khoang 30-60 giay neu co sua code)...
-tasklist /FI "IMAGENAME eq salehunter_bot.exe" 2>nul | find /I "salehunter_bot.exe" >nul
-if %errorlevel% equ 0 (
-    echo [CANH BAO] Phat hien salehunter_bot.exe cu dang chay nen khong the ghi de file .exe!
-    echo            Vui long DONG cua so bot cu truoc roi nhan phim bat ky de tiep tuc...
-    pause
-)
-cargo build --release
-if %errorlevel% neq 0 (
-    echo [LOI] Khong the bien dich ma nguon Rust!
-    pause
-    exit /b %errorlevel%
-)
-
-set "CF_TUNNEL_TOKEN="
-if exist .env (
-    for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
-        if /I "%%A"=="CLOUDFLARE_TUNNEL_TOKEN" set "CF_TUNNEL_TOKEN=%%B"
-    )
-)
-if defined CF_TUNNEL_TOKEN set "CF_TUNNEL_TOKEN=%CF_TUNNEL_TOKEN:"=%"
-if defined CF_TUNNEL_TOKEN set "CF_TUNNEL_TOKEN=%CF_TUNNEL_TOKEN: =%"
-if defined CF_TUNNEL_TOKEN (
-    set "CF_EXE="
-    if exist "C:\Program Files (x86)\cloudflared\cloudflared.EXE" set "CF_EXE=C:\Program Files (x86)\cloudflared\cloudflared.EXE"
-    if not defined CF_EXE (
-        for /f "delims=" %%C in ('where cloudflared 2^>nul') do if not defined CF_EXE set "CF_EXE=%%C"
-    )
-    if defined CF_EXE (
-        echo [TUNNEL] Dang khoi dong Cloudflare Tunnel cho ten mien boc link rieng...
-        start "The Gioi Sieu Sale - Cloudflare Tunnel" /min "%CF_EXE%" tunnel run --token "%CF_TUNNEL_TOKEN%"
+if not exist ".env" (
+    if exist ".env.example" (
+        echo [SETUP] Chua co file .env, dang khoi tao tu .env.example...
+        copy /Y ".env.example" ".env" > nul
     ) else (
-        echo [CANH BAO] Co CLOUDFLARE_TUNNEL_TOKEN trong .env nhung khong tim thay cloudflared.exe!
+        type nul > ".env"
     )
 )
 
-echo [2/2] Dang khoi chay SaleHunter Bot (Long Polling)...
+echo [1/4] Dang tu dong tat ban bot ^& tunnel cu (neu dang chay^)...
+taskkill /F /IM salehunter_bot.exe >nul 2>&1
+if exist "target\cf_tunnel.pid" (
+    for /f "usebackq delims=" %%P in ("target\cf_tunnel.pid") do (
+        taskkill /F /PID %%P >nul 2>&1
+    )
+    del /Q "target\cf_tunnel.pid" >nul 2>&1
+)
+timeout /t 1 /nobreak >nul
+
+echo [2/4] Dang kiem tra ban build Release...
+set "NEED_BUILD=0"
+if not exist "target\release\salehunter_bot.exe" set "NEED_BUILD=1"
+if "%NEED_BUILD%"=="1" goto DO_BUILD
+
+powershell -NoProfile -Command "$exe = (Get-Item 'target\release\salehunter_bot.exe').LastWriteTimeUtc; $files = @('Cargo.toml','Cargo.lock','cloudflare_worker.js') + (Get-ChildItem 'src','assets' -Recurse -File | Select-Object -ExpandProperty FullName); if ($files | Where-Object { Test-Path $_ } | Where-Object { (Get-Item $_).LastWriteTimeUtc -gt $exe } | Select-Object -First 1) { exit 1 } else { exit 0 }"
+if errorlevel 1 set "NEED_BUILD=1"
+if "%NEED_BUILD%"=="1" goto DO_BUILD
+
+echo       Ban .exe da la ban moi nhat — khoi dong ngay khong can cho build!
+goto CHECK_TUNNEL
+
+:DO_BUILD
+echo       Phat hien ma nguon moi -^> dang bien dich ban Release (khoang 30-60s^)...
+cargo build --release
+if errorlevel 1 (
+    echo [LOI] Khong the bien dich ma nguon Rust! Hay kiem tra lai loi o tren.
+    pause
+    exit /b 1
+)
+
+:CHECK_TUNNEL
+powershell -NoProfile -Command "$lines = Get-Content '.env' -Encoding UTF8 -ErrorAction SilentlyContinue; $hit = $lines | Where-Object { $_ -match '^\s*CLOUDFLARE_TUNNEL_TOKEN\s*=\s*(.+)$' -and $matches[1].Trim().Trim([char]34).Length -ge 20 }; if ($hit) { exit 0 } else { exit 1 }"
+if not errorlevel 1 goto START_TUNNEL
+
+echo.
+echo ------------------------------------------------------------------------
+echo [3/4] CHUA CO CLOUDFLARE TUNNEL TOKEN TRONG .env
+echo       De link https://thegioisieusale.click/xxxx mo duoc tren Dien Thoai ^& PC:
+echo       - Buoc A: Vao https://one.dash.cloudflare.com -^> Networks -^> Tunnels
+echo                 Tao 1 Tunnel moi, tro origin.thegioisieusale.click -^> HTTP 127.0.0.1:10000
+echo       - Buoc B: Vao https://dash.cloudflare.com -^> Workers -^> Edit code
+echo                 Doi ORIGIN_URL thanh: https://origin.thegioisieusale.click roi Deploy
+echo       - Buoc C: Dan doan token (eyJ...^) hoac nguyen lenh service install vao day!
+echo ------------------------------------------------------------------------
+echo       [M] Mo san 2 trang Cloudflare tren trinh duyet
+echo       [Enter] Bo qua tam buoc Tunnel de chay Web Admin ^& Bot truoc
+echo.
+set "CF_INPUT="
+set /p "CF_INPUT=>> Dan Tunnel Token / nhap M / hoac Enter: "
+
+powershell -NoProfile -Command "$raw = [string]$env:CF_INPUT; if ($raw.Trim() -ieq 'M') { exit 2 }; if ([string]::IsNullOrWhiteSpace($raw)) { exit 3 }; if ($raw -match '(eyJ[A-Za-z0-9+/=_-]{20,})') { $tok = $matches[1]; $lines = @(Get-Content '.env' -Encoding UTF8 -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '^\s*CLOUDFLARE_TUNNEL_TOKEN\s*=' }); $lines += ('CLOUDFLARE_TUNNEL_TOKEN=' + $tok); [System.IO.File]::WriteAllLines((Resolve-Path '.env').Path, $lines, [System.Text.UTF8Encoding]::new($false)); Write-Host '[OK] Da tu dong luu CLOUDFLARE_TUNNEL_TOKEN vao .env!'; exit 0 } else { Write-Host '[LOI] Khong tim thay chuoi Token hop le (bat dau bang eyJ...)!'; exit 1 }"
+set "CF_RC=%errorlevel%"
+set "CF_INPUT="
+if "%CF_RC%"=="2" (
+    start "" "https://one.dash.cloudflare.com"
+    start "" "https://dash.cloudflare.com"
+    goto CHECK_TUNNEL
+)
+if "%CF_RC%"=="3" (
+    echo [CANH BAO] Dang bo qua Tunnel — chi dung duoc http://127.0.0.1:10000/admin tren PC!
+    goto START_BOT
+)
+if not "%CF_RC%"=="0" goto CHECK_TUNNEL
+
+:START_TUNNEL
+set "CF_EXE="
+if exist "C:\Program Files (x86)\cloudflared\cloudflared.EXE" set "CF_EXE=C:\Program Files (x86)\cloudflared\cloudflared.EXE"
+if not defined CF_EXE (
+    for /f "delims=" %%C in ('where cloudflared 2^>nul') do if not defined CF_EXE set "CF_EXE=%%C"
+)
+if not defined CF_EXE (
+    echo [CANH BAO] Da co Token nhung khong tim thay cloudflared.exe tren may!
+    goto START_BOT
+)
+
+if not exist "target" mkdir "target"
+echo [3/4] Dang bat Cloudflare Tunnel tu dong noi https://thegioisieusale.click ve PC...
+powershell -NoProfile -Command "$line = (Get-Content '.env' -Encoding UTF8 | Where-Object { $_ -match '^\s*CLOUDFLARE_TUNNEL_TOKEN\s*=\s*(.+)$' } | Select-Object -First 1); if ($line -match '^\s*CLOUDFLARE_TUNNEL_TOKEN\s*=\s*(.+)$') { $tok = $matches[1].Trim().Trim([char]34); $env:TUNNEL_TOKEN = $tok; $p = Start-Process -FilePath $env:CF_EXE -ArgumentList @('tunnel','--no-autoupdate','run') -WindowStyle Minimized -PassThru; [System.IO.File]::WriteAllText((Join-Path (Get-Location) 'target\cf_tunnel.pid'), $p.Id.ToString()); Write-Host ('       Cloudflare Tunnel dang chay ngam (PID ' + $p.Id + ')!') }"
+timeout /t 2 /nobreak >nul
+
+:START_BOT
+echo [4/4] Dang khoi chay The Gioi Sieu Sale Bot (Long Polling)...
 echo       Web Admin PC: http://127.0.0.1:10000/admin
-echo       Giu cua so nay mo khi su dung. Nhan Ctrl+C de dung bot an toan.
-echo ========================================================
-start "" /b cmd /c "timeout /t 2 /nobreak >nul && start http://127.0.0.1:10000/admin"
+echo       Giu cua so nay mo khi bot hoat dong. Nhan Ctrl+C de dung toan bo an toan.
+echo ========================================================================
+start "" /b powershell -NoProfile -WindowStyle Hidden -Command "for ($i=0; $i -lt 30; $i++) { try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:10000/health' -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -eq 200) { Start-Process 'http://127.0.0.1:10000/admin'; break } } catch {}; Start-Sleep -Milliseconds 500 }"
+
 .\target\release\salehunter_bot.exe
 
+:CLEANUP
+if exist "target\cf_tunnel.pid" (
+    for /f "usebackq delims=" %%P in ("target\cf_tunnel.pid") do (
+        taskkill /F /PID %%P >nul 2>&1
+    )
+    del /Q "target\cf_tunnel.pid" >nul 2>&1
+)
+echo.
+echo [DUNG] Bot va Tunnel da duoc dong an toan.
 pause
