@@ -7,8 +7,8 @@ Hệ thống Bot Telegram săn sale đa sàn (**Thế Giới Siêu Sale**) tích
 ## 🌟 Tính Năng Nổi Bật
 
 ### 1. Web Portal & Admin Dashboard Quản Trị (Bảo Mật Tối Cao)
-- **Trang chủ công khai `/` + Đổi link trực tiếp (`POST /convert`):** Khách không dùng Telegram vẫn dán được link Shopee, Lazada, Tiki, TikTok Shop, Alibaba ngay trên web để nhận link bọc kèm mã khớp (có Rate Limit chống spam, ẩn liên kết `/admin` khỏi giao diện công khai và hỗ trợ bật tắt chế độ ẩn `/` thành `404 Not Found` khi chưa dùng Proxy).
-- **Cầu nối Mobile, Bọc link 2 lớp & Trang đích Bot trên Worker (`/{code}`, `/go/{code}`, `/assets/bridge.js`, `cloudflare_worker.js`):** Bọc 100% link đầu ra dạng 8 ký tự, chặn máy tính/giả lập PC 2 lớp (HTTP + `isRealMobile()` + mã hóa XOR payload), hỗ trợ **Cloudflare Worker Proxy** (`X-DealX-Cloak: 1`) hiển thị Trang Đích Bot Telegram `@vvipass_vip_bot` ở `/` và trả `404 Not Found` cho mọi đường dẫn hệ thống (`/admin`, `/convert`, `/health`...) mà không làm lộ web Render.
+- **Trang chủ công khai `/` + Đổi link trực tiếp (`POST /convert`):** Khách hoặc Admin có thể dán link Shopee, Lazada, Tiki, TikTok Shop, Alibaba ngay trên web để nhận link Affiliate kèm mã khớp (có Rate Limit chống spam, ẩn liên kết `/admin` khỏi giao diện công khai).
+- **Trả link Affiliate trực tiếp & Tùy chọn cầu nối Mobile (`/{code}`, `/go/{code}`, `/assets/bridge.js`):** Khi chạy thuần PC (không đặt `SHORTLINK_BASE_URL`), bot gửi thẳng link Affiliate chính chủ (`s.shopee.vn`, `go.isclix.com`, `tiktok.com/t/...`) để khách bấm mở ngay lập tức. Khi gắn domain/Tunnel riêng ở `SHORTLINK_BASE_URL`, hệ thống tự kích hoạt cơ chế bọc 8 ký tự và `cloudflare_worker.js`.
 - **Chỉ DUY NHẤT 1 tài khoản Admin:** Không cho phép đăng ký mới; khóa Brute-force `POST /admin/login` (tối đa 5 lần sai/15 phút -> `HTTP 429`), lưu phiên băm SHA-256 vào `admin_sessions`, Cookie `HttpOnly; SameSite=Lax`, chống Timing Attack với `subtle::ConstantTimeEq`.
 - **Đối soát đơn hàng & Báo Telegram Admin tự động:** Quét định kỳ mỗi 10 phút từ ACCESSTRADE (`/v1/orders`) và Shopee Open API (`conversionReport`), chống trùng lặp (`tracked_orders`) và nhắn báo ngay về Telegram ID Admin.
 - **Quản lý kho Mã Độc Quyền & Đồng Bộ Kho Mã:** Nhập lẻ hoặc dán hàng loạt mã độc quyền hợp tác từ AM/MCN/Shop (hỗ trợ cả dấu `|` hoặc copy từ Excel/Google Sheets), tự động đồng bộ mã từ ACCESSTRADE API mỗi 60 giây.
@@ -62,11 +62,10 @@ Hệ thống Bot Telegram săn sale đa sàn (**Thế Giới Siêu Sale**) tích
 ```
 f:/bot sale/
 ├── Cargo.toml                  # Khai báo thư viện phụ thuộc (Rust 2024)
-├── Dockerfile                  # Đóng gói Multi-stage Rust + copy cloudflare_worker.js
-├── cloudflare_worker.js        # Cloudflare Worker mẫu che 100% Web Render cho Shortlink
+├── cloudflare_worker.js        # Cloudflare Worker mẫu (tùy chọn khi tự mở Tunnel/Domain riêng)
 ├── Makefile                    # Lệnh build, test, run, clean nhanh
-├── run_salehunter_bot.bat      # Script khởi động 1-click trên Windows
-├── .env.example                # File mẫu cấu hình bot và database
+├── run_salehunter_bot.bat      # Script khởi động 1-click trên Windows PC
+├── .env.example                # File mẫu cấu hình bot và database trên PC
 ├── .gitignore                  # Bỏ qua build artifact và database file
 └── src/
     ├── main.rs                 # Điểm khởi chạy ứng dụng & kiểm thử tích hợp
@@ -116,12 +115,10 @@ MIN_WITHDRAWAL_VND=50000
 ACCESSTRADE_DEEPLINK_TEMPLATE=https://fast.accesstrade.com.vn/deep_link/630000000000?url={CLEAN_URL}&sub_id1={USER_ID}&sub_id2={REF_ID}&sub_id3={CLICK_ID}
 ```
 
-### Bước 3: Chạy Bot
-- **Chạy trên Render (24/7 tự động Webhook + Keep-Alive):**
-  - Hệ thống tự động nhận diện `RENDER_EXTERNAL_URL` để bật **Telegram Webhook** tại `/telegram/webhook` (xác thực header `X-Telegram-Bot-Api-Secret-Token`) kết hợp vòng lặp self-ping `/health` mỗi 9 phút và workflow GitHub Actions tại `.github/workflows/keep-alive.yml` để giữ container hoạt động liên tục 24/7.
-- **Chạy trên máy cá nhân (Long Polling):**
-  - **Cách 1:** Nhấp đúp vào file `run_salehunter_bot.bat` trên Windows.
-  - **Cách 2:** Chạy lệnh `cargo run --release` hoặc `make run`.
+### Bước 3: Chạy Bot Trực Tiếp Trên PC (Long Polling)
+- **Cách 1 (Khuyên dùng):** Nhấp đúp vào file `run_salehunter_bot.bat` trên Windows (tự động build bản Release và mở Web Admin tại `http://127.0.0.1:10000/admin`).
+- **Cách 2:** Chạy lệnh `cargo run --release` hoặc `make run`.
+- *(Lưu ý: Trước khi chạy trên PC, hãy tắt/xóa Web Service trên `dashboard.render.com` để tránh 2 nơi cùng tranh chấp phiên Telegram Bot).*
 
 ---
 

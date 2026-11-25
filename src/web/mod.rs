@@ -1963,11 +1963,22 @@ async fn handle_dashboard(
 
     let has_turso = state.config.turso_url.is_some() && state.config.turso_auth_token.is_some();
     let has_env_token = state.config.accesstrade_api_token.is_some();
-    let persistence_banner = if !has_env_token || !has_turso {
+    let is_cloud_runtime = state.config.public_base_url.is_some();
+    let persistence_banner = if !is_cloud_runtime && !has_turso {
+        format!(
+            r#"<div class="flex items-center justify-between bg-emerald-950/30 border border-emerald-500/30 rounded-xl px-4 py-2.5 text-xs text-emerald-200">
+            <div class="flex items-center space-x-2">
+                <span class="text-base">💻</span>
+                <span><b>Đang chạy trực tiếp trên PC (Local):</b> Dữ liệu được lưu bền vững trên máy tính tại <code>{}</code> · Bot chạy chế độ <b>Long Polling</b> và gọi API trực tiếp từ IP của bạn.</span>
+            </div>
+        </div>"#,
+            escape_html(&state.config.database_path)
+        )
+    } else if !has_env_token || !has_turso {
         r#"<div class="flex items-center justify-between bg-amber-950/30 border border-amber-500/30 rounded-xl px-4 py-2.5 text-xs text-amber-200">
             <div class="flex items-center space-x-2">
                 <span class="text-base">⚠️</span>
-                <span><b>Lưu ý lưu trữ:</b> Đang dùng ổ đĩa tạm thời của Render Free. Hãy thêm <code>TURSO_DATABASE_URL</code> &amp; <code>ACCESSTRADE_API_TOKEN</code> vào Render Environment để lưu dữ liệu vĩnh viễn.</span>
+                <span><b>Lưu ý lưu trữ:</b> Đang dùng ổ đĩa tạm thời trên Cloud. Hãy thêm <code>TURSO_DATABASE_URL</code> &amp; <code>ACCESSTRADE_API_TOKEN</code> vào Environment để lưu dữ liệu vĩnh viễn.</span>
             </div>
         </div>"#.to_string()
     } else {
@@ -2039,13 +2050,14 @@ async fn handle_dashboard(
         .flatten()
         .map(|s| s.trim() == "1")
         .unwrap_or(false);
+    let fallback_origin = format!("http://127.0.0.1:{}", state.config.port);
     let origin_base_for_worker = state
         .config
         .public_base_url
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or("https://bot-sale.onrender.com");
+        .unwrap_or(&fallback_origin);
 
     let admin_telegram_id_val = Repository::get_setting(&conn, "admin_telegram_id")
         .await
@@ -3204,15 +3216,15 @@ fn render_shopee_card(
                         </label>
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-gray-400 mb-1">Tên Miền Bọc Link Riêng / Cloudflare Worker (Tùy chọn)</label>
-                        <input type="text" name="shortlink_base_url" value="{}" placeholder="Mặc định: https://thegioisieusale.click (hoặc URL Cloudflare Worker khác)" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <label class="block text-xs font-semibold text-gray-400 mb-1">Tên Miền Bọc Link Riêng / Tunnel (Tùy chọn)</label>
+                        <input type="text" name="shortlink_base_url" value="{}" placeholder="Để trống để trả link Affiliate trực tiếp (hoặc nhập https://...)" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
                         <label class="inline-flex items-center space-x-2 text-xs text-gray-300 mt-1.5">
                             <input type="checkbox" name="shortlink_mobile_only" value="1" {} class="rounded bg-gray-800 border-gray-600">
                             <span>🛡️ Chặn máy tính soi link bọc (Chỉ cho điện thoại mở giống godeal.online)</span>
                         </label>
                         <label class="inline-flex items-center space-x-2 text-xs text-gray-300 mt-1.5 block">
                             <input type="checkbox" name="public_home_cloak" value="1" {} class="rounded bg-gray-800 border-gray-600">
-                            <span>🙈 Ẩn luôn Trang chủ <code>/</code> trên Render thành <code>404 Not Found</code> (Chỉ bật nếu không chờ duyệt web Shopee/AT)</span>
+                            <span>🙈 Ẩn luôn Trang chủ <code>/</code> thành <code>404 Not Found</code> (Chỉ bật nếu không chờ duyệt web Shopee/AT)</span>
                         </label>
                     </div>
                 </div>
@@ -3222,7 +3234,7 @@ fn render_shopee_card(
             </form>
             <details class="bg-gray-950/70 border border-gray-800 rounded-xl p-4">
                 <summary class="cursor-pointer text-xs font-bold text-orange-300 select-none">
-                    ☁️ Hướng dẫn tạo link bọc riêng 100% miễn phí bằng Cloudflare Worker (Che hoàn toàn web Render, trang chủ / hiện Trang Đích Bot Telegram)
+                    ☁️ Hướng dẫn tạo link bọc riêng 100% miễn phí bằng Cloudflare Worker (Nếu chạy Tunnel công khai)
                 </summary>
                 <div class="mt-3 space-y-3 text-xs text-gray-300">
                     <ol class="list-decimal list-inside space-y-1 text-gray-400">

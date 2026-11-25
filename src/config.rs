@@ -97,18 +97,7 @@ impl Config {
             .filter(|s| !s.is_empty())
             .unwrap_or_default();
 
-        // Khóa AccessTrade API Token dự phòng tự động kích hoạt nếu máy chủ Cloud chưa cài biến môi trường
-        let default_at_bytes: [u8; 32] = [
-            88, 99, 115, 79, 68, 121, 111, 57, 84, 115, 111, 55, 79, 54, 52, 48, 81, 69, 100, 116,
-            112, 115, 70, 45, 107, 56, 71, 95, 57, 78, 95, 54,
-        ];
-        let fallback_at_token = String::from_utf8_lossy(&default_at_bytes).to_string();
-
-        let accesstrade_api_token = env::var("ACCESSTRADE_API_TOKEN")
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .or(Some(fallback_at_token));
+        let accesstrade_api_token = resolve_accesstrade_api_token(read_env_non_empty("ACCESSTRADE_API_TOKEN"));
 
         let shopee_affiliate_id = read_env_non_empty("SHOPEE_AFFILIATE_ID");
         let shopee_app_id = read_env_non_empty("SHOPEE_APP_ID");
@@ -137,9 +126,9 @@ impl Config {
             .unwrap_or(10000);
 
         let public_base_url = resolve_public_base_url();
-        let shortlink_base_url = Some(resolve_shortlink_base_url(read_env_non_empty(
+        let shortlink_base_url = resolve_shortlink_base_url(read_env_non_empty(
             "SHORTLINK_BASE_URL",
-        )));
+        ));
         let telegram_webhook_secret = resolve_webhook_secret(&telegram_token, &admin_password);
 
         Ok(Self {
@@ -176,14 +165,23 @@ fn read_env_non_empty(key: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-pub const DEFAULT_SHORTLINK_BASE_URL: &str = "https://thegioisieusale.click";
+/// Tạo ACCESSTRADE API Token (ưu tiên biến môi trường, dự phòng token mặc định nếu chưa cấu hình).
+fn resolve_accesstrade_api_token(env_override: Option<String>) -> Option<String> {
+    if let Some(tok) = env_override.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        return Some(tok);
+    }
+    let default_at_bytes: [u8; 32] = [
+        88, 99, 115, 79, 68, 121, 111, 57, 84, 115, 111, 55, 79, 54, 52, 48, 81, 69, 100, 116,
+        112, 115, 70, 45, 107, 56, 71, 95, 57, 78, 95, 54,
+    ];
+    Some(String::from_utf8_lossy(&default_at_bytes).to_string())
+}
 
-/// Xác định tên miền bọc link đầu ra (ưu tiên biến môi trường SHORTLINK_BASE_URL, mặc định https://thegioisieusale.click).
-fn resolve_shortlink_base_url(env_override: Option<String>) -> String {
+/// Xác định tên miền bọc link đầu ra (chỉ bật khi cấu hình tường minh SHORTLINK_BASE_URL; mặc định None để gửi link Affiliate trực tiếp khi chạy PC).
+fn resolve_shortlink_base_url(env_override: Option<String>) -> Option<String> {
     env_override
         .map(|s| s.trim().trim_end_matches('/').to_string())
         .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
-        .unwrap_or_else(|| DEFAULT_SHORTLINK_BASE_URL.to_string())
 }
 
 /// Xác định URL công khai HTTPS của dịch vụ (ưu tiên WEBHOOK_BASE_URL, sau đó RENDER_EXTERNAL_URL).
@@ -240,11 +238,13 @@ mod tests {
 
     #[test]
     fn test_fallback_accesstrade_token() {
-        let config = Config::from_env().expect("Config must be loaded");
-        assert!(config.accesstrade_api_token.is_some());
-        let token = config.accesstrade_api_token.unwrap();
+        let token = resolve_accesstrade_api_token(None).expect("Fallback token must exist");
         assert!(token.starts_with("XcsOD"));
         assert!(token.ends_with("9N_6"));
+        assert_eq!(
+            resolve_accesstrade_api_token(Some("  custom-token  ".to_string())).as_deref(),
+            Some("custom-token")
+        );
     }
 
     #[test]
@@ -259,18 +259,12 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_shortlink_base_url_defaults_to_thegioisieusale() {
+    fn test_resolve_shortlink_base_url_defaults_to_none_for_direct_links() {
+        assert_eq!(resolve_shortlink_base_url(None), None);
         assert_eq!(
-            resolve_shortlink_base_url(None),
-            "https://thegioisieusale.click"
+            resolve_shortlink_base_url(Some("https://go.example.com/".to_string())).as_deref(),
+            Some("https://go.example.com")
         );
-        assert_eq!(
-            resolve_shortlink_base_url(Some("https://go.example.com/".to_string())),
-            "https://go.example.com"
-        );
-        assert_eq!(
-            resolve_shortlink_base_url(Some("khong-hop-le".to_string())),
-            "https://thegioisieusale.click"
-        );
+        assert_eq!(resolve_shortlink_base_url(Some("khong-hop-le".to_string())), None);
     }
 }

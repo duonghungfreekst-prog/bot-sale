@@ -48,7 +48,11 @@ async fn main() -> anyhow::Result<()> {
     let accesstrade = Arc::new(AccessTradeClient::new());
 
     if config.turso_url.is_none() || config.turso_auth_token.is_none() {
-        warn!("⚠️ Đang dùng SQLite cục bộ ({}): dữ liệu DB sẽ bị reset khi container khởi động lại. Khuyên dùng Turso Cloud (TURSO_DATABASE_URL) để lưu vĩnh viễn.", config.database_path);
+        if config.public_base_url.is_some() {
+            warn!("⚠️ Đang dùng SQLite cục bộ ({}) trên môi trường Cloud: dữ liệu DB có thể bị reset khi container khởi động lại.", config.database_path);
+        } else {
+            info!("💾 Đang chạy chế độ PC Local — lưu dữ liệu bền vững trên file SQLite: {}", config.database_path);
+        }
     }
 
     // Tự động nạp trước và cập nhật ĐỊNH KỲ MỖI PHÚT (60s) chiến dịch & kho mã toàn thị trường ACCESSTRADE
@@ -115,7 +119,7 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    info!("🌐 Web Admin Dashboard & Health Check đang lắng nghe tại cổng {}", web_port);
+    info!("🌐 Web Admin Dashboard & Health Check đang lắng nghe tại: http://127.0.0.1:{}/admin", web_port);
 
     // 1.5 Nếu chạy trên Render/Cloud có public_base_url: bật self-ping giữ ấm mỗi 9 phút
     if let Some(base_url) = config.public_base_url.clone() {
