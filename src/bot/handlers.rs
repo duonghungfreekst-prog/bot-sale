@@ -122,7 +122,11 @@ pub(crate) async fn load_owned_aff_settings(
         .await
         .or_else(|| config.shopee_social_params.clone());
     let shortlink_db = read_opt("shortlink_base_url").await;
-    let tunnel_snap = crate::services::tunnel::snapshot_tunnel_state();
+    let tunnel_snap = crate::services::tunnel::wait_for_tunnel_if_starting(
+        config,
+        std::time::Duration::from_secs(10),
+    )
+    .await;
     let shortlink_base = crate::config::resolve_pc_runtime_shortlink_base_url(
         shortlink_db.as_deref(),
         config.shortlink_base_url.as_deref(),

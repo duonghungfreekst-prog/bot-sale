@@ -229,7 +229,8 @@ pub fn resolve_effective_shortlink_base_url(
 }
 
 /// Giải quyết tên miền bọc link thực tế khi chạy PC: nếu chưa gắn Cloudflare Named Tunnel Token
-/// mà Quick Tunnel tự động đang chạy thì ưu tiên URL Quick Tunnel sống để 100% link không bị 404.
+/// mà Quick Tunnel tự động đang chạy thì ưu tiên URL Quick Tunnel sống; nếu Quick Tunnel chưa sẵn sàng
+/// sẽ trả `None` (dùng link sạch/Affiliate trực tiếp thay vì xuất link `thegioisieusale.click` bị 404).
 pub fn resolve_pc_runtime_shortlink_base_url(
     db_setting: Option<&str>,
     config_shortlink: Option<&str>,
@@ -238,15 +239,11 @@ pub fn resolve_pc_runtime_shortlink_base_url(
     has_named_tunnel: bool,
 ) -> Option<String> {
     let effective = resolve_effective_shortlink_base_url(db_setting, config_shortlink, public_base)?;
-    if public_base.is_none() && !has_named_tunnel {
-        if let Some(qt) = quick_tunnel_url
+    if public_base.is_none() && !has_named_tunnel && effective.eq_ignore_ascii_case(DEFAULT_SHORTLINK_BASE_URL) {
+        return quick_tunnel_url
             .map(str::trim)
             .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
-        {
-            if effective.eq_ignore_ascii_case(DEFAULT_SHORTLINK_BASE_URL) {
-                return Some(qt.trim_end_matches('/').to_string());
-            }
-        }
+            .map(|s| s.trim_end_matches('/').to_string());
     }
     Some(effective)
 }
@@ -349,6 +346,27 @@ mod tests {
         );
         assert_eq!(
             resolve_effective_shortlink_base_url(None, Some(DEFAULT_SHORTLINK_BASE_URL), None)
+                .as_deref(),
+            Some(DEFAULT_SHORTLINK_BASE_URL)
+        );
+        // PC Local khi chưa gắn Named Token: có Quick Tunnel -> dùng Quick Tunnel; chưa có -> None để không gửi link 404
+        assert_eq!(
+            resolve_pc_runtime_shortlink_base_url(
+                None,
+                Some(DEFAULT_SHORTLINK_BASE_URL),
+                None,
+                Some("https://test-abc.trycloudflare.com/"),
+                false
+            )
+            .as_deref(),
+            Some("https://test-abc.trycloudflare.com")
+        );
+        assert_eq!(
+            resolve_pc_runtime_shortlink_base_url(None, Some(DEFAULT_SHORTLINK_BASE_URL), None, None, false),
+            None
+        );
+        assert_eq!(
+            resolve_pc_runtime_shortlink_base_url(None, Some(DEFAULT_SHORTLINK_BASE_URL), None, None, true)
                 .as_deref(),
             Some(DEFAULT_SHORTLINK_BASE_URL)
         );

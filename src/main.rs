@@ -239,7 +239,7 @@ async fn run_backend(
         config.clone(),
     );
 
-    // 1.8 Tự động kích hoạt Cloudflare Tunnel khi chạy trên PC (Named Tunnel nếu có Token, hoặc Quick Tunnel tự động)
+    // 1.8 Tự động kích hoạt Cloudflare Tunnel chạy nền khi ở PC Local (không chặn giao diện Desktop khởi động)
     services::tunnel::ensure_tunnel_running(&db, &config).await;
 
     let bot_ready_rx = if config.public_base_url.is_none() {

@@ -394,24 +394,25 @@ async fn shortlink_cloak_middleware(
                 } else {
                     None
                 };
-                let tunnel_snap = crate::services::tunnel::snapshot_tunnel_state();
-                let short_host = crate::config::resolve_pc_runtime_shortlink_base_url(
+                let short_host = crate::config::resolve_effective_shortlink_base_url(
                     db_short_raw.as_deref(),
                     state.config.shortlink_base_url.as_deref(),
                     None,
-                    tunnel_snap.quick_tunnel_url.as_deref(),
-                    tunnel_snap.has_named_token,
                 )
                 .as_deref()
                 .and_then(extract_host_only);
-                match short_host {
-                    Some(sh) => {
-                        let origin_sub = format!("origin.{}", sh);
-                        (sh == rh || rh == origin_sub || rh.ends_with(".trycloudflare.com"))
-                            && public_host.as_deref() != Some(sh.as_str())
-                            && !(public_host.is_none() && rh.ends_with(".onrender.com"))
+                if rh.ends_with(".trycloudflare.com") && public_host.is_none() {
+                    true
+                } else {
+                    match short_host {
+                        Some(sh) => {
+                            let origin_sub = format!("origin.{}", sh);
+                            (sh == rh || rh == origin_sub)
+                                && public_host.as_deref() != Some(sh.as_str())
+                                && !(public_host.is_none() && rh.ends_with(".onrender.com"))
+                        }
+                        None => false,
                     }
-                    None => false,
                 }
             }
             _ => false,
