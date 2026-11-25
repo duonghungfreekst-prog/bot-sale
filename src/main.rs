@@ -1,6 +1,10 @@
+#![cfg_attr(all(target_os = "windows", not(test)), windows_subsystem = "windows")]
+
 mod bot;
 mod config;
 mod db;
+#[cfg(windows)]
+mod desktop;
 mod services;
 mod utils;
 mod web;
@@ -14,13 +18,57 @@ use db::repository::Repository;
 use db::AppDb;
 use services::accesstrade::AccessTradeClient;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Khởi tạo hệ thống logging (tắt mã màu ANSI trên Windows CMD để không hiện ký tự rác)
+fn init_logging(gui_mode: bool) {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,salehunter_bot=debug".into());
+    if gui_mode {
+        let log_path = std::path::Path::new("target/desktop.log");
+        if let Some(parent) = log_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(meta) = std::fs::metadata(log_path) {
+            if meta.len() > 2 * 1024 * 1024 {
+                let _ = std::fs::write(log_path, b"");
+            }
+        }
+        let log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path);
+        if let Ok(file) = log_file {
+            let writer = std::sync::Mutex::new(file);
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(writer))
+                .init();
+            return;
+        }
+    }
+
     tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,salehunter_bot=debug".into()))
+        .with(filter)
         .with(tracing_subscriber::fmt::layer().with_ansi(!cfg!(target_os = "windows")))
         .init();
+}
+
+fn anchor_working_directory_near_exe() {
+    if let Ok(exe_path) = std::env::current_exe() {
+        let mut cur = exe_path.parent();
+        for _ in 0..4 {
+            let Some(dir) = cur else { break };
+            if dir.join(".env").exists() || dir.join("salehunter.db").exists() || dir.join("Cargo.toml").exists() {
+                let _ = std::env::set_current_dir(dir);
+                return;
+            }
+            cur = dir.parent();
+        }
+    }
+}
+
+fn main() -> anyhow::Result<()> {
+    anchor_working_directory_near_exe();
+    let headless = std::env::args().any(|a| a == "--headless" || a == "--no-gui");
+    let gui_mode = cfg!(target_os = "windows") && !headless;
+    init_logging(gui_mode);
 
     info!("=======================================================");
     info!("🚀 SALE HUNTER & CASHBACK BOT (RUST + LIBSQL) 🚀");
@@ -28,6 +76,58 @@ async fn main() -> anyhow::Result<()> {
     info!("=======================================================");
 
     let config = Config::from_env()?;
+
+    #[cfg(windows)]
+    if gui_mode {
+        if desktop::try_wake_existing_instance(config.port) {
+            info!("Ứng dụng Desktop đã đang chạy — đã đưa cửa sổ hiện có lên trước.");
+            return Ok(());
+        }
+
+        let port = config.port;
+        let bg_config = config.clone();
+        if let Err(err) = desktop::run_desktop_app(port, move |proxy, shutdown_rx| {
+            let handle = std::thread::spawn(move || {
+                let Ok(rt) = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                else {
+                    error!("Không thể khởi tạo Tokio Runtime cho Desktop Backend.");
+                    return;
+                };
+                rt.block_on(async move {
+                    if let Err(err) = run_backend(
+                        bg_config,
+                        Some(shutdown_rx),
+                        Some(Box::new(move || {
+                            let _ = proxy.send_event(desktop::DesktopEvent::BackendReady);
+                        })),
+                    )
+                    .await
+                    {
+                        error!("Lỗi nghiêm trọng trong Backend Desktop: {:?}", err);
+                    }
+                });
+            });
+            handle
+        }) {
+            error!("❌ Lỗi khởi chạy Desktop UI: {:?}", err);
+            return Err(err);
+        }
+        return Ok(());
+    }
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(run_backend(config, None, None))
+}
+
+async fn run_backend(
+    config: Config,
+    shutdown_rx: Option<tokio::sync::oneshot::Receiver<()>>,
+    on_web_ready: Option<Box<dyn FnOnce() + Send>>,
+) -> anyhow::Result<()> {
     info!("Cấu hình hoàn tiền người mua: {}% hoa hồng", config.default_cashback_rate);
     info!("Cấu hình hoa hồng giới thiệu F0: {}% hoa hồng", config.default_referral_bonus_rate);
     info!("Ngưỡng rút tiền tối thiểu: {}₫", config.min_withdrawal_vnd);
@@ -142,28 +242,53 @@ async fn main() -> anyhow::Result<()> {
     // 1.8 Tự động kích hoạt Cloudflare Tunnel khi chạy trên PC (Named Tunnel nếu có Token, hoặc Quick Tunnel tự động)
     services::tunnel::ensure_tunnel_running(&db, &config).await;
 
+    let bot_ready_rx = if config.public_base_url.is_none() {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), ready_rx).await;
+        None
+    } else {
+        Some(ready_rx)
+    };
+
+    if let Some(cb) = on_web_ready {
+        cb();
+    }
+
+    let shutdown_fut = async move {
+        if let Some(rx) = shutdown_rx {
+            let _ = rx.await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+
     // 2. Kiểm tra xem token Telegram đã được cấu hình chưa
     if config.telegram_token.contains("DEMO_TOKEN") || config.telegram_token.trim().is_empty() {
         info!("-------------------------------------------------------");
         info!("⚠️ CHÚ Ý: Chưa tìm thấy TELEGRAM_BOT_TOKEN trong biến môi trường!");
         info!("   Web Admin Dashboard vẫn đang chạy phục vụ tại cổng {}", web_port);
-        info!("   Vui lòng vào tab 'Environment' trên Render để thêm:");
-        info!("   TELEGRAM_BOT_TOKEN=<TELEGRAM_BOT_TOKEN_CUA_BAN>");
-        info!("   BOT_USERNAME=vvipass_vip_bot");
         info!("-------------------------------------------------------");
-        
-        // Giữ Web Admin Server chạy liên tục, tuyệt đối không exit làm sập Render Web Service
-        let _ = web_handle.await;
+
+        tokio::select! {
+            _ = shutdown_fut => {
+                info!("🛑 Đóng ứng dụng theo yêu cầu từ System Tray.");
+            }
+            _ = web_handle => {
+                error!("Web Server đã dừng.");
+            }
+        }
         services::tunnel::stop_active_tunnel().await;
         return Ok(());
     }
 
     // 3. Khởi chạy Telegram bot song song cùng Web Admin Server
     tokio::select! {
+        _ = shutdown_fut => {
+            info!("🛑 Nhận tín hiệu thoát từ Desktop System Tray — đang dọn dẹp Bot & Tunnel...");
+        }
         _ = web_handle => {
             error!("Web Server đã dừng.");
         }
-        res = bot::run_bot(config, db, accesstrade, webhook_rx, Some(ready_rx)) => {
+        res = bot::run_bot(config, db, accesstrade, webhook_rx, bot_ready_rx) => {
             if let Err(err) = res {
                 error!("Lỗi khi chạy Telegram bot: {}", err);
             }

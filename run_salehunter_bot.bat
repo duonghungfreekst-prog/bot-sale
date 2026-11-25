@@ -26,15 +26,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [3/3] Dang khoi chay Bot + Tu Dong Bat Cloudflare Tunnel...
-echo       Web Admin PC: http://127.0.0.1:10000/admin
-echo       Giu cua so nay mo khi su dung. Nhan Ctrl+C de dung toan bo an toan.
-echo ========================================================================
-start "" /b powershell -NoProfile -WindowStyle Hidden -Command "for ($i=0; $i -lt 30; $i++) { try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:10000/health' -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -eq 200) { Start-Process 'http://127.0.0.1:10000/admin'; break } } catch {}; Start-Sleep -Milliseconds 500 }"
+echo [3/3] Dang khoi chay The Gioi Sieu Sale Desktop App (Auto Bot + Tunnel)...
+echo       Cua so giao dien Desktop + khay he thong (System Tray) se tu mo.
+start "" ".\target\release\salehunter_bot.exe"
+exit /b 0
 
-.\target\release\salehunter_bot.exe
-
-if exist "target\cf_tunnel.pid" (
-    for /f "usebackq delims=" %%P in ("target\cf_tunnel.pid") do taskkill /F /PID %%P >nul 2>&1
-    del /Q "target\cf_tunnel.pid" >nul 2>&1
-)

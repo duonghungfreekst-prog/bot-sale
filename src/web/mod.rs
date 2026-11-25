@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use axum::{
     extract::{Form, Path, Query, Request, State},
@@ -32,6 +32,39 @@ use crate::services::shopee_affiliate::{
 use crate::utils::{escape_html, format_vnd, sanitize_crlf};
 
 pub type WebhookUpdateSender = mpsc::UnboundedSender<Result<Update, Infallible>>;
+
+static DESKTOP_WAKE_HOOK: OnceLock<Arc<dyn Fn() + Send + Sync>> = OnceLock::new();
+
+/// Đăng ký hàm đánh thức cửa sổ Desktop khi người dùng mở lại file `.exe` lúc app đang thu gọn dưới khay hệ thống.
+pub fn set_desktop_wake_hook<F>(hook: F)
+where
+    F: Fn() + Send + Sync + 'static,
+{
+    let _ = DESKTOP_WAKE_HOOK.set(Arc::new(hook));
+}
+
+async fn handle_internal_show(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Response {
+    let is_local_pc = state.config.public_base_url.is_none()
+        && !headers.contains_key("cf-ray")
+        && !headers.contains_key("cf-connecting-ip")
+        && !headers.contains_key("x-dealx-cloak");
+    let host_ok = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .and_then(extract_host_only)
+        .map(|h| matches!(h.as_str(), "127.0.0.1" | "localhost" | "[::1]" | "::1"))
+        .unwrap_or(false);
+    if !is_local_pc || !host_ok {
+        return not_found_cloak_response();
+    }
+    if let Some(hook) = DESKTOP_WAKE_HOOK.get() {
+        hook();
+    }
+    (StatusCode::OK, "OK").into_response()
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -90,6 +123,7 @@ fn build_router(state: AppState) -> Router {
         .route("/assets/bot-cart-3d.webp", get(handle_bot_cart_3d_webp))
         .route("/assets/landing.js", get(handle_landing_js))
         .route("/health", get(handle_health))
+        .route("/internal/show", get(handle_internal_show))
         .route("/telegram/webhook", post(handle_telegram_webhook))
         .route("/admin/login", get(handle_login_page).post(handle_login_submit))
         .route("/admin/logout", get(handle_logout))
@@ -1431,8 +1465,8 @@ async fn handle_shortlink_redirect(
         .await
         .ok()
         .flatten()
-        .map(|v| v.trim() != "0")
-        .unwrap_or(true);
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false);
 
     if mobile_only && is_desktop_browser(&headers) {
         let blocked_html = r#"<!DOCTYPE html>
@@ -2093,8 +2127,8 @@ async fn handle_dashboard(
         .await
         .ok()
         .flatten()
-        .map(|s| s.trim() != "0")
-        .unwrap_or(true);
+        .map(|s| s.trim() == "1")
+        .unwrap_or(false);
     let public_home_cloak = Repository::get_setting(&conn, "public_home_cloak")
         .await
         .ok()
@@ -4621,7 +4655,7 @@ DongLoiThieuCot | 123
         assert!(preview_body.contains("Sữa bột Enfagrow Test"));
         assert!(!preview_body.contains("SIGTEST123"));
 
-        // 2. Desktop Windows -> 403 Forbidden (mặc định mobile_only bật), không có location & không lộ secret_target
+        // 2. Mặc định cho phép mở cả Điện thoại & Máy tính (shortlink_mobile_only tắt) -> 302 Found
         let mut desktop_hdrs = HeaderMap::new();
         desktop_hdrs.insert(
             header::USER_AGENT,
@@ -4629,6 +4663,19 @@ DongLoiThieuCot | 123
                 .parse()
                 .unwrap(),
         );
+        let resp_desktop_default = handle_shortlink_redirect(
+            Path(code.clone()),
+            desktop_hdrs.clone(),
+            State(state.clone()),
+        )
+        .await;
+        assert_eq!(resp_desktop_default.status(), StatusCode::FOUND);
+
+        // 2b. Khi Admin chủ động bật shortlink_mobile_only = "1" -> Desktop bị chặn 403 Forbidden
+        {
+            let conn = state.db.conn().unwrap();
+            Repository::set_setting(&conn, "shortlink_mobile_only", "1").await.unwrap();
+        }
         let resp_desktop = handle_shortlink_redirect(
             Path(code.clone()),
             desktop_hdrs,
