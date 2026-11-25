@@ -12,6 +12,7 @@ use crate::db::repository::Repository;
 use crate::db::AppDb;
 
 const PID_FILE_PATH: &str = "target/cf_tunnel.pid";
+const ISOLATED_CF_CONFIG_PATH: &str = "target/cloudflared_isolated.yml";
 
 #[derive(Clone, Debug, Default)]
 pub struct TunnelRuntimeSnapshot {
@@ -132,6 +133,15 @@ fn write_pid_file(pid: u32) {
     let _ = std::fs::write(PID_FILE_PATH, pid.to_string());
 }
 
+/// Tạo file cấu hình riêng tối thiểu để `cloudflared` không đọc nhầm `~/.cloudflared/config.yml` của dự án khác.
+fn ensure_isolated_cf_config() -> &'static str {
+    if let Some(parent) = Path::new(ISOLATED_CF_CONFIG_PATH).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(ISOLATED_CF_CONFIG_PATH, "no-autoupdate: true\n");
+    ISOLATED_CF_CONFIG_PATH
+}
+
 /// Dừng sạch tiến trình Cloudflare Tunnel con do bot quản lý.
 pub async fn stop_active_tunnel() {
     let mut guard = proc_lock().lock().await;
@@ -192,9 +202,11 @@ pub async fn ensure_tunnel_running(db: &AppDb, config: &Config) {
 
     stop_active_tunnel().await;
 
+    let isolated_cfg = ensure_isolated_cf_config();
+
     if let Some(token) = named_token {
         let mut cmd = Command::new(&cf_exe);
-        cmd.args(["tunnel", "--no-autoupdate", "run"])
+        cmd.args(["--config", isolated_cfg, "tunnel", "--no-autoupdate", "run"])
             .env("TUNNEL_TOKEN", token)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -235,10 +247,17 @@ pub async fn ensure_tunnel_running(db: &AppDb, config: &Config) {
     // Chưa có Token cố định: tự động mở Cloudflare Quick Tunnel (trycloudflare.com) ngay lập tức để link bọc chạy 100% không cần bấm tay!
     let local_origin = format!("http://127.0.0.1:{}", config.port);
     let mut cmd = Command::new(&cf_exe);
-    cmd.args(["tunnel", "--no-autoupdate", "--url", &local_origin])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+    cmd.args([
+        "--config",
+        isolated_cfg,
+        "tunnel",
+        "--no-autoupdate",
+        "--url",
+        &local_origin,
+    ])
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .kill_on_drop(true);
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
@@ -251,40 +270,68 @@ pub async fn ensure_tunnel_running(db: &AppDb, config: &Config) {
         write_pid_file(pid);
     }
 
-    let (tx, rx) = tokio::sync::oneshot::channel::<String>();
-    let tx_slot = std::sync::Arc::new(tokio::sync::Mutex::new(Some(tx)));
+    struct ReadyTracker {
+        url: Option<String>,
+        registered: bool,
+        sender: Option<tokio::sync::oneshot::Sender<String>>,
+    }
 
-    if let Some(stderr) = child.stderr.take() {
-        let tx_s = tx_slot.clone();
+    let tracker = std::sync::Arc::new(tokio::sync::Mutex::new(None::<ReadyTracker>));
+    let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+    *tracker.lock().await = Some(ReadyTracker {
+        url: None,
+        registered: false,
+        sender: Some(tx),
+    });
+
+    fn spawn_stream_reader<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
+        reader: R,
+        tracker: std::sync::Arc<tokio::sync::Mutex<Option<ReadyTracker>>>,
+    ) {
         tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
+            let mut lines = BufReader::new(reader).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                if let Some(url) = extract_trycloudflare_url(&line) {
-                    if let Some(sender) = tx_s.lock().await.take() {
-                        let _ = sender.send(url);
+                let found_url = extract_trycloudflare_url(&line);
+                let is_reg = line.contains("Registered tunnel connection");
+                if found_url.is_none() && !is_reg {
+                    continue;
+                }
+                let mut guard = tracker.lock().await;
+                if let Some(ref mut st) = *guard {
+                    if let Some(u) = found_url {
+                        st.url = Some(u);
+                    }
+                    if is_reg {
+                        st.registered = true;
+                    }
+                    if st.registered {
+                        if let Some(url) = st.url.clone() {
+                            if let Some(sender) = st.sender.take() {
+                                let _ = sender.send(url);
+                            }
+                        }
                     }
                 }
             }
         });
     }
+
+    if let Some(stderr) = child.stderr.take() {
+        spawn_stream_reader(stderr, tracker.clone());
+    }
     if let Some(stdout) = child.stdout.take() {
-        let tx_o = tx_slot;
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if let Some(url) = extract_trycloudflare_url(&line) {
-                    if let Some(sender) = tx_o.lock().await.take() {
-                        let _ = sender.send(url);
-                    }
-                }
-            }
-        });
+        spawn_stream_reader(stdout, tracker.clone());
     }
 
     *proc_lock().lock().await = Some(child);
 
-    match tokio::time::timeout(Duration::from_secs(12), rx).await {
-        Ok(Ok(live_url)) => {
+    let ready_url = match tokio::time::timeout(Duration::from_secs(15), rx).await {
+        Ok(Ok(url)) => Some(url),
+        _ => tracker.lock().await.as_ref().and_then(|st| st.url.clone()),
+    };
+
+    match ready_url {
+        Some(live_url) => {
             if let Ok(mut st) = state_lock().write() {
                 st.quick_tunnel_url = Some(live_url.clone());
                 st.has_named_token = false;
@@ -295,7 +342,7 @@ pub async fn ensure_tunnel_running(db: &AppDb, config: &Config) {
                 live_url
             );
         }
-        _ => {
+        None => {
             warn!("[TUNNEL] Quá thời gian chờ Quick Tunnel — kiểm tra lại mạng hoặc thử dán Tunnel Token vào Web Admin.");
         }
     }
