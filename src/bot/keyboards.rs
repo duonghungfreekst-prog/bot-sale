@@ -1,15 +1,12 @@
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, KeyboardMarkup};
 use url::Url;
 
-/// Bàn phím Reply Keyboard thường trực ở dưới khung chat (Tập trung dán link & xem mã hot)
+/// Bàn phím Reply Keyboard thường trực ở dưới khung chat (Tập trung dán link sản phẩm)
 pub fn persistent_reply_keyboard() -> KeyboardMarkup {
-    KeyboardMarkup::new(vec![
-        vec![KeyboardButton::new("🎟️ Mã Hot Hôm Nay")],
-        vec![
-            KeyboardButton::new("📖 Hướng Dẫn Săn Sale"),
-            KeyboardButton::new("🚀 Chia Sẻ Cho Bạn Bè"),
-        ],
-    ])
+    KeyboardMarkup::new(vec![vec![
+        KeyboardButton::new("📖 Hướng Dẫn Săn Sale"),
+        KeyboardButton::new("🚀 Chia Sẻ Cho Bạn Bè"),
+    ]])
     .resize_keyboard()
     .persistent()
 }

@@ -22,8 +22,6 @@ use crate::utils::{escape_html, format_vnd};
 pub enum Command {
     #[command(description = "Bắt đầu / Dán link sản phẩm nhận ưu đãi")]
     Start,
-    #[command(description = "Xem nhanh top mã giảm giá nổi bật hiện có")]
-    Deals,
     #[command(description = "Xem hướng dẫn chi tiết cách áp mã giảm giá")]
     Help,
     #[command(description = "Chia sẻ Thế Giới Siêu Sale cho bạn bè cùng săn sale")]
@@ -170,23 +168,33 @@ pub async fn handle_message(
     let lower_text = text.to_lowercase();
     let mapped_cmd = match text {
         "🚀 Bắt Đầu" | "Bắt Đầu" | "start" => Some(Command::Start),
-        "🎟️ Mã Hot Hôm Nay" | "🎟️ Kho Mã 20% - 35%+" | "🎟️ Kho Mã 20% - 35%" | "Kho Mã 20% - 35%" => {
-            Some(Command::Deals)
-        }
         "📖 Hướng Dẫn Săn Sale" | "Hướng Dẫn" | "help" => Some(Command::Help),
         "🚀 Chia Sẻ Cho Bạn Bè" | "Chia Sẻ" | "share" => Some(Command::Share),
-        _ if lower_text == "deals"
-            || lower_text == "ma"
-            || lower_text.starts_with("/deals")
-            || lower_text.starts_with("/ma") =>
-        {
-            Some(Command::Deals)
-        }
         _ => None,
     };
 
     if let Some(cmd) = mapped_cmd {
         return handle_command(bot, msg, cmd, db, config, parser).await;
+    }
+
+    // Nếu người dùng bấm nút Kho Mã cũ hoặc gõ /deals /ma -> nhắc dán link sản phẩm trực tiếp
+    if text == "🎟️ Mã Hot Hôm Nay"
+        || text == "🎟️ Kho Mã 20% - 35%+"
+        || text == "🎟️ Kho Mã 20% - 35%"
+        || text == "Kho Mã 20% - 35%"
+        || lower_text == "deals"
+        || lower_text == "ma"
+        || lower_text.starts_with("/deals")
+        || lower_text.starts_with("/ma")
+    {
+        bot.send_message(
+            msg.chat.id,
+            "👉 Hãy <b>dán trực tiếp link sản phẩm Shopee, Lazada, Tiki hoặc TikTok Shop</b> vào đây để bot tạo link mua kèm mã khớp riêng cho đúng sản phẩm đó nhé!",
+        )
+        .parse_mode(ParseMode::Html)
+        .reply_markup(persistent_reply_keyboard())
+        .await?;
+        return Ok(());
     }
 
     // Nếu tin nhắn bắt đầu bằng lệnh '/'
@@ -737,14 +745,14 @@ pub async fn handle_message(
     Ok(())
 }
 
-/// Xử lý các lệnh Slash Commands (/start, /deals, /help, /share, /stats)
+/// Xử lý các lệnh Slash Commands (/start, /help, /share, /stats)
 pub async fn handle_command(
     bot: Bot,
     msg: Message,
     cmd: Command,
     db: AppDb,
     config: Config,
-    parser: Arc<DealParser>,
+    _parser: Arc<DealParser>,
 ) -> ResponseResult<()> {
     let user_id = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
     let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
@@ -784,82 +792,11 @@ pub async fn handle_command(
             let welcome = "⚡ <b>CHÀO MỪNG BẠN ĐẾN VỚI THẾ GIỚI SIÊU SALE</b> ⚡\n\n\
                  🔥 <b>Mua hàng tiết kiệm hơn chỉ với 1 bước:</b>\n\
                  Chỉ cần <b>Dán trực tiếp link sản phẩm Shopee, Lazada, Tiki, TikTok Shop, Alibaba hoặc các đối tác chính hãng</b> vào khung chat này, bot sẽ tự phân tích sản phẩm/shop và trả về link mua kèm mã khớp riêng ngay cho bạn!\n\n\
-                 👇 <i>Hãy dán thử 1 link sản phẩm hoặc bấm /deals để xem mã hot hôm nay:</i>";
+                 👇 <i>Hãy dán thử 1 link sản phẩm bất kỳ vào đây để trải nghiệm ngay:</i>";
 
             bot.send_message(msg.chat.id, welcome)
                 .parse_mode(ParseMode::Html)
                 .reply_markup(main_menu_keyboard(&config.bot_username))
-                .await?;
-        }
-
-        Command::Deals => {
-            let owned_aff = load_owned_aff_settings(&conn, &config).await;
-            let shortlink_base = owned_aff.shortlink_base.as_deref();
-            let active_deals = Repository::get_active_deals(&conn, None)
-                .await
-                .unwrap_or_default();
-            let approved = parser.accesstrade().peek_approved_campaigns().await;
-            let market_vouchers = parser.accesstrade().peek_cached_high_discount_vouchers().await;
-
-            let mut lines: Vec<String> = Vec::new();
-            for d in active_deals.iter().take(3) {
-                let wrapped = Repository::wrap_url_if_public(
-                    &conn,
-                    shortlink_base,
-                    &d.deal_url,
-                    &d.title,
-                    &d.platform,
-                )
-                .await;
-                let code = d
-                    .coupon_code
-                    .as_deref()
-                    .filter(|c| !c.trim().is_empty())
-                    .map(|c| format!(" · Mã: <code>{}</code>", escape_html(c)))
-                    .unwrap_or_default();
-                lines.push(format!(
-                    "👑 <b>[{}] {}</b>{}\n   💬 {} · <a href=\"{}\">Lấy mã ngay ↗</a>",
-                    escape_html(&d.platform),
-                    escape_html(&d.title),
-                    code,
-                    escape_html(&d.discount_desc),
-                    escape_html(&wrapped)
-                ));
-            }
-
-            let remaining_slots = 5usize.saturating_sub(lines.len());
-            for mv in market_vouchers.iter().take(remaining_slots) {
-                let raw_url = mv.best_target_url(approved.as_ref());
-                let wrapped = Repository::wrap_url_if_public(
-                    &conn,
-                    shortlink_base,
-                    &raw_url,
-                    &mv.shop_name,
-                    &mv.platform,
-                )
-                .await;
-                lines.push(format!(
-                    "🎟️ <b>[{}] {}</b> · Mã: <code>{}</code>\n   💬 {} · <a href=\"{}\">Mở Shop &amp; Áp mã ↗</a>",
-                    escape_html(&mv.discount_badge()),
-                    escape_html(&mv.shop_name),
-                    escape_html(&mv.coupon_code),
-                    escape_html(&mv.discount_desc),
-                    escape_html(&wrapped)
-                ));
-            }
-
-            let deals_html = if lines.is_empty() {
-                "👉 Hiện bạn chỉ cần <b>dán trực tiếp link sản phẩm Shopee, Lazada, Tiki hoặc TikTok Shop</b> vào đây để bot tạo link mua kèm mã khớp riêng cho đúng sản phẩm đó nhé!".to_string()
-            } else {
-                format!(
-                    "🔥 <b>TOP MÃ GIẢM GIÁ NỔI BẬT ĐANG CÓ SẴN</b>\n\n{}\n\n👉 <i>Hoặc dán trực tiếp link sản phẩm bạn định mua vào đây để bot tìm thêm mã khớp đúng shop đó nhé!</i>",
-                    lines.join("\n\n")
-                )
-            };
-
-            bot.send_message(msg.chat.id, deals_html)
-                .parse_mode(ParseMode::Html)
-                .reply_markup(persistent_reply_keyboard())
                 .await?;
         }
 
