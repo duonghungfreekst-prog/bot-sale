@@ -23,8 +23,9 @@ if %errorlevel% neq 0 (
 
 echo [2/2] Dang khoi chay SaleHunter Bot (Long Polling + Direct Links)...
 echo       Web Admin PC: http://127.0.0.1:10000/admin
-echo       Nhan Ctrl+C de dung bot an toan.
+echo       Giu cua so nay mo khi su dung. Nhan Ctrl+C de dung bot an toan.
 echo ========================================================
+start "" /b cmd /c "timeout /t 2 /nobreak >nul && start http://127.0.0.1:10000/admin"
 .\target\release\salehunter_bot.exe
 
 pause

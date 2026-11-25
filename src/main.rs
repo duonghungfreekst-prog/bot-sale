@@ -16,10 +16,10 @@ use services::accesstrade::AccessTradeClient;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Khởi tạo hệ thống logging
+    // Khởi tạo hệ thống logging (tắt mã màu ANSI trên Windows CMD để không hiện ký tự rác)
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,salehunter_bot=debug".into()))
-        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::fmt::layer().with_ansi(!cfg!(target_os = "windows")))
         .init();
 
     info!("=======================================================");
