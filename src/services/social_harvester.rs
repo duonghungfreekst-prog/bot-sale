@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use regex::Regex;
 use reqwest::Client;
@@ -18,13 +19,61 @@ const DEFAULT_CHANNELS: &[&str] = &[
     "https://t.me/s/magiamgiashopee",
     "https://t.me/s/meosansale",
     "https://t.me/s/dealngonmoingay",
+    "https://t.me/s/xomsansale",
 ];
 
 const DEFAULT_WEB_DEAL_PAGES: &[&str] = &[
     "https://magiamgiashopee.vn",
+    "https://bloggiamgia.vn/",
 ];
 
+const SOCIAL_SYNC_INTERVAL_SECS: u64 = 300;
 const MOBILE_UA: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+
+#[derive(Clone, Debug)]
+pub struct SocialHarvesterStatus {
+    pub is_running: bool,
+    pub is_syncing: bool,
+    pub sync_cycles: u64,
+    pub interval_secs: u64,
+    pub last_sync_vn: String,
+    pub harvested_params: Option<String>,
+    pub sig_strength: u8,
+    pub deals_found: usize,
+}
+
+impl Default for SocialHarvesterStatus {
+    fn default() -> Self {
+        Self {
+            is_running: false,
+            is_syncing: false,
+            sync_cycles: 0,
+            interval_secs: SOCIAL_SYNC_INTERVAL_SECS,
+            last_sync_vn: String::new(),
+            harvested_params: None,
+            sig_strength: 0,
+            deals_found: 0,
+        }
+    }
+}
+
+static SOCIAL_STATUS: OnceLock<Mutex<SocialHarvesterStatus>> = OnceLock::new();
+
+fn social_status_lock() -> &'static Mutex<SocialHarvesterStatus> {
+    SOCIAL_STATUS.get_or_init(|| Mutex::new(SocialHarvesterStatus::default()))
+}
+
+pub fn snapshot_social_status() -> SocialHarvesterStatus {
+    social_status_lock()
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default()
+}
+
+fn current_vn_timestamp_str() -> String {
+    let vn_now = chrono::Utc::now() + chrono::Duration::hours(7);
+    vn_now.format("%H:%M:%S %d/%m/%Y").to_string()
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct SocialSyncReport {
@@ -34,23 +83,30 @@ pub struct SocialSyncReport {
     pub deals_updated: usize,
 }
 
-/// Trích xuất URL đích từ JS-bridge HTML (`var CONFIG={httpUrl:"..."}` hoặc `window.location.replace("...")`).
+/// Giải escape chuỗi HTML nhúng trong JSON / Nuxt payload (ví dụ trên bloggiamgia.vn).
+pub fn decode_embedded_html_escapes(raw: &str) -> String {
+    raw.replace("\\u003c", "<")
+        .replace("\\u003C", "<")
+        .replace("\\u003e", ">")
+        .replace("\\u003E", ">")
+        .replace("\\u0026", "&")
+        .replace("\\u003d", "=")
+        .replace("\\u003D", "=")
+        .replace("\\/", "/")
+}
+
+/// Trích xuất URL đích từ JS-bridge HTML (`httpUrl:"..."`, `window.location.replace(...)` hoặc `<meta http-equiv="refresh">`).
 pub fn extract_shopee_config_http_url(html: &str) -> Option<String> {
     let patterns = [
         r#"httpUrl\s*:\s*"([^"]+)""#,
         r#"window\.location\.(?:replace|assign)\(\s*["']([^"']+)["']\s*\)"#,
+        r#"(?is)<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*?url=([^"'\s>]+)["']"#,
     ];
     for pat in patterns {
         let Ok(re) = Regex::new(pat) else { continue };
         if let Some(caps) = re.captures(html) {
             if let Some(m) = caps.get(1) {
-                let decoded = m
-                    .as_str()
-                    .replace("\\/", "/")
-                    .replace("\\u0026", "&")
-                    .replace("\\u003d", "=")
-                    .replace("\\u003D", "=")
-                    .replace("&amp;", "&");
+                let decoded = decode_embedded_html_escapes(m.as_str()).replace("&amp;", "&");
                 if decoded.starts_with("https://") || decoded.starts_with("http://") {
                     return Some(decoded);
                 }
@@ -58,6 +114,52 @@ pub fn extract_shopee_config_http_url(html: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Lần tối đa 2 chặng redirect / HTML JS-bridge để lấy URL đích thực sự chứa chữ ký Shopee FB/IG.
+async fn probe_url_for_social_candidates(http: &Client, url: &str, max_hops: u8) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current_url = url.to_string();
+    for _ in 0..max_hops {
+        let Ok(resp) = http
+            .get(&current_url)
+            .header("User-Agent", MOBILE_UA)
+            .timeout(Duration::from_secs(6))
+            .send()
+            .await
+        else {
+            break;
+        };
+        let final_url = resp.url().as_str().to_string();
+        out.push(final_url.clone());
+        if extract_social_passthrough_params(&final_url)
+            .as_deref()
+            .map(social_param_strength)
+            .unwrap_or(0)
+            >= 3
+        {
+            break;
+        }
+        let body = resp.text().await.unwrap_or_default();
+        if let Some(cfg) = extract_shopee_config_http_url(&body) {
+            out.push(cfg.clone());
+            if extract_social_passthrough_params(&cfg)
+                .as_deref()
+                .map(social_param_strength)
+                .unwrap_or(0)
+                >= 3
+            {
+                break;
+            }
+            if cfg != current_url && (cfg.contains("s.shopee.vn/") || cfg.contains("shp.ee/")) {
+                current_url = cfg;
+                continue;
+            }
+        }
+        out.push(body);
+        break;
+    }
+    out
 }
 
 /// Bóc tách bộ tham số Shopee FB/IG từ input thô hoặc tự giải mã nếu Admin dán link rút gọn / link cầu nối.
@@ -69,39 +171,31 @@ pub async fn resolve_social_params_from_input(http: &Client, raw_input: &str) ->
     }
     let re_url = Regex::new(r#"https?://[^\s<>"']+"#).ok()?;
     let url = re_url.find(raw_input)?.as_str();
-    let resp = http
-        .get(url)
-        .header("User-Agent", MOBILE_UA)
-        .timeout(Duration::from_secs(8))
-        .send()
-        .await
-        .ok()?;
-    let final_url = resp.url().as_str().to_string();
-    if let Some(p) = extract_social_passthrough_params(&final_url) {
-        return Some(p);
-    }
-    if let Ok(body) = resp.text().await {
-        if let Some(cfg) = extract_shopee_config_http_url(&body) {
-            if let Some(p) = extract_social_passthrough_params(&cfg) {
-                return Some(p);
-            }
-        }
-        if let Some(p) = extract_social_passthrough_params(&body) {
-            return Some(p);
+    let mut best: Option<String> = None;
+    for candidate in probe_url_for_social_candidates(http, url, 2).await {
+        consider_best_params(&mut best, &candidate);
+        if best.as_deref().map(social_param_strength).unwrap_or(0) >= 3 {
+            return best;
         }
     }
-    extract_social_passthrough_params(raw_input)
+    best.or_else(|| extract_social_passthrough_params(raw_input))
 }
 
 fn clean_harvested_desc(text: &str) -> String {
-    let re_urls = Regex::new(r"(?i)(?:https?://\S+|(?:s\.shopee\.vn|shp\.ee|vn\.shp\.ee)/\S+)").unwrap();
+    let re_urls = Regex::new(
+        r"(?i)(?:https?://\S+|(?:s\.shopee\.vn|shp\.ee|vn\.shp\.ee|nghien\.co|noti\.sale|sandeal\.co|go\.isclix\.com|bit\.ly)/\S+)",
+    )
+    .unwrap();
     let no_urls = re_urls.replace_all(text, " ");
-    let re_noise = Regex::new(r"(?i)(?:►+|list\s*áp\s*dụng\s*[>:]*|áp\s*(?:cho\s*)?list\s*[>:]*)").unwrap();
+    let re_noise = Regex::new(
+        r"(?i)(?:►+|list\s*áp\s*dụng\s*[>:]*|áp\s*(?:cho\s*)?list\s*[>:]*|lưu\s*banner\s*|\[c\s+link=[^\]]*\]?)",
+    )
+    .unwrap();
     let no_noise = re_noise.replace_all(&no_urls, " ");
     let re_ws = Regex::new(r"\s+").unwrap();
     re_ws
         .replace_all(no_noise.trim(), " ")
-        .trim_matches(|c: char| matches!(c, '>' | ':' | '-' | '.' | ' '))
+        .trim_matches(|c: char| matches!(c, '>' | '=' | ':' | '-' | '.' | ' '))
         .chars()
         .take(90)
         .collect()
@@ -123,7 +217,7 @@ fn strip_html_entities_and_tags(raw: &str) -> String {
 
 fn parse_vnd_amount_hint(text: &str) -> f64 {
     let lower = text.to_ascii_lowercase();
-    if lower.contains("đơn 0đ") || lower.contains("từ 0đ") {
+    if lower.contains("đơn 0đ") || lower.contains("từ 0đ") || lower.contains("đơn 0đ") {
         return 0.0;
     }
     let re = Regex::new(r"(?i)(?:đơn\s*từ|từ)\s*(\d+(?:[.,]\d+)?)\s*(k|tr|triệu|đ|d)?").unwrap();
@@ -160,8 +254,9 @@ fn stable_deal_code_suffix(prefix: &str, seed: &str) -> String {
     format!("{}_{:08X}", prefix, h)
 }
 
-/// Phân tích HTML trang `magiamgiashopee.vn` để nhặt thật Mã Instagram, Mã Facebook KOL & top voucher Shopee sạch.
-pub fn parse_magiamgiashopee_deals(html: &str) -> Vec<NewDealInput> {
+/// Phân tích HTML trang web deal Shopee (hỗ trợ cả HTML thường & HTML nhúng JSON) để nhặt Mã Instagram, Mã Facebook KOL & top voucher Shopee sạch.
+pub fn parse_magiamgiashopee_deals(raw_html: &str) -> Vec<NewDealInput> {
+    let html = decode_embedded_html_escapes(raw_html);
     let re_p = Regex::new(r"(?is)<p\b[^>]*>(.*?)</p>").unwrap();
     let re_href = Regex::new(r#"(?i)href="([^"]+)""#).unwrap();
     let re_pct = Regex::new(r"(\d{1,2})\s*%").unwrap();
@@ -171,7 +266,7 @@ pub fn parse_magiamgiashopee_deals(html: &str) -> Vec<NewDealInput> {
     let mut top_voucher_deals: Vec<NewDealInput> = Vec::new();
     let mut seen_codes: HashSet<String> = HashSet::new();
 
-    for cap in re_p.captures_iter(html) {
+    for cap in re_p.captures_iter(&html) {
         let block_html = cap.get(1).map(|m| m.as_str()).unwrap_or("");
         let text = strip_html_entities_and_tags(block_html);
         if text.is_empty() {
@@ -192,6 +287,8 @@ pub fn parse_magiamgiashopee_deals(html: &str) -> Vec<NewDealInput> {
         }
 
         if lower.contains("mã shopee kol")
+            || lower.contains("mã link kol")
+            || lower.contains("mã lưu từ banner")
             || lower.contains("ưu đãi shopeevip")
             || lower.contains("mã hot sẵn ví")
             || lower.contains("mã bách hoá")
@@ -203,14 +300,14 @@ pub fn parse_magiamgiashopee_deals(html: &str) -> Vec<NewDealInput> {
         }
 
         let is_ig = lower.contains("mã instagram") || lower.contains("instagram");
-        let is_fb = lower.contains("mã facebook") || lower.contains("facebook");
+        let is_fb = lower.contains("mã facebook") || lower.contains("shopee x facebook");
         let pct_val = re_pct
             .captures(&lower)
             .and_then(|c| c.get(1))
             .and_then(|m| m.as_str().parse::<u32>().ok())
             .unwrap_or(0);
 
-        // Ưu tiên 1: Mã Instagram / Facebook từ block MÃ SHOPEE KOL (không bị cắt bởi giới hạn 10 mã phía trên)
+        // Ưu tiên 1: Mã Instagram / Facebook từ block MÃ SHOPEE KOL
         if (is_ig || is_fb) && pct_val >= 15 {
             let deal_url = inline_clean_url
                 .clone()
@@ -242,7 +339,7 @@ pub fn parse_magiamgiashopee_deals(html: &str) -> Vec<NewDealInput> {
             continue;
         }
 
-        // Ưu tiên 2: Các mã % cao kèm link `shopee.vn/search?evcode=...` thật trên trang
+        // Ưu tiên 2: Các mã % cao kèm link `shopee.vn/search?evcode=...` hoặc `shopee.vn/m/...` thật trên trang
         if pct_val >= 20 && top_voucher_deals.len() < 8 {
             if let Some(ref target_url) = inline_clean_url {
                 if target_url.contains("shopee.vn/search?") || target_url.contains("shopee.vn/m/") {
@@ -281,7 +378,67 @@ fn consider_best_params(best: &mut Option<String>, candidate_url_or_params: &str
     }
 }
 
-/// Quét tự động các kênh Telegram + Web Deal công khai để nhặt chữ ký số Shopee FB/IG Reels và mã giảm giá Shopee FB/IG thật.
+/// Quyết định tham số FB/IG hiệu lực: luôn nâng cấp khi quét thấy chữ ký mức 3 mới, không hạ cấp chữ ký mạnh đang lưu.
+pub fn choose_effective_social_params(scanned_best: Option<String>, current_saved: &str) -> Option<String> {
+    let saved_valid = extract_social_passthrough_params(current_saved);
+    let scanned_score = scanned_best.as_deref().map(social_param_strength).unwrap_or(0);
+    let saved_score = saved_valid.as_deref().map(social_param_strength).unwrap_or(0);
+
+    if scanned_score >= 3 {
+        scanned_best
+    } else if saved_score >= 3 {
+        saved_valid
+    } else {
+        scanned_best.or(saved_valid)
+    }
+}
+
+fn collect_shortlinks_from_html(
+    html: &str,
+    newest_first: bool,
+    seen_urls: &mut HashSet<String>,
+    out_links: &mut Vec<String>,
+    scanned_best: &mut Option<String>,
+    max_total: usize,
+) {
+    let Ok(re_short) = Regex::new(
+        r#"(?i)https?://(?:s\.shopee\.vn|shp\.ee|vn\.shp\.ee|sandeal\.co)/[^\s"'<>\\)\]]+"#,
+    ) else {
+        return;
+    };
+    let Ok(re_bare_shopee) = Regex::new(r#"(?i)\bs\.shopee\.vn/[A-Za-z0-9_-]{5,}"#) else {
+        return;
+    };
+
+    let mut extracted = Vec::new();
+    for m in re_short.find_iter(html) {
+        let u = m.as_str().replace("&amp;", "&");
+        if let Some(origin) = extract_origin_link_from_an_redir(&u) {
+            consider_best_params(scanned_best, &origin);
+        } else {
+            extracted.push(u);
+        }
+    }
+    for m in re_bare_shopee.find_iter(html) {
+        let full = format!("https://{}", m.as_str());
+        extracted.push(full);
+    }
+
+    if newest_first {
+        extracted.reverse();
+    }
+    for link in extracted {
+        if out_links.len() >= max_total {
+            break;
+        }
+        if seen_urls.insert(link.clone()) {
+            consider_best_params(scanned_best, &link);
+            out_links.push(link);
+        }
+    }
+}
+
+/// Quét tự động các kênh Telegram (kèm phân trang gần đây) + Web Deal công khai để nhặt chữ ký Shopee FB/IG và mã giảm giá FB/IG.
 pub async fn sync_social_all_once(
     http: &Client,
     db: &AppDb,
@@ -298,102 +455,77 @@ pub async fn sync_social_all_once(
         .flatten()
         .unwrap_or_default();
 
-    let mut best_params = extract_social_passthrough_params(&current_saved);
+    let mut scanned_best: Option<String> = None;
     let mut candidate_links: Vec<String> = Vec::new();
     let mut seen_urls: HashSet<String> = HashSet::new();
+    let re_before = Regex::new(r#"href="/s/magiamgiashopee\?before=(\d+)""#).ok();
 
-    // 1. Quét HTML các kênh Telegram công khai (lấy bài MỚI NHẤT ở cuối trang trước)
+    // 1. Quét HTML các kênh Telegram công khai (lấy tin mới nhất ở cuối trang trước)
     for &channel_url in DEFAULT_CHANNELS {
-        let resp = match http
+        let Ok(resp) = http
             .get(channel_url)
             .header("User-Agent", MOBILE_UA)
             .timeout(Duration::from_secs(8))
             .send()
             .await
-        {
-            Ok(r) if r.status().is_success() => r,
-            _ => continue,
+        else {
+            continue;
         };
-
+        if !resp.status().is_success() {
+            continue;
+        }
         let Ok(html) = resp.text().await else {
             continue;
         };
+        collect_shortlinks_from_html(
+            &html,
+            true,
+            &mut seen_urls,
+            &mut candidate_links,
+            &mut scanned_best,
+            70,
+        );
 
-        let mut channel_links: Vec<String> = Vec::new();
-        let mut start_idx = 0;
-        while let Some(pos) = html[start_idx..].find("s.shopee.vn/") {
-            let actual_pos = start_idx + pos;
-            let end_pos = html[actual_pos..]
-                .find(|c: char| {
-                    c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | ')' | ']')
-                })
-                .map(|p| actual_pos + p)
-                .unwrap_or_else(|| html.len());
-            let raw_link = &html[actual_pos..end_pos];
-            let full_url = if !raw_link.starts_with("http") {
-                format!("https://{}", raw_link)
-            } else {
-                raw_link.replace("http://", "https://")
-            };
-            channel_links.push(full_url);
-            start_idx = end_pos;
-            if start_idx >= html.len() {
-                break;
-            }
-        }
-
-        // Quét ngược từ tin mới nhất lên để ưu tiên chữ ký còn hạn
-        for full_url in channel_links.into_iter().rev() {
-            if seen_urls.insert(full_url.clone()) {
-                consider_best_params(&mut best_params, &full_url);
-                candidate_links.push(full_url);
-                if candidate_links.len() >= 60 {
-                    break;
-                }
-            }
-        }
-        if candidate_links.len() >= 60 {
-            break;
-        }
-    }
-
-    // 2. Truy vấn song song theo đợt để đọc cả HTTP Redirect URL lẫn HTML JS-bridge `CONFIG.httpUrl`
-    for chunk in candidate_links.chunks(10) {
-        let mut join_set = tokio::task::JoinSet::new();
-        for link in chunk {
-            if let Some(origin) = extract_origin_link_from_an_redir(link) {
-                consider_best_params(&mut best_params, &origin);
-            }
-            let client = http.clone();
-            let target = link.clone();
-            join_set.spawn(async move {
-                let probe_resp = client
-                    .get(&target)
+        // Với kênh chính magiamgiashopee, lấy thêm 1 trang trước đó để tăng cơ hội săn chữ ký FB/IG Reels
+        if channel_url.ends_with("/magiamgiashopee") && candidate_links.len() < 70 {
+            if let Some(before_id) = re_before
+                .as_ref()
+                .and_then(|re| re.captures(&html))
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().to_string())
+            {
+                let prev_url = format!("{}?before={}", channel_url, before_id);
+                if let Ok(prev_resp) = http
+                    .get(&prev_url)
                     .header("User-Agent", MOBILE_UA)
-                    .timeout(Duration::from_secs(5))
+                    .timeout(Duration::from_secs(8))
                     .send()
                     .await
-                    .ok()?;
-                let final_url = probe_resp.url().as_str().to_string();
-                let body_html = probe_resp.text().await.unwrap_or_default();
-                Some((final_url, body_html))
-            });
-        }
-        while let Some(res) = join_set.join_next().await {
-            if let Ok(Some((final_url, body_html))) = res {
-                consider_best_params(&mut best_params, &final_url);
-                if let Some(cfg_url) = extract_shopee_config_http_url(&body_html) {
-                    consider_best_params(&mut best_params, &cfg_url);
+                {
+                    if prev_resp.status().is_success() {
+                        if let Ok(prev_html) = prev_resp.text().await {
+                            collect_shortlinks_from_html(
+                                &prev_html,
+                                true,
+                                &mut seen_urls,
+                                &mut candidate_links,
+                                &mut scanned_best,
+                                70,
+                            );
+                        }
+                    }
                 }
             }
         }
-        if best_params.as_deref().map(social_param_strength).unwrap_or(0) >= 3 {
+
+        if candidate_links.len() >= 70 {
             break;
         }
     }
 
-    // 3. Nhặt thêm Mã Giảm Giá Shopee FB / Instagram / KOL / Toàn Sàn thật từ trang deal công khai
+    // 2. Nhặt mã FB / Instagram / KOL / Toàn Sàn & shortlink từ các trang deal công khai
     let mut harvested_deals: Vec<NewDealInput> = Vec::new();
+    let mut seen_deal_codes: HashSet<String> = HashSet::new();
     for &page_url in DEFAULT_WEB_DEAL_PAGES {
         let resp = match http
             .get(page_url)
@@ -413,16 +545,54 @@ pub async fn sync_social_all_once(
             }
         };
         if let Ok(page_html) = resp.text().await {
-            let mut parsed = parse_magiamgiashopee_deals(&page_html);
-            harvested_deals.append(&mut parsed);
+            collect_shortlinks_from_html(
+                &page_html,
+                false,
+                &mut seen_urls,
+                &mut candidate_links,
+                &mut scanned_best,
+                80,
+            );
+            for deal in parse_magiamgiashopee_deals(&page_html) {
+                let key = deal
+                    .coupon_code
+                    .clone()
+                    .unwrap_or_else(|| deal.title.clone());
+                if seen_deal_codes.insert(key) {
+                    harvested_deals.push(deal);
+                }
+            }
         }
     }
 
-    if let Some(ref params) = best_params {
+    // 3. Truy vấn song song theo đợt để giải mã 2-hop redirect + HTML JS-bridge
+    if scanned_best.as_deref().map(social_param_strength).unwrap_or(0) < 3 {
+        for chunk in candidate_links.chunks(10) {
+            let mut join_set = tokio::task::JoinSet::new();
+            for link in chunk {
+                let client = http.clone();
+                let target = link.clone();
+                join_set.spawn(async move { probe_url_for_social_candidates(&client, &target, 2).await });
+            }
+            while let Some(res) = join_set.join_next().await {
+                if let Ok(candidates) = res {
+                    for cand in candidates {
+                        consider_best_params(&mut scanned_best, &cand);
+                    }
+                }
+            }
+            if scanned_best.as_deref().map(social_param_strength).unwrap_or(0) >= 3 {
+                break;
+            }
+        }
+    }
+
+    let effective_params = choose_effective_social_params(scanned_best, &current_saved);
+    if let Some(ref params) = effective_params {
         if params != &current_saved {
             let _ = Repository::set_setting(&conn, "shopee_social_params", params).await;
             info!(
-                "🎉 [SOCIAL_HARVESTER] Đã nhặt chữ ký Shopee FB/IG mới (mức {}): {}",
+                "🎉 [SOCIAL_HARVESTER] Đã tự động cập nhật chữ ký Shopee FB/IG (mức {}): {}",
                 social_param_strength(params),
                 params
             );
@@ -438,7 +608,7 @@ pub async fn sync_social_all_once(
                 report.deals_inserted = ins;
                 report.deals_updated = upd;
                 info!(
-                    "🎁 [SOCIAL_HARVESTER] Đồng bộ mã Shopee FB/IG/KOL: +{} mã mới, ~{} cập nhật (tổng {} mã).",
+                    "🎁 [SOCIAL_HARVESTER] Tự động đồng bộ mã Shopee FB/IG/KOL: +{} mã mới, ~{} cập nhật (tổng {} mã).",
                     ins, upd, report.deals_found
                 );
             }
@@ -446,6 +616,22 @@ pub async fn sync_social_all_once(
                 warn!("[SOCIAL_HARVESTER] Lỗi lưu mã Shopee FB/IG vào DB: {}", err);
             }
         }
+    }
+
+    let sig_strength = report
+        .harvested_params
+        .as_deref()
+        .map(social_param_strength)
+        .unwrap_or(0);
+    if let Ok(mut st) = social_status_lock().lock() {
+        st.is_running = true;
+        st.is_syncing = false;
+        st.sync_cycles += 1;
+        st.interval_secs = SOCIAL_SYNC_INTERVAL_SECS;
+        st.last_sync_vn = current_vn_timestamp_str();
+        st.harvested_params = report.harvested_params.clone();
+        st.sig_strength = sig_strength;
+        st.deals_found = report.deals_found;
     }
 
     report
@@ -476,10 +662,16 @@ async fn notify_admin_harvested(params: &str, config: &Config) {
         .await;
 }
 
-/// Khởi chạy tác vụ nền tự động đi nhặt tham số & mã Shopee FB/IG định kỳ mỗi 30 phút
+/// Khởi chạy tác vụ nền tự động đi nhặt tham số & mã Shopee FB/IG ngay khi mở app và lặp mỗi 5 phút
 pub fn spawn_social_harvester_task(db: AppDb, config: Config) {
+    if let Ok(mut st) = social_status_lock().lock() {
+        st.is_running = true;
+        st.is_syncing = true;
+        st.interval_secs = SOCIAL_SYNC_INTERVAL_SECS;
+    }
+
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
 
         let http = Client::builder()
             .timeout(Duration::from_secs(10))
@@ -487,9 +679,12 @@ pub fn spawn_social_harvester_task(db: AppDb, config: Config) {
             .build()
             .unwrap_or_else(|_| Client::new());
 
-        let mut ticker = tokio::time::interval(Duration::from_secs(1800)); // Quét mỗi 30 phút
+        let mut ticker = tokio::time::interval(Duration::from_secs(SOCIAL_SYNC_INTERVAL_SECS));
         loop {
             ticker.tick().await;
+            if let Ok(mut st) = social_status_lock().lock() {
+                st.is_syncing = true;
+            }
             let report = sync_social_all_once(&http, &db, &config).await;
             if report.harvested_params.is_none() && report.deals_found == 0 {
                 warn!("⚠️ [SOCIAL_HARVESTER] Chưa tìm thấy chữ ký hoặc mã FB/IG mới trong chu kỳ này.");
@@ -563,5 +758,32 @@ mod tests {
         let params = extract_social_passthrough_params(&resolved).unwrap();
         assert!(params.contains("sm_sig_id=SIG"));
         assert!(params.contains("encrypted_payload=ENC"));
+    }
+
+    #[test]
+    fn test_choose_effective_social_params_and_bloggiamgia_decode() {
+        let old_sig = "sm_sig_id=OLD_SIG&channel_type=fb&content_source=fb&content_type=REELS";
+        let new_sig = "fb_content_id=NEW&encrypted_payload=E2&sm_sig_id=NEW_SIG&channel_type=fb&content_source=fb&content_type=REELS";
+        let weak_sig = "channel_type=fb&content_source=fb&content_type=REELS";
+
+        assert_eq!(
+            choose_effective_social_params(Some(new_sig.to_string()), old_sig).as_deref(),
+            Some(new_sig)
+        );
+        assert_eq!(
+            choose_effective_social_params(Some(weak_sig.to_string()), old_sig).as_deref(),
+            Some(old_sig)
+        );
+        assert_eq!(
+            choose_effective_social_params(Some(weak_sig.to_string()), "").as_deref(),
+            Some(weak_sig)
+        );
+
+        let nuxt_escaped = r#"\u003cp\u003e\u003cstrong\u003eMã lưu từ banner: \u003c/strong\u003e\u003ca href="https://s.shopee.vn/an_redir?origin_link=https%3A%2F%2Fshopee.vn%2Fm%2Fkol-affiliate%23123\u0026amp;affiliate_id=17309660489"\u003elink\u003c/a\u003e\u003c/p\u003e\u003cp\u003e► 0H: Lưu banner mã Shopee X Facebook giảm 30% tối đa 50K đơn từ 50K: https://nghien.co/abc123\u003c/p\u003e"#;
+        let deals = parse_magiamgiashopee_deals(nuxt_escaped);
+        assert_eq!(deals.len(), 1);
+        assert_eq!(deals[0].coupon_code.as_deref(), Some("KOL_FB_30"));
+        assert_eq!(deals[0].deal_url, "https://shopee.vn/m/kol-affiliate");
+        assert!(!deals[0].discount_desc.contains("nghien.co"));
     }
 }

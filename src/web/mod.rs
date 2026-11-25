@@ -139,7 +139,6 @@ fn build_router(state: AppState) -> Router {
         .route("/admin/settings/notifications", post(handle_update_notifications))
         .route("/admin/orders/sync", post(handle_sync_orders))
         .route("/admin/vouchers/sync", post(handle_sync_vouchers))
-        .route("/admin/social/sync", post(handle_sync_social))
         .route("/admin/deals/add", post(handle_add_deal))
         .route("/admin/deals/import", post(handle_import_deals))
         .route("/admin/deals/toggle", post(handle_toggle_deal))
@@ -2191,19 +2190,40 @@ async fn handle_dashboard(
                     .unwrap_or(false)
         })
         .count();
-    let social_harvester_status_html = if !shopee_social_params.trim().is_empty() {
+    let social_sync_snap = crate::services::social_harvester::snapshot_social_status();
+    let social_sig_strength = crate::services::shopee_affiliate::social_param_strength(&shopee_social_params);
+    let social_harvester_status_html = if social_sig_strength >= 3 {
         format!(
-            r#"<span class="badge badge--ok">🟢 Đã bắt chữ ký FB/IG · {} mã FB/IG/KOL</span>"#,
+            r#"<span class="badge badge--ok">🟢 Auto FB/IG đầy đủ (sm_sig_id · mức 3/3) · {} mã FB/IG/KOL</span>"#,
+            social_deals_count
+        )
+    } else if social_sig_strength >= 2 {
+        format!(
+            r#"<span class="badge badge--ok">🟢 Auto FB/IG cơ bản (mức 2/3) · {} mã FB/IG/KOL</span>"#,
             social_deals_count
         )
     } else if social_deals_count > 0 {
         format!(
-            r#"<span class="badge badge--info">🎁 Đã nhặt {} mã Shopee FB/IG/KOL</span>"#,
+            r#"<span class="badge badge--info">🎁 Đã tự nhặt {} mã Shopee FB/IG/KOL</span>"#,
             social_deals_count
         )
     } else {
-        r#"<span class="badge badge--warn">🟡 Đang chờ chu kỳ quét hoặc bấm Quét Ngay</span>"#.to_string()
+        r#"<span class="badge badge--info">🔄 Đang tự động quét kênh FB/IG...</span>"#.to_string()
     };
+    let social_last_display = if !social_sync_snap.last_sync_vn.is_empty() {
+        format!("{} (Chu kỳ #{})", social_sync_snap.last_sync_vn, social_sync_snap.sync_cycles)
+    } else if social_sync_snap.is_syncing {
+        "Đang quét ngay khi khởi động...".to_string()
+    } else {
+        "Đang chạy ngầm...".to_string()
+    };
+    let social_auto_panel_html = format!(
+        r#"<div style="display:flex;flex-direction:column;align-items:flex-end;gap:0.35rem;text-align:right;min-width:225px;">
+            <span class="badge badge--ok">🤖 Đang Chạy Tự Động (Mỗi 5 Phút)</span>
+            <span class="muted-text">Lần cuối: <strong style="color: var(--text-primary); font-family: 'JetBrains Mono', monospace;">{}</strong></span>
+        </div>"#,
+        escape_html(&social_last_display)
+    );
     let shortlink_db_raw = Repository::get_setting(&conn, "shortlink_base_url")
         .await
         .ok()
@@ -3489,7 +3509,9 @@ async fn handle_dashboard(
                         <div class="kpi-card__val--green">Chu kỳ 60 giây / lần</div>
                         <div class="muted-text">Lần cuối: <strong style="color: var(--text-primary); font-family: 'JetBrains Mono', monospace;">{}</strong></div>
                     </div>
-                    <a href="/admin" class="btn btn--secondary btn--sm btn--block">🔄 Làm Mới Số Liệu Web</a>
+                    <div style="font-size:0.78rem;font-weight:700;color:#7dd3fc;background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.28);border-radius:0.55rem;padding:0.45rem 0.65rem;text-align:center;">
+                        ⚡ Tự làm mới Dashboard mỗi 30 giây
+                    </div>
                 </div>
             </section>
 
@@ -3503,13 +3525,11 @@ async fn handle_dashboard(
                             {}
                         </div>
                         <p class="card-desc">
-                            Hệ thống tự động quét kênh deal Telegram &amp; trang mã công khai (mỗi 30 phút) để nhặt <b>Mã Instagram / Facebook KOL</b> và chữ ký số (<code>channel_type=fb/ig</code>, <code>sm_sig_id</code>) gắn thẳng vào link Shopee cho khách!
+                            Hệ thống chạy tự động hoàn toàn ngay khi mở app &amp; tự quét lại mỗi 5 phút từ Telegram/Web deal công khai để nhặt <b>Mã Instagram / Facebook KOL</b> và chữ ký số (<code>channel_type=fb/ig</code>, tự nâng cấp <code>sm_sig_id</code> nếu phát hiện) — không cần thao tác tay!
                         </p>
                     </div>
                 </div>
-                <form method="POST" action="/admin/social/sync" style="margin: 0;">
-                    <button type="submit" class="btn btn--primary btn--sm">🤖 Quét Ngay Mã FB/IG</button>
-                </form>
+                {}
             </section>
 
             <!-- Lịch sử dán link gần nhất -->
@@ -3789,6 +3809,15 @@ async fn handle_dashboard(
             }}
             switchTab(hash);
         }});
+
+        setInterval(() => {{
+            if (document.hidden) return;
+            const overviewPane = document.getElementById('tab-pane-overview');
+            if (!overviewPane || overviewPane.classList.contains('is-hidden')) return;
+            const activeTag = document.activeElement ? document.activeElement.tagName : '';
+            if (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag)) return;
+            window.location.replace('/admin#overview');
+        }}, 30000);
     </script>
     <script src="/assets/home.js" defer></script>
 </body>
@@ -3814,6 +3843,7 @@ async fn handle_dashboard(
         saved_deals.len(),
         escape_html(&last_sync_display),
         social_harvester_status_html,
+        social_auto_panel_html,
         clicks_rows,
         at_status_badge,
         campaign_status_html,
@@ -4355,29 +4385,6 @@ async fn handle_sync_vouchers(headers: HeaderMap, State(state): State<AppState>)
         )),
         Err(err) => redirect_with_notice(&format!("Lỗi đồng bộ kho mã: {}", err)),
     }
-}
-
-async fn handle_sync_social(headers: HeaderMap, State(state): State<AppState>) -> Response {
-    if !is_authenticated(&state, &headers).await {
-        return Redirect::to("/admin/login").into_response();
-    }
-
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::limited(5))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
-
-    let report = crate::services::social_harvester::sync_social_all_once(&http, &state.db, &state.config).await;
-    let sig_note = if let Some(ref p) = report.harvested_params {
-        format!("chữ ký FB/IG ({})", p)
-    } else {
-        "chưa có chữ ký passthrough mới".to_string()
-    };
-    redirect_with_notice(&format!(
-        "Đã quét xong Shopee FB/IG: {} · nhặt được {} mã (+{} mới, cập nhật {} mã)!",
-        sig_note, report.deals_found, report.deals_inserted, report.deals_updated
-    ))
 }
 
 #[derive(serde::Deserialize)]
