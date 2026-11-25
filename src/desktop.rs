@@ -126,10 +126,16 @@ fn build_desktop_webview(
         Ok(wv) => Ok(wv),
         Err(first_err) => {
             tracing::warn!(
-                "WebView2 với thư mục dữ liệu cục bộ không tạo được ({:?}), thử cấu hình mặc định...",
+                "WebView2 với thư mục dữ liệu cục bộ không tạo được ({:?}), thử thư mục dự phòng...",
                 first_err
             );
-            WebViewBuilder::new()
+            let fallback_dir = std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("target")
+                .join("webview2_fallback");
+            let _ = std::fs::create_dir_all(&fallback_dir);
+            let mut fallback_ctx = WebContext::new(Some(fallback_dir));
+            WebViewBuilder::new_with_web_context(&mut fallback_ctx)
                 .with_url("about:blank")
                 .with_new_window_req_handler(move |url, _features| {
                     open_external_url(&url);
@@ -138,7 +144,7 @@ fn build_desktop_webview(
                 .build(window)
                 .map_err(|second_err| {
                     anyhow::anyhow!(
-                        "Không thể tạo WebView2 window (local={:?}; default={:?})",
+                        "Không thể tạo WebView2 window (local={:?}; fallback={:?})",
                         first_err,
                         second_err
                     )

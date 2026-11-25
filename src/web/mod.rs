@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use axum::{
-    extract::{Form, Path, Query, Request, State},
+    extract::{ConnectInfo, Form, Path, Query, Request, State},
     http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Redirect, Response},
@@ -108,7 +109,11 @@ pub async fn start_web_server(
     }
     info!("🚀 Web Admin Dashboard Thế Giới Siêu Sale đang chạy tại: http://{}", addr);
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -290,13 +295,72 @@ async fn is_public_home_cloaked(state: &AppState) -> bool {
         .unwrap_or(false)
 }
 
+const LOCAL_PC_TRUSTED_HEADER: &str = "x-dealx-local-trusted";
+
+fn is_loopback_host(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .and_then(extract_host_only)
+        .map(|h| matches!(h.as_str(), "127.0.0.1" | "localhost" | "[::1]" | "::1"))
+        .unwrap_or(false)
+}
+
+fn has_proxy_or_tunnel_headers(headers: &HeaderMap) -> bool {
+    headers.contains_key("cf-ray")
+        || headers.contains_key("cf-connecting-ip")
+        || headers.contains_key("x-forwarded-for")
+        || headers.contains_key("x-forwarded-host")
+        || headers.contains_key("x-dealx-cloak")
+}
+
+/// Chỉ cho phép bỏ qua đăng nhập Admin khi chạy tại máy PC (`public_base_url` trống),
+/// kết nối loopback trực tiếp và không đi qua Cloudflare Tunnel / Reverse Proxy.
+fn is_local_pc_trusted_loopback_request(
+    state: &AppState,
+    headers: &HeaderMap,
+    peer_ip: Option<IpAddr>,
+) -> bool {
+    if state.config.public_base_url.is_some() {
+        return false;
+    }
+    if has_proxy_or_tunnel_headers(headers) {
+        return false;
+    }
+    if let Some(ip) = peer_ip {
+        if !ip.is_loopback() {
+            return false;
+        }
+    }
+    is_loopback_host(headers)
+}
+
+fn is_trusted_local_admin_header(state: &AppState, headers: &HeaderMap) -> bool {
+    state.config.public_base_url.is_none()
+        && !has_proxy_or_tunnel_headers(headers)
+        && is_loopback_host(headers)
+        && headers
+            .get(LOCAL_PC_TRUSTED_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v == "1")
+            .unwrap_or(false)
+}
+
 /// Middleware che hoàn toàn Web Chính & `/admin` khi request đi qua Cloudflare Worker (`X-DealX-Cloak: 1`),
 /// đi qua Cloudflare Tunnel / Proxy (`cf-ray` / `cf-connecting-ip` trên PC), hoặc truy cập bằng tên miền bọc link riêng (`shortlink_base_url` / `origin.<shortlink>`).
 async fn shortlink_cloak_middleware(
     State(state): State<AppState>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Response {
+    // Luôn xóa header nội bộ trước để chống client bên ngoài giả mạo
+    req.headers_mut().remove(LOCAL_PC_TRUSTED_HEADER);
+    let peer_ip = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip());
+    let local_pc_trusted = is_local_pc_trusted_loopback_request(&state, req.headers(), peer_ip);
+
     let headers = req.headers();
     let has_cloak_header = headers
         .get("x-dealx-cloak")
@@ -356,6 +420,13 @@ async fn shortlink_cloak_middleware(
 
     if is_cloaked_domain && !is_allowed_shortlink_cloak_path(req.method(), req.uri().path()) {
         return not_found_cloak_response();
+    }
+
+    if local_pc_trusted && !is_cloaked_domain {
+        req.headers_mut().insert(
+            HeaderName::from_static(LOCAL_PC_TRUSTED_HEADER),
+            HeaderValue::from_static("1"),
+        );
     }
 
     next.run(req).await
@@ -1646,8 +1717,11 @@ fn extract_client_ip(headers: &HeaderMap) -> String {
     "local".to_string()
 }
 
-/// Kiểm tra xem yêu cầu hiện tại có quyền Admin hay không (từ RAM cache hoặc DB băm SHA-256)
+/// Kiểm tra xem yêu cầu hiện tại có quyền Admin hay không (từ phiên hợp lệ hoặc truy cập trực tiếp localhost trên PC)
 async fn is_authenticated(state: &AppState, headers: &HeaderMap) -> bool {
+    if is_trusted_local_admin_header(state, headers) {
+        return true;
+    }
     let Some(token) = extract_session_token(headers) else {
         return false;
     };
@@ -2040,6 +2114,11 @@ async fn handle_dashboard(
     let has_turso = state.config.turso_url.is_some() && state.config.turso_auth_token.is_some();
     let has_env_token = state.config.accesstrade_api_token.is_some();
     let is_cloud_runtime = state.config.public_base_url.is_some();
+    let auth_action_html = if is_trusted_local_admin_header(&state, &headers) {
+        r#"<span class="badge badge--ok">🖥️ PC Local (Miễn đăng nhập)</span>"#.to_string()
+    } else {
+        r#"<a href="/admin/logout" class="btn btn--danger btn--sm">Đăng Xuất</a>"#.to_string()
+    };
     let persistence_banner = if !is_cloud_runtime && !has_turso {
         format!(
             r#"<div class="notice-banner notice-banner--ok">
@@ -3302,7 +3381,7 @@ async fn handle_dashboard(
                     <span class="status-sep">|</span>
                     {}
                 </div>
-                <a href="/admin/logout" class="btn btn--danger btn--sm">Đăng Xuất</a>
+                {}
             </div>
         </div>
     </header>
@@ -3692,6 +3771,7 @@ async fn handle_dashboard(
         escape_html(&state.config.bot_username),
         escape_html(&state.config.bot_username),
         bot_mode_badge,
+        auth_action_html,
         notice_banner,
         persistence_banner,
         stats.total_users,
@@ -5121,5 +5201,74 @@ DongLoiThieuCot | 123
         assert!(landing_html.contains("preserve-3d"));
         assert!(landing_html.contains("@keyframes"));
         assert!(landing_html.contains("prefers-reduced-motion"));
+    }
+
+    #[tokio::test]
+    async fn test_local_pc_skips_admin_login_while_blocking_spoof_and_cloud() {
+        let pc_db = format!("target/test_local_nologin_{}.db", uuid::Uuid::new_v4().simple());
+        let mut pc_state = make_test_state(&pc_db, None).await;
+        pc_state.config.public_base_url = None;
+
+        let pc_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let pc_addr = pc_listener.local_addr().unwrap();
+        let pc_app = build_router(pc_state).into_make_service_with_connect_info::<SocketAddr>();
+        let pc_srv = tokio::spawn(async move {
+            let _ = axum::serve(pc_listener, pc_app).await;
+        });
+
+        let no_redir = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let pc_base = format!("http://127.0.0.1:{}", pc_addr.port());
+
+        // 1. Chạy tại máy PC -> vào thẳng /admin (200 OK), không bị bắt đăng nhập
+        let direct_admin = no_redir.get(format!("{}/admin", pc_base)).send().await.unwrap();
+        assert_eq!(direct_admin.status().as_u16(), 200);
+        let body = direct_admin.text().await.unwrap();
+        assert!(body.contains("Trung Tâm Điều Hành"));
+        assert!(body.contains("PC Local (Miễn đăng nhập)"));
+
+        // 2. Giả mạo header nội bộ kèm proxy header hoặc Host ngoài phải bị từ chối
+        let spoof_proxy = no_redir
+            .get(format!("{}/admin", pc_base))
+            .header(LOCAL_PC_TRUSTED_HEADER, "1")
+            .header("x-forwarded-for", "203.0.113.55")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(spoof_proxy.status().as_u16(), 303);
+
+        let spoof_host = no_redir
+            .get(format!("{}/admin", pc_base))
+            .header(LOCAL_PC_TRUSTED_HEADER, "1")
+            .header("host", "192.168.1.99:10000")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(spoof_host.status().as_u16(), 303);
+
+        pc_srv.abort();
+        let _ = std::fs::remove_file(&pc_db);
+
+        // 3. Chế độ Cloud (có public_base_url) -> vẫn bắt buộc đăng nhập bình thường
+        let cloud_db = format!("target/test_cloud_login_{}.db", uuid::Uuid::new_v4().simple());
+        let cloud_state = make_test_state(&cloud_db, None).await;
+        let cloud_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let cloud_addr = cloud_listener.local_addr().unwrap();
+        let cloud_app = build_router(cloud_state).into_make_service_with_connect_info::<SocketAddr>();
+        let cloud_srv = tokio::spawn(async move {
+            let _ = axum::serve(cloud_listener, cloud_app).await;
+        });
+
+        let cloud_admin = no_redir
+            .get(format!("http://127.0.0.1:{}/admin", cloud_addr.port()))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(cloud_admin.status().as_u16(), 303);
+
+        cloud_srv.abort();
+        let _ = std::fs::remove_file(&cloud_db);
     }
 }

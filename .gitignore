@@ -1,5 +1,6 @@
 /target
 *.exe
+*.WebView2/
 *.db
 *.db-journal
 *.db-wal
