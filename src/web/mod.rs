@@ -27,9 +27,7 @@ use crate::db::AppDb;
 use crate::services::accesstrade::{mask_token, AccessTradeClient, ApprovedCampaigns, VoucherOffer};
 use crate::services::deal_parser::DealParser;
 use crate::services::order_tracker;
-use crate::services::shopee_affiliate::{
-    extract_social_passthrough_params, is_valid_shopee_affiliate_id,
-};
+use crate::services::shopee_affiliate::is_valid_shopee_affiliate_id;
 use crate::utils::{escape_html, format_vnd, sanitize_crlf};
 
 pub type WebhookUpdateSender = mpsc::UnboundedSender<Result<Update, Infallible>>;
@@ -4107,11 +4105,16 @@ async fn handle_update_shopee_settings(
     let validated_social = if form.clear_social_params.as_deref() == Some("1") {
         Some(String::new())
     } else if !social_trimmed.is_empty() {
-        match extract_social_passthrough_params(social_trimmed) {
+        let http_probe = reqwest::Client::builder()
+            .timeout(Duration::from_secs(8))
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        match crate::services::social_harvester::resolve_social_params_from_input(&http_probe, social_trimmed).await {
             Some(clean) => Some(clean),
             None => {
                 return redirect_with_notice(
-                    "Mẫu phiên IG/FB Reels chưa hợp lệ (phải chứa sm_sig_id hoặc encrypted_payload).",
+                    "Mẫu phiên IG/FB Reels chưa hợp lệ (phải chứa sm_sig_id, encrypted_payload hoặc link có chữ ký FB/IG).",
                 );
             }
         }

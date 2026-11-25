@@ -34,22 +34,77 @@ pub struct SocialSyncReport {
     pub deals_updated: usize,
 }
 
-/// Trích xuất URL đích từ JS-bridge HTML (`var CONFIG={httpUrl:"..."}`) của `s.shopee.vn`.
+/// Trích xuất URL đích từ JS-bridge HTML (`var CONFIG={httpUrl:"..."}` hoặc `window.location.replace("...")`).
 pub fn extract_shopee_config_http_url(html: &str) -> Option<String> {
-    let re = Regex::new(r#"httpUrl\s*:\s*"([^"]+)""#).ok()?;
-    let caps = re.captures(html)?;
-    let raw = caps.get(1)?.as_str();
-    let decoded = raw
-        .replace("\\/", "/")
-        .replace("\\u0026", "&")
-        .replace("\\u003d", "=")
-        .replace("\\u003D", "=")
-        .replace("&amp;", "&");
-    if decoded.starts_with("https://") || decoded.starts_with("http://") {
-        Some(decoded)
-    } else {
-        None
+    let patterns = [
+        r#"httpUrl\s*:\s*"([^"]+)""#,
+        r#"window\.location\.(?:replace|assign)\(\s*["']([^"']+)["']\s*\)"#,
+    ];
+    for pat in patterns {
+        let Ok(re) = Regex::new(pat) else { continue };
+        if let Some(caps) = re.captures(html) {
+            if let Some(m) = caps.get(1) {
+                let decoded = m
+                    .as_str()
+                    .replace("\\/", "/")
+                    .replace("\\u0026", "&")
+                    .replace("\\u003d", "=")
+                    .replace("\\u003D", "=")
+                    .replace("&amp;", "&");
+                if decoded.starts_with("https://") || decoded.starts_with("http://") {
+                    return Some(decoded);
+                }
+            }
+        }
     }
+    None
+}
+
+/// Bóc tách bộ tham số Shopee FB/IG từ input thô hoặc tự giải mã nếu Admin dán link rút gọn / link cầu nối.
+pub async fn resolve_social_params_from_input(http: &Client, raw_input: &str) -> Option<String> {
+    if let Some(direct) = extract_social_passthrough_params(raw_input) {
+        if social_param_strength(&direct) >= 3 || !raw_input.trim().starts_with("http") {
+            return Some(direct);
+        }
+    }
+    let re_url = Regex::new(r#"https?://[^\s<>"']+"#).ok()?;
+    let url = re_url.find(raw_input)?.as_str();
+    let resp = http
+        .get(url)
+        .header("User-Agent", MOBILE_UA)
+        .timeout(Duration::from_secs(8))
+        .send()
+        .await
+        .ok()?;
+    let final_url = resp.url().as_str().to_string();
+    if let Some(p) = extract_social_passthrough_params(&final_url) {
+        return Some(p);
+    }
+    if let Ok(body) = resp.text().await {
+        if let Some(cfg) = extract_shopee_config_http_url(&body) {
+            if let Some(p) = extract_social_passthrough_params(&cfg) {
+                return Some(p);
+            }
+        }
+        if let Some(p) = extract_social_passthrough_params(&body) {
+            return Some(p);
+        }
+    }
+    extract_social_passthrough_params(raw_input)
+}
+
+fn clean_harvested_desc(text: &str) -> String {
+    let re_urls = Regex::new(r"(?i)(?:https?://\S+|(?:s\.shopee\.vn|shp\.ee|vn\.shp\.ee)/\S+)").unwrap();
+    let no_urls = re_urls.replace_all(text, " ");
+    let re_noise = Regex::new(r"(?i)(?:►+|list\s*áp\s*dụng\s*[>:]*|áp\s*(?:cho\s*)?list\s*[>:]*)").unwrap();
+    let no_noise = re_noise.replace_all(&no_urls, " ");
+    let re_ws = Regex::new(r"\s+").unwrap();
+    re_ws
+        .replace_all(no_noise.trim(), " ")
+        .trim_matches(|c: char| matches!(c, '>' | ':' | '-' | '.' | ' '))
+        .chars()
+        .take(90)
+        .collect()
 }
 
 fn strip_html_entities_and_tags(raw: &str) -> String {
@@ -177,7 +232,7 @@ pub fn parse_magiamgiashopee_deals(html: &str) -> Vec<NewDealInput> {
                     platform: "Shopee".to_string(),
                     title,
                     coupon_code: Some(code),
-                    discount_desc: text.chars().take(120).collect(),
+                    discount_desc: clean_harvested_desc(&text),
                     min_spend: parse_vnd_amount_hint(&text),
                     deal_url,
                     expire_at: None,
@@ -198,7 +253,7 @@ pub fn parse_magiamgiashopee_deals(html: &str) -> Vec<NewDealInput> {
                             platform: "Shopee".to_string(),
                             title: format!("[Toàn sàn] Voucher Shopee {}%", pct_val),
                             coupon_code: Some(code),
-                            discount_desc: text.chars().take(120).collect(),
+                            discount_desc: clean_harvested_desc(&text),
                             min_spend,
                             deal_url: target_url.clone(),
                             expire_at: None,
@@ -494,5 +549,19 @@ mod tests {
         assert_eq!(deals[1].coupon_code.as_deref(), Some("KOL_FB_30"));
         assert_eq!(deals[2].coupon_code.as_deref(), Some("SHP_AUTO_8419879931"));
         assert!(!deals[2].deal_url.contains("affiliate_id=173"));
+    }
+
+    #[test]
+    fn test_clean_harvested_desc_and_js_replace_extract() {
+        let dirty = "► Mã 23% tối đa 500k đơn từ 150K. List áp dụng > https://shp.ee/jmt17xy1";
+        let clean = clean_harvested_desc(dirty);
+        assert_eq!(clean, "Mã 23% tối đa 500k đơn từ 150K");
+        assert!(!clean.contains("shp.ee"));
+
+        let bridge = r#"<script>window.location.replace("https://s.shopee.vn/6L6Hj9wivc?fb_content_id=Q9&encrypted_payload=ENC&channel_type=fb&content_source=fb&content_type=REELS&sm_sig_id=SIG");</script>"#;
+        let resolved = extract_shopee_config_http_url(bridge).unwrap();
+        let params = extract_social_passthrough_params(&resolved).unwrap();
+        assert!(params.contains("sm_sig_id=SIG"));
+        assert!(params.contains("encrypted_payload=ENC"));
     }
 }

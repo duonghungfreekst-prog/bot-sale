@@ -2,7 +2,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use teloxide::{
     prelude::*,
-    types::ParseMode,
+    types::{LinkPreviewOptions, ParseMode},
     utils::command::BotCommands,
 };
 use tracing::{error, warn};
@@ -239,19 +239,28 @@ pub async fn handle_message(
 
         let admin_id_opt = resolve_admin_telegram_id(&conn, &config).await;
         let is_admin = admin_id_opt.map(|id| id == user_id).unwrap_or(false);
-        if is_admin {
-            if let Some(social_params) = crate::services::shopee_affiliate::extract_social_passthrough_params(text) {
-                let _ = Repository::set_setting(&conn, "shopee_social_params", &social_params).await;
-                let _ = bot
-                    .send_message(
-                        msg.chat.id,
-                        format!(
-                            "⚡ <b>[QUẢN TRỊ VIÊN]</b> Đã tự động cập nhật bộ tham số phiên Shopee FB/Insta mới:\n<code>{}</code>\n\n✅ Mọi link Shopee cấp cho khách từ giờ sẽ tự động gắn chữ ký này để mở khóa <b>Mã Facebook / Instagram 20% - 30%</b>!",
-                            escape_html(&social_params)
-                        ),
-                    )
-                    .parse_mode(ParseMode::Html)
-                    .await;
+        if is_admin && !text.contains("shopee.vn/product/") && !text.contains("shopee.vn/share-video/") {
+            let http_probe = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(8))
+                .redirect(reqwest::redirect::Policy::limited(5))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
+            if let Some(social_params) =
+                crate::services::social_harvester::resolve_social_params_from_input(&http_probe, text).await
+            {
+                if crate::services::shopee_affiliate::social_param_strength(&social_params) >= 3 {
+                    let _ = Repository::set_setting(&conn, "shopee_social_params", &social_params).await;
+                    let _ = bot
+                        .send_message(
+                            msg.chat.id,
+                            format!(
+                                "⚡ <b>[QUẢN TRỊ VIÊN]</b> Đã nạp chữ ký Shopee FB/Insta Reels:\n<code>{}</code>\n\n✅ Mọi link Shopee từ giờ sẽ gắn chữ ký này!",
+                                escape_html(&social_params)
+                            ),
+                        )
+                        .parse_mode(ParseMode::Html)
+                        .await;
+                }
             }
         }
 
@@ -478,24 +487,38 @@ pub async fn handle_message(
                 )
                 .await;
 
-                let mut tips_text = String::new();
-                for tip in &parsed.tips {
-                    tips_text.push_str(&format!("- {}\n", escape_html(tip)));
-                }
-
                 let safe_aff_url = format_telegram_link_display(
                     &wrapped_aff_url,
                     parsed.platform.as_str(),
                     is_wrapped,
                 );
+                let social_strength = owned_aff
+                    .shopee_social_params
+                    .as_deref()
+                    .map(crate::services::shopee_affiliate::social_param_strength)
+                    .unwrap_or(0);
                 let header_line = if parsed.is_affiliate {
+                    let label = if parsed.platform.as_str().eq_ignore_ascii_case("Shopee") && social_strength >= 3 {
+                        "Mã FB / IG 20-24% · 🟠 98%".to_string()
+                    } else if parsed.platform.as_str().eq_ignore_ascii_case("Shopee") {
+                        format!(
+                            "{} · 🟠 {}%",
+                            escape_html(&parsed.primary_voucher.name),
+                            parsed.primary_voucher.remaining_percent
+                        )
+                    } else {
+                        format!(
+                            "{} · 🟢 {}%",
+                            escape_html(&parsed.primary_voucher.name),
+                            parsed.primary_voucher.remaining_percent
+                        )
+                    };
                     format!(
-                        "👉 <b>{} ({}) · 🟢 {}% :</b>\n{} (<code>{}</code>)",
-                        escape_html(&parsed.primary_voucher.name),
-                        escape_html(&parsed.primary_voucher.discount_desc),
-                        parsed.primary_voucher.remaining_percent,
+                        "👉 <b>{} :</b>\n{} (<code>{}</code>)\n<i>{}</i>",
+                        label,
                         safe_aff_url,
-                        escape_html(&parsed.primary_voucher.min_spend_desc)
+                        escape_html(&parsed.primary_voucher.min_spend_desc),
+                        escape_html(&parsed.primary_voucher.discount_desc),
                     )
                 } else {
                     let note_line = if is_admin {
@@ -504,13 +527,13 @@ pub async fn handle_message(
                             .as_deref()
                             .map(str::trim)
                             .filter(|s| !s.is_empty())
-                            .map(|s| format!("\n⚠️ <i>[Admin] Trạng thái Affiliate: {}</i>", escape_html(s)))
+                            .map(|s| format!("\n<i>(Admin: {} — nhập Shopee Affiliate ID trong Web Admin để tạo link s.shopee.vn)</i>", escape_html(s)))
                             .unwrap_or_default()
                     } else {
                         String::new()
                     };
                     format!(
-                        "👉 <b>{}</b>\n🔗 <i>Link mở sản phẩm:</i> {}\n<i>({})</i>{}",
+                        "👉 <b>{}</b>\n{}\n<i>{}</i>{}",
                         escape_html(&parsed.primary_voucher.name),
                         safe_aff_url,
                         escape_html(&parsed.primary_voucher.discount_desc),
@@ -518,45 +541,38 @@ pub async fn handle_message(
                     )
                 };
 
-                let shop_line = match (
-                    parsed.product_shop.as_deref(),
-                    parsed.product_brand.as_deref(),
-                ) {
-                    (Some(shop), Some(brand)) => format!(
-                        "🏪 <i>Shop:</i> <b>{}</b> · <i>Thương hiệu:</i> <b>{}</b>\n",
-                        escape_html(shop),
-                        escape_html(brand)
-                    ),
-                    (Some(shop), None) => format!("🏪 <i>Shop:</i> <b>{}</b>\n", escape_html(shop)),
-                    (None, Some(brand)) => format!("🏷️ <i>Thương hiệu:</i> <b>{}</b>\n", escape_html(brand)),
-                    (None, None) => String::new(),
-                };
-
-                let price_line = match parsed.product_price_vnd {
-                    Some(price) if price > 0.0 => format!("💰 <i>Giá tham khảo:</i> <b>{}</b>\n", escape_html(&format_vnd(price))),
-                    _ => String::new(),
+                let meta_line = {
+                    let mut parts = Vec::new();
+                    if let Some(shop) = parsed.product_shop.as_deref() {
+                        parts.push(format!("🏪 <b>{}</b>", escape_html(shop)));
+                    }
+                    if let Some(brand) = parsed.product_brand.as_deref() {
+                        parts.push(format!("🏷️ <b>{}</b>", escape_html(brand)));
+                    }
+                    if let Some(price) = parsed.product_price_vnd.filter(|&p| p > 0.0) {
+                        parts.push(format!("💰 <b>{}</b>", escape_html(&format_vnd(price))));
+                    }
+                    if parts.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{}\n", parts.join(" · "))
+                    }
                 };
 
                 let mut voucher_buttons: Vec<(String, String)> = Vec::new();
 
-                // Chỉ hiển thị & đính link trực tiếp cho mã khớp ĐÚNG với shop / thương hiệu / toàn sàn / FB-IG KOL
+                // Chỉ hiển thị gọn tối đa 2 mã khớp đúng shop / KOL FB-IG và đưa nút bấm xuống bàn phím bên dưới
                 let mut extra_vouchers_block = match Repository::get_active_deals(&conn, Some(parsed.platform.as_str())).await {
                     Ok(deals) => {
                         let ex_list: Vec<_> = deals
                             .into_iter()
                             .filter(|d| is_exclusive_deal_relevant(d, &parsed))
-                            .take(3)
+                            .take(2)
                             .collect();
                         if ex_list.is_empty() {
                             String::new()
                         } else {
-                            let has_exclusive = ex_list.iter().any(|d| d.is_exclusive);
-                            let block_title = if has_exclusive {
-                                "\n\n👑 <b>MÃ ĐỘC QUYỀN · FB/IG ÁP DỤNG CHO SẢN PHẨM NÀY:</b>"
-                            } else {
-                                "\n\n🎁 <b>MÃ ƯU ĐÃI ĐÃ LƯU ÁP DỤNG CHO SẢN PHẨM NÀY:</b>"
-                            };
-                            let mut s = String::from(block_title);
+                            let mut s = String::from("\n\n🎁 <b>Mã Kho Khớp (chạm nút bên dưới để lưu):</b>");
                             for d in ex_list {
                                 let enriched_deal_url = if parsed.platform.as_str().eq_ignore_ascii_case("Shopee") {
                                     crate::services::shopee_affiliate::append_social_params_to_shopee_link(
@@ -574,26 +590,17 @@ pub async fn handle_message(
                                     &d.platform,
                                 )
                                 .await;
-                                let code_tag = d
-                                    .coupon_code
-                                    .as_deref()
-                                    .filter(|c| !c.trim().is_empty())
-                                    .map(|c| format!(" · Mã: <code>{}</code>", escape_html(c)))
-                                    .unwrap_or_default();
                                 s.push_str(&format!(
-                                    "\n• <b>{}</b> ({}){}\n  👉 <a href=\"{}\">Mở &amp; Áp Mã Ngay ↗</a>",
+                                    "\n• <b>{}</b> — {}",
                                     escape_html(&d.title),
-                                    escape_html(&d.discount_desc),
-                                    code_tag,
-                                    escape_html(&wrapped_deal_url)
+                                    escape_html(&d.discount_desc)
                                 ));
-                                if voucher_buttons.len() < 3 && !wrapped_deal_url.trim().is_empty() {
-                                    let prefix = if d.is_exclusive { "👑 Lấy Mã" } else { "🎁 Mở Mã" };
+                                if voucher_buttons.len() < 2 && !wrapped_deal_url.trim().is_empty() {
                                     let btn_label = match d.coupon_code.as_deref().filter(|c| !c.trim().is_empty()) {
                                         Some(c) if c.starts_with("KOL_IG") => "📸 Lấy Mã IG 50% KOL".to_string(),
                                         Some(c) if c.starts_with("KOL_FB") => "📘 Lấy Mã FB 30% KOL".to_string(),
-                                        Some(c) => format!("{} · {}", prefix, c),
-                                        None => format!("{} · {}", prefix, d.title),
+                                        Some(c) => format!("👑 Lấy Mã {}", c),
+                                        None => format!("👑 {}", d.title),
                                     };
                                     voucher_buttons.push((btn_label, wrapped_deal_url));
                                 }
@@ -695,28 +702,39 @@ pub async fn handle_message(
                     portal_buttons.push((label.to_string(), wrapped_portal));
                 }
 
+                let tip_line = parsed
+                    .tips
+                    .first()
+                    .map(|t| escape_html(t))
+                    .unwrap_or_else(|| {
+                        "Cập nhật App sàn, xoá sản phẩm cũ trong giỏ hàng hoặc bấm lấy mã bên dưới trước.".to_string()
+                    });
+
                 let reply_html = format!(
                     "📦 <b>{}</b>\n\
-                     {}{}\n\
-                     {}{}\n\n\
+                     {}{}{}\n\n\
                      ⏰ <b>BACK MÃ LÚC:</b> {}\n\n\
-                     ⚠️ <b>Lưu ý để áp mã thành công 100%:</b>\n\
-                     {}\n\
-                     👉 <i>Bấm các nút bên dưới để mở sản phẩm &amp; lấy mã khớp trực tiếp:</i>",
+                     ⚠️ <i>{}</i>",
                     escape_html(&parsed.product_title),
-                    shop_line,
-                    price_line,
+                    meta_line,
                     header_line,
                     extra_vouchers_block,
                     escape_html(&parsed.primary_voucher.back_hours),
-                    tips_text.trim_end()
+                    tip_line,
                 );
 
-                // Xóa tin nhắn chờ và gửi kết quả
+                // Xóa tin nhắn chờ và gửi kết quả (tắt link preview để tin nhắn gọn đẹp như godeal.online)
                 let _ = bot.delete_message(msg.chat.id, wait_msg.id).await;
 
                 bot.send_message(msg.chat.id, reply_html)
                     .parse_mode(ParseMode::Html)
+                    .link_preview_options(LinkPreviewOptions {
+                        is_disabled: true,
+                        url: None,
+                        prefer_small_media: false,
+                        prefer_large_media: false,
+                        show_above_text: false,
+                    })
                     .reply_markup(deal_action_keyboard(
                         &wrapped_aff_url,
                         parsed.platform.as_str(),
