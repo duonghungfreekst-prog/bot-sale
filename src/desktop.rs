@@ -57,31 +57,44 @@ fn splash_loading_html(port: u16) -> String {
 <meta charset="utf-8">
 <title>Thế Giới Siêu Sale Desktop</title>
 <style>
+  :root {{
+    color-scheme: light;
+  }}
   body {{
     margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    background: #070b14; color: #f8fafc;
-    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: #F4F6F9; color: #0F172A;
+    font-family: "Be Vietnam Pro", "Segoe UI", system-ui, -apple-system, sans-serif;
+    padding: 20px;
   }}
   .box {{
-    text-align: center; padding: 36px 42px; border-radius: 20px;
-    background: #0f172a; border: 1px solid rgba(249, 115, 22, 0.35);
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6); max-width: 440px;
+    text-align: center; padding: 36px 40px; border-radius: 18px;
+    background: #FFFFFF; border: 1px solid #E2E8F0;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08); max-width: 440px; width: 100%;
   }}
   .spinner {{
     width: 42px; height: 42px; margin: 0 auto 18px; border-radius: 999px;
-    border: 3px solid rgba(249, 115, 22, 0.2); border-top-color: #f97316;
+    border: 3px solid #FED7AA; border-top-color: #C2410C;
     animation: spin 0.85s linear infinite;
   }}
-  h1 {{ margin: 0 0 8px; font-size: 18px; color: #fb923c; }}
-  p {{ margin: 0; font-size: 13px; color: #94a3b8; line-height: 1.5; }}
+  h1 {{ margin: 0 0 8px; font-size: 18px; font-weight: 800; letter-spacing: -0.02em; color: #0F172A; }}
+  p {{ margin: 0; font-size: 13.5px; color: #475569; line-height: 1.55; }}
+  .port-tag {{
+    display: inline-block; margin-top: 14px; padding: 4px 10px; border-radius: 999px;
+    background: #FFF7ED; border: 1px solid #FED7AA; color: #C2410C;
+    font-size: 12px; font-weight: 700;
+  }}
   @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+  @media (prefers-reduced-motion: reduce) {{
+    .spinner {{ animation: none; border-top-color: #C2410C; }}
+  }}
 </style>
 </head>
 <body>
   <div class="box">
-    <div class="spinner"></div>
+    <div class="spinner" aria-hidden="true"></div>
     <h1>THẾ GIỚI SIÊU SALE</h1>
-    <p>Đang khởi động Bot Telegram, Web Quản Trị (cổng {port}) và tự động kết nối Cloudflare Tunnel...</p>
+    <p>Đang khởi động Bot Telegram, Web Quản Trị và tự động kết nối Cloudflare Tunnel...</p>
+    <div class="port-tag">Cổng cục bộ: {port}</div>
   </div>
 </body>
 </html>"#,

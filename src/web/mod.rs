@@ -1791,16 +1791,55 @@ async fn handle_login_page(headers: HeaderMap, State(state): State<AppState>) ->
     <title>Đăng Nhập Quản Trị - Thế Giới Siêu Sale Admin</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        (function () {
+            try {
+                if (localStorage.getItem('dealx-theme') === 'dark') {
+                    document.documentElement.setAttribute('data-theme', 'dark');
+                }
+            } catch (e) {}
+        })();
+    </script>
     <style>
+        :root {
+            --bg-base: #F4F6F9;
+            --bg-card: #FFFFFF;
+            --bg-input: #FFFFFF;
+            --border-card: #E2E8F0;
+            --border-input: #CBD5E1;
+            --text-primary: #0F172A;
+            --text-secondary: #475569;
+            --text-placeholder: #94A3B8;
+            --brand-primary: #C2410C;
+            --brand-hover: #9A3412;
+            --brand-ring: rgba(194, 65, 12, 0.22);
+            --brand-contrast: #FFFFFF;
+            --card-shadow: 0 12px 36px -8px rgba(15, 23, 42, 0.1), 0 2px 6px rgba(15, 23, 42, 0.04);
+        }
+        html[data-theme="dark"] {
+            --bg-base: #0B1120;
+            --bg-card: #131C31;
+            --bg-input: #18233C;
+            --border-card: rgba(148, 163, 184, 0.18);
+            --border-input: rgba(148, 163, 184, 0.28);
+            --text-primary: #F8FAFC;
+            --text-secondary: #94A3B8;
+            --text-placeholder: #64748B;
+            --brand-primary: #F97316;
+            --brand-hover: #FB923C;
+            --brand-ring: rgba(249, 115, 22, 0.26);
+            --brand-contrast: #090D16;
+            --card-shadow: 0 20px 44px -12px rgba(0, 0, 0, 0.55);
+        }
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            background-color: #070b14;
+            background-color: var(--bg-base);
             background-image:
-                radial-gradient(circle at 50% 0%, rgba(249, 115, 22, 0.16), transparent 55%),
-                radial-gradient(circle at 10% 90%, rgba(56, 189, 248, 0.08), transparent 45%);
-            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            color: #f8fafc;
+                radial-gradient(circle at 50% 0%, rgba(234, 88, 12, 0.07), transparent 55%),
+                radial-gradient(circle at 85% 90%, rgba(14, 165, 233, 0.05), transparent 45%);
+            font-family: 'Be Vietnam Pro', "Segoe UI", system-ui, -apple-system, sans-serif;
+            color: var(--text-primary);
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -1808,55 +1847,82 @@ async fn handle_login_page(headers: HeaderMap, State(state): State<AppState>) ->
             padding: 1.25rem;
         }
         .login-card {
-            background: #0f172a;
-            border: 1px solid #1e293b;
-            box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.65);
-            border-radius: 1.35rem;
+            position: relative;
+            background: var(--bg-card);
+            border: 1px solid var(--border-card);
+            box-shadow: var(--card-shadow);
+            border-radius: 1.25rem;
             width: 100%;
             max-width: 27rem;
-            padding: 2.25rem;
+            padding: 2.25rem 2rem;
         }
+        .theme-switch {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            min-height: 36px;
+            padding: 0.35rem 0.7rem;
+            border-radius: 9999px;
+            border: 1px solid var(--border-card);
+            background: var(--bg-base);
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            font-weight: 700;
+            font-family: inherit;
+            cursor: pointer;
+            transition: border-color 0.15s, color 0.15s;
+        }
+        .theme-switch:hover { border-color: var(--brand-primary); color: var(--text-primary); }
+        .theme-switch:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
         .login-head { text-align: center; margin-bottom: 1.75rem; }
         .login-logo {
-            width: 80px; height: 80px; border-radius: 9999px; object-fit: cover; display: block;
-            margin: 0 auto 1rem; border: 2px solid #f97316;
-            box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.18), 0 12px 24px rgba(0, 0, 0, 0.45);
+            width: 76px; height: 76px; border-radius: 9999px; object-fit: cover; display: block;
+            margin: 0 auto 1rem; border: 2px solid var(--brand-primary);
+            box-shadow: 0 6px 18px rgba(194, 65, 12, 0.16);
         }
         .login-title {
-            font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em;
-            background: linear-gradient(90deg, #fb923c, #fcd34d);
-            -webkit-background-clip: text; background-clip: text; color: transparent;
+            font-size: 1.375rem; font-weight: 800; letter-spacing: -0.02em;
+            color: var(--text-primary);
         }
-        .login-sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.35rem; font-weight: 500; }
+        .login-sub { font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.35rem; font-weight: 500; }
         .login-form { display: flex; flex-direction: column; gap: 1.15rem; }
         .field-label {
-            display: block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
-            letter-spacing: 0.06em; color: #94a3b8; margin-bottom: 0.45rem;
+            display: block; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 0.45rem;
         }
         .field-input {
-            width: 100%; padding: 0.78rem 1rem; background: #162033; border: 1px solid #293548;
-            border-radius: 0.75rem; color: #f8fafc; font-size: 0.9rem; font-family: inherit;
-            outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+            width: 100%; min-height: 44px; padding: 0.7rem 0.95rem;
+            background: var(--bg-input); border: 1px solid var(--border-input);
+            border-radius: 0.65rem; color: var(--text-primary); font-size: 0.92rem; font-family: inherit;
+            transition: border-color 0.15s, box-shadow 0.15s;
         }
-        .field-input::placeholder { color: #64748b; }
-        .field-input:focus { border-color: #f97316; box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.2); }
+        .field-input::placeholder { color: var(--text-placeholder); }
+        .field-input:focus {
+            outline: none; border-color: var(--brand-primary); box-shadow: 0 0 0 3px var(--brand-ring);
+        }
         .login-btn {
-            width: 100%; padding: 0.85rem 1rem; margin-top: 0.35rem;
-            background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%);
-            border: none; border-radius: 0.75rem; color: #070b14; font-weight: 800;
-            font-size: 0.9rem; font-family: inherit; cursor: pointer;
-            box-shadow: 0 8px 20px rgba(249, 115, 22, 0.28); transition: transform 0.12s, filter 0.15s;
+            width: 100%; min-height: 46px; padding: 0.8rem 1rem; margin-top: 0.25rem;
+            background: var(--brand-primary);
+            border: 1px solid var(--brand-primary); border-radius: 0.65rem;
+            color: var(--brand-contrast); font-weight: 700;
+            font-size: 0.94rem; font-family: inherit; cursor: pointer;
+            transition: background-color 0.15s, transform 0.12s;
         }
-        .login-btn:hover { filter: brightness(1.06); }
-        .login-btn:active { transform: scale(0.98); }
+        .login-btn:hover { background: var(--brand-hover); border-color: var(--brand-hover); }
+        .login-btn:active { transform: scale(0.99); }
+        .login-btn:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
         .login-foot {
-            margin-top: 1.75rem; padding-top: 1.25rem; border-top: 1px solid #1e293b;
-            text-align: center; font-size: 0.75rem; color: #64748b;
+            margin-top: 1.65rem; padding-top: 1.15rem; border-top: 1px solid var(--border-card);
+            text-align: center; font-size: 0.78rem; color: var(--text-secondary); line-height: 1.5;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { transition: none !important; animation: none !important; }
         }
     </style>
 </head>
 <body>
-    <div class="login-card">
+    <main class="login-card">
+        <button type="button" id="login-theme-btn" class="theme-switch" aria-label="Chuyển đổi giao diện Sáng/Tối">🌙 Tối</button>
         <div class="login-head">
             <img src="/assets/bot-logo.webp" alt="Logo Thế Giới Siêu Sale" class="login-logo">
             <h1 class="login-title">THẾ GIỚI SIÊU SALE</h1>
@@ -1880,7 +1946,30 @@ async fn handle_login_page(headers: HeaderMap, State(state): State<AppState>) ->
         <div class="login-foot">
             🛡️ Bảo mật 1 tài khoản Admin duy nhất · Đăng ký bị vô hiệu hoá
         </div>
-    </div>
+    </main>
+    <script>
+        (function () {
+            const btn = document.getElementById('login-theme-btn');
+            function syncLabel() {
+                const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+                if (btn) btn.textContent = isDark ? '☀️ Sáng' : '🌙 Tối';
+            }
+            syncLabel();
+            if (btn) {
+                btn.addEventListener('click', function () {
+                    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+                    const next = isDark ? 'light' : 'dark';
+                    if (next === 'dark') {
+                        document.documentElement.setAttribute('data-theme', 'dark');
+                    } else {
+                        document.documentElement.removeAttribute('data-theme');
+                    }
+                    try { localStorage.setItem('dealx-theme', next); } catch (e) {}
+                    syncLabel();
+                });
+            }
+        })();
+    </script>
 </body>
 </html>"#;
 
@@ -2262,9 +2351,9 @@ async fn handle_dashboard(
         "Đang chạy ngầm...".to_string()
     };
     let social_auto_panel_html = format!(
-        r#"<div style="display:flex;flex-direction:column;align-items:flex-end;gap:0.35rem;text-align:right;min-width:225px;">
+        r#"<div class="social-meta">
             <span class="badge badge--ok">🤖 Đang Chạy Tự Động (Mỗi 5 Phút)</span>
-            <span class="muted-text">Lần cuối: <strong style="color: var(--text-primary); font-family: 'JetBrains Mono', monospace;">{}</strong></span>
+            <span class="muted-text">Lần cuối: <strong class="meta-time">{}</strong></span>
         </div>"#,
         escape_html(&social_last_display)
     );
@@ -2477,7 +2566,7 @@ async fn handle_dashboard(
         let empty_hint = if db_at_token.is_none() {
             r#"Chưa cấu hình ACCESSTRADE API Access Key. Vào tab <b>"Kết Nối Sàn &amp; API"</b> để nhập Token hoặc nạp mã vào mục <b>"Kho Mã Độc Quyền Hợp Tác"</b> bên dưới."#.to_string()
         } else if approved_opt.is_none() {
-            r#"⚠️ <b>ACCESSTRADE API đang bị lỗi kết nối (HTTP 403 Forbidden / Sai Key):</b> Bot chưa được cấp quyền kéo mã tự động từ sàn về.<br><span style="color:#fcd34d;">👉 Cách khắc phục:</span> Vào <a href="https://pub2.accesstrade.vn" target="_blank" rel="noopener noreferrer" class="table-link">pub2.accesstrade.vn</a> &gt; <b>Công cụ &gt; API</b> lấy lại Access Key mới rồi dán vào tab <b>"Kết Nối Sàn &amp; API"</b>."#.to_string()
+            r#"⚠️ <b>ACCESSTRADE API đang bị lỗi kết nối (HTTP 403 Forbidden / Sai Key):</b> Bot chưa được cấp quyền kéo mã tự động từ sàn về.<br><strong class="warn-hint">👉 Cách khắc phục:</strong> Vào <a href="https://pub2.accesstrade.vn" target="_blank" rel="noopener noreferrer" class="table-link">pub2.accesstrade.vn</a> &gt; <b>Công cụ &gt; API</b> lấy lại Access Key mới rồi dán vào tab <b>"Kết Nối Sàn &amp; API"</b>."#.to_string()
         } else {
             r#"Không có mã nào khớp bộ lọc (hoặc đang nạp chu kỳ đầu tiên). Bấm nút <b>Quét Sâu Toàn Bộ Ngay</b> nếu cần làm mới ngay."#.to_string()
         };
@@ -2604,111 +2693,189 @@ async fn handle_dashboard(
     <title>Thế Giới Siêu Sale - Trung Tâm Quản Trị Hệ Thống</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+        (function () {{
+            try {{
+                if (localStorage.getItem('dealx-theme') === 'dark') {{
+                    document.documentElement.setAttribute('data-theme', 'dark');
+                }}
+            }} catch (e) {{}}
+        }})();
+    </script>
     <style>
         :root {{
-            --bg-base: #070b14;
-            --bg-surface: #0f172a;
-            --bg-elevated: #111c33;
-            --bg-inset: #0a101f;
-            --bg-input: #16223a;
-            --border-subtle: rgba(148, 163, 184, 0.14);
-            --border-strong: rgba(148, 163, 184, 0.28);
-            --text-primary: #f8fafc;
-            --text-secondary: #cbd5e1;
-            --text-muted: #94a3b8;
-            --brand-primary: #f97316;
-            --brand-accent: #f59e0b;
-            --ok-text: #86efac;
-            --ok-bg: rgba(34, 197, 94, 0.14);
-            --ok-border: rgba(34, 197, 94, 0.34);
-            --warn-text: #fde68a;
-            --warn-bg: rgba(245, 158, 11, 0.14);
-            --warn-border: rgba(245, 158, 11, 0.34);
-            --err-text: #fca5a5;
-            --err-bg: rgba(239, 68, 68, 0.14);
-            --err-border: rgba(239, 68, 68, 0.34);
-            --info-text: #7dd3fc;
-            --info-bg: rgba(14, 165, 233, 0.14);
-            --info-border: rgba(14, 165, 233, 0.34);
-            --purple-text: #d8b4fe;
-            --purple-bg: rgba(168, 85, 247, 0.16);
-            --purple-border: rgba(168, 85, 247, 0.35);
-            --pink-text: #f9a8d4;
-            --pink-bg: rgba(236, 72, 153, 0.15);
-            --pink-border: rgba(236, 72, 153, 0.34);
+            color-scheme: light;
+            --bg-base: #F4F6F9;
+            --bg-sidebar: #FFFFFF;
+            --bg-topbar: rgba(255, 255, 255, 0.94);
+            --bg-surface: #FFFFFF;
+            --bg-elevated: #F8FAFC;
+            --bg-inset: #F1F5F9;
+            --bg-input: #FFFFFF;
+            --bg-table-head: #F8FAFC;
+            --bg-table-hover: #F1F5F9;
+            --border-subtle: #E2E8F0;
+            --border-strong: #CBD5E1;
+            --text-primary: #0F172A;
+            --text-secondary: #334155;
+            --text-muted: #475569;
+            --text-placeholder: #94A3B8;
+            --brand-primary: #C2410C;
+            --brand-hover: #9A3412;
+            --brand-bright: #EA580C;
+            --brand-accent: #C2410C;
+            --brand-contrast: #FFFFFF;
+            --brand-soft-bg: #FFF7ED;
+            --brand-soft-border: #FED7AA;
+            --brand-soft-text: #C2410C;
+            --brand-ring: rgba(194, 65, 12, 0.22);
+            --link-text: #0369A1;
+            --ok-text: #15803D;
+            --ok-bg: #DCFCE7;
+            --ok-border: #86EFAC;
+            --warn-text: #92400E;
+            --warn-bg: #FEF3C7;
+            --warn-border: #FCD34D;
+            --err-text: #B91C1C;
+            --err-bg: #FEE2E2;
+            --err-border: #FCA5A5;
+            --info-text: #0369A1;
+            --info-bg: #E0F2FE;
+            --info-border: #7DD3FC;
+            --purple-text: #6D28D9;
+            --purple-bg: #EDE9FE;
+            --purple-border: #C4B5FD;
+            --pink-text: #BE185D;
+            --pink-bg: #FCE7F3;
+            --pink-border: #F9A8D4;
+            --code-bg: #F1F5F9;
+            --code-text: #0F172A;
+            --code-border: #E2E8F0;
             --radius-sm: 0.5rem;
             --radius-md: 0.75rem;
             --radius-lg: 1rem;
-            --shadow-card: 0 10px 30px -10px rgba(0, 0, 0, 0.55);
+            --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05), 0 4px 16px rgba(15, 23, 42, 0.04);
         }}
+        html[data-theme="dark"] {{
+            color-scheme: dark;
+            --bg-base: #0B1120;
+            --bg-sidebar: #0F172A;
+            --bg-topbar: rgba(15, 23, 42, 0.92);
+            --bg-surface: #131C31;
+            --bg-elevated: #18233C;
+            --bg-inset: #0D1526;
+            --bg-input: #18233C;
+            --bg-table-head: #0F172A;
+            --bg-table-hover: rgba(51, 65, 85, 0.35);
+            --border-subtle: rgba(148, 163, 184, 0.16);
+            --border-strong: rgba(148, 163, 184, 0.32);
+            --text-primary: #F8FAFC;
+            --text-secondary: #E2E8F0;
+            --text-muted: #94A3B8;
+            --text-placeholder: #64748B;
+            --brand-primary: #F97316;
+            --brand-hover: #EA580C;
+            --brand-bright: #FB923C;
+            --brand-accent: #FB923C;
+            --brand-contrast: #090D16;
+            --brand-soft-bg: rgba(249, 115, 22, 0.16);
+            --brand-soft-border: rgba(249, 115, 22, 0.38);
+            --brand-soft-text: #FDBA74;
+            --brand-ring: rgba(249, 115, 22, 0.28);
+            --link-text: #7DD3FC;
+            --ok-text: #86EFAC;
+            --ok-bg: rgba(34, 197, 94, 0.16);
+            --ok-border: rgba(34, 197, 94, 0.38);
+            --warn-text: #FDE68A;
+            --warn-bg: rgba(245, 158, 11, 0.16);
+            --warn-border: rgba(245, 158, 11, 0.38);
+            --err-text: #FCA5A5;
+            --err-bg: rgba(239, 68, 68, 0.16);
+            --err-border: rgba(239, 68, 68, 0.38);
+            --info-text: #7DD3FC;
+            --info-bg: rgba(14, 165, 233, 0.16);
+            --info-border: rgba(14, 165, 233, 0.38);
+            --purple-text: #D8B4FE;
+            --purple-bg: rgba(168, 85, 247, 0.16);
+            --purple-border: rgba(168, 85, 247, 0.38);
+            --pink-text: #F9A8D4;
+            --pink-bg: rgba(236, 72, 153, 0.16);
+            --pink-border: rgba(236, 72, 153, 0.38);
+            --code-bg: #1E293B;
+            --code-text: #FDE68A;
+            --code-border: rgba(148, 163, 184, 0.22);
+            --shadow-card: 0 8px 24px -8px rgba(0, 0, 0, 0.45);
+        }}
+
         *, *::before, *::after {{ box-sizing: border-box; }}
+        html, body {{ margin: 0; padding: 0; overflow-x: clip; }}
         body {{
-            margin: 0;
-            padding: 0;
             min-height: 100vh;
-            display: flex;
-            flex-direction: column;
             background-color: var(--bg-base);
-            background-image:
-                radial-gradient(at 0% 0%, rgba(249, 115, 22, 0.11) 0px, transparent 52%),
-                radial-gradient(at 100% 0%, rgba(14, 165, 233, 0.08) 0px, transparent 50%),
-                radial-gradient(at 50% 100%, rgba(168, 85, 247, 0.06) 0px, transparent 52%);
             color: var(--text-primary);
-            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-family: 'Be Vietnam Pro', "Segoe UI", system-ui, -apple-system, sans-serif;
+            font-size: 14px;
+            line-height: 1.5;
             -webkit-font-smoothing: antialiased;
         }}
         a {{ color: inherit; text-decoration: none; }}
         button, input, select, textarea {{ font-family: inherit; }}
+        button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {{
+            outline: 2px solid var(--brand-primary);
+            outline-offset: 2px;
+        }}
         code {{
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.75rem;
-            background: rgba(148, 163, 184, 0.12);
-            color: #fcd34d;
-            padding: 0.1rem 0.38rem;
-            border-radius: 0.32rem;
+            font-size: 0.78rem;
+            background: var(--code-bg);
+            color: var(--code-text);
+            border: 1px solid var(--code-border);
+            padding: 0.1rem 0.4rem;
+            border-radius: 0.35rem;
         }}
 
-        /* Header */
-        .admin-header {{
+        /* Desktop App Shell Layout */
+        .app-shell {{
+            display: grid;
+            grid-template-columns: 260px minmax(0, 1fr);
+            min-height: 100vh;
+        }}
+
+        /* Sidebar Navigation */
+        .sidebar {{
             position: sticky;
             top: 0;
-            z-index: 50;
-            background: rgba(7, 11, 20, 0.9);
-            backdrop-filter: blur(18px);
-            -webkit-backdrop-filter: blur(18px);
-            border-bottom: 1px solid var(--border-subtle);
-        }}
-        .admin-header__inner {{
-            max-width: 1280px;
-            margin: 0 auto;
-            padding: 0.85rem 1.5rem;
+            height: 100vh;
+            background: var(--bg-sidebar);
+            border-right: 1px solid var(--border-subtle);
             display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 1rem;
-            flex-wrap: wrap;
+            flex-direction: column;
+            padding: 1.25rem 1rem;
+            gap: 1.25rem;
+            overflow-y: auto;
+            z-index: 45;
         }}
         .brand {{
             display: flex;
             align-items: center;
-            gap: 0.875rem;
-            min-width: 0;
+            gap: 0.75rem;
+            padding: 0.25rem 0.25rem 1rem;
+            border-bottom: 1px solid var(--border-subtle);
         }}
         .brand__logo-wrap {{
             position: relative;
-            width: 44px;
-            height: 44px;
+            width: 42px;
+            height: 42px;
             flex-shrink: 0;
         }}
         .brand__logo {{
-            width: 44px;
-            height: 44px;
+            width: 42px;
+            height: 42px;
             border-radius: 9999px;
             object-fit: cover;
             display: block;
-            border: 2px solid var(--brand-primary);
-            box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.18);
+            border: 2px solid var(--brand-bright);
         }}
         .brand__dot {{
             position: absolute;
@@ -2717,153 +2884,251 @@ async fn handle_dashboard(
             width: 11px;
             height: 11px;
             border-radius: 9999px;
-            background: #22c55e;
-            border: 2px solid var(--bg-base);
+            background: #22C55E;
+            border: 2px solid var(--bg-sidebar);
         }}
         .brand__title-row {{
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.4rem;
             flex-wrap: wrap;
         }}
         .brand__title {{
             margin: 0;
-            font-size: 1.06rem;
+            font-size: 0.92rem;
             font-weight: 800;
             letter-spacing: -0.02em;
-            background: linear-gradient(90deg, #fb923c, #fcd34d);
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
+            color: var(--text-primary);
         }}
         .brand__tag {{
-            padding: 0.15rem 0.48rem;
-            border-radius: 0.375rem;
-            font-size: 0.65rem;
+            padding: 0.1rem 0.42rem;
+            border-radius: 0.35rem;
+            font-size: 0.62rem;
             font-weight: 700;
             text-transform: uppercase;
-            letter-spacing: 0.06em;
-            color: #fdba74;
-            background: rgba(249, 115, 22, 0.15);
-            border: 1px solid rgba(249, 115, 22, 0.35);
+            letter-spacing: 0.05em;
+            color: var(--brand-soft-text);
+            background: var(--brand-soft-bg);
+            border: 1px solid var(--brand-soft-border);
         }}
         .brand__sub {{
-            margin: 0.14rem 0 0;
+            margin: 0.18rem 0 0;
             font-size: 0.72rem;
             color: var(--text-muted);
+            line-height: 1.35;
         }}
-        .header-actions {{
+        .sidebar__section-label {{
+            font-size: 0.68rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            padding: 0 0.65rem;
+            margin-bottom: 0.4rem;
+        }}
+        .tab-nav {{
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }}
+        .tab-btn {{
             display: flex;
             align-items: center;
-            gap: 0.65rem;
-            flex-wrap: wrap;
+            gap: 0.7rem;
+            width: 100%;
+            min-height: 44px;
+            padding: 0.62rem 0.85rem;
+            border-radius: var(--radius-md);
+            font-size: 0.86rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            background: transparent;
+            border: 1px solid transparent;
+            cursor: pointer;
+            text-align: left;
+            white-space: nowrap;
+            transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
         }}
-        .status-pill {{
+        .tab-btn__icon {{
+            width: 28px;
+            height: 28px;
+            border-radius: 0.5rem;
             display: inline-flex;
             align-items: center;
-            gap: 0.55rem;
-            padding: 0.42rem 0.85rem;
-            background: var(--bg-surface);
+            justify-content: center;
+            background: var(--bg-inset);
+            font-size: 0.92rem;
+            flex-shrink: 0;
+        }}
+        .tab-btn:hover {{
+            color: var(--text-primary);
+            background: var(--bg-elevated);
+            border-color: var(--border-subtle);
+        }}
+        .tab-btn.active {{
+            color: var(--brand-soft-text);
+            background: var(--brand-soft-bg);
+            border-color: var(--brand-soft-border);
+            font-weight: 700;
+            box-shadow: inset 3px 0 0 var(--brand-bright);
+        }}
+        .tab-btn.active .tab-btn__icon {{
+            background: var(--brand-primary);
+            color: var(--brand-contrast);
+        }}
+        .sidebar__footer {{
+            margin-top: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border-subtle);
+        }}
+        .bot-status-card {{
+            background: var(--bg-elevated);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-md);
-            font-size: 0.75rem;
-            color: var(--text-muted);
+            padding: 0.75rem 0.85rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.45rem;
+            font-size: 0.78rem;
         }}
-        .status-pill strong {{ color: var(--text-primary); }}
-        .status-pill a {{ color: #fbbf24; font-weight: 600; }}
-        .status-pill a:hover {{ text-decoration: underline; }}
-        .status-sep {{ color: rgba(148, 163, 184, 0.3); }}
+        .bot-status-card__row {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.4rem;
+        }}
+        .bot-link {{
+            color: var(--link-text);
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.76rem;
+        }}
+        .bot-link:hover {{ text-decoration: underline; }}
         .pulse-dot {{
             width: 8px;
             height: 8px;
             border-radius: 9999px;
-            background: #22c55e;
+            background: #22C55E;
             display: inline-block;
             flex-shrink: 0;
-            box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
+            box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.22);
         }}
-        .mode-tag {{ font-weight: 600; font-size: 0.74rem; }}
+        .mode-tag {{ font-weight: 700; font-size: 0.74rem; }}
         .mode-tag--ok {{ color: var(--ok-text); }}
         .mode-tag--info {{ color: var(--info-text); }}
 
-        /* Tabs */
-        .tab-bar {{
+        /* Main Shell & Single Slim Topbar */
+        .shell-main {{
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }}
+        .topbar {{
             position: sticky;
-            top: 71px;
+            top: 0;
             z-index: 40;
-            background: rgba(9, 14, 26, 0.88);
+            background: var(--bg-topbar);
             backdrop-filter: blur(14px);
             -webkit-backdrop-filter: blur(14px);
             border-bottom: 1px solid var(--border-subtle);
-        }}
-        .tab-nav {{
-            max-width: 1280px;
-            margin: 0 auto;
-            padding: 0.65rem 1.5rem;
+            padding: 0.85rem 1.75rem;
             display: flex;
             align-items: center;
-            gap: 0.5rem;
-            overflow-x: auto;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
         }}
-        .tab-btn {{
+        .topbar__left {{
+            min-width: 0;
+        }}
+        .topbar__title {{
+            margin: 0;
+            font-size: 1.15rem;
+            font-weight: 800;
+            color: var(--text-primary);
+            letter-spacing: -0.02em;
+        }}
+        .topbar__sub {{
+            margin: 0.12rem 0 0;
+            font-size: 0.78rem;
+            color: var(--text-muted);
+        }}
+        .topbar__actions {{
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            flex-wrap: wrap;
+        }}
+        .admin-pill {{
             display: inline-flex;
             align-items: center;
             gap: 0.45rem;
-            padding: 0.55rem 1rem;
-            border-radius: var(--radius-md);
-            font-size: 0.84rem;
-            font-weight: 600;
+            min-height: 36px;
+            padding: 0.35rem 0.75rem;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: 9999px;
+            font-size: 0.78rem;
             color: var(--text-muted);
-            background: transparent;
-            border: 1px solid transparent;
-            cursor: pointer;
-            white-space: nowrap;
-            transition: all 0.15s ease;
         }}
-        .tab-btn:hover {{
+        .admin-pill strong {{ color: var(--text-primary); }}
+        .theme-btn {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.38rem;
+            min-height: 36px;
+            padding: 0.38rem 0.85rem;
+            border-radius: 9999px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-strong);
             color: var(--text-primary);
-            background: rgba(30, 41, 59, 0.65);
-            border-color: var(--border-subtle);
-        }}
-        .tab-btn.active {{
-            color: #070b14;
-            background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%);
-            border-color: #fb923c;
+            font-size: 0.78rem;
             font-weight: 700;
-            box-shadow: 0 4px 14px rgba(249, 115, 22, 0.32);
+            cursor: pointer;
+            transition: border-color 0.15s ease, background-color 0.15s ease;
+        }}
+        .theme-btn:hover {{
+            border-color: var(--brand-primary);
+            background: var(--bg-inset);
+        }}
+
+        /* Main Workspace & Footer */
+        .admin-main {{
+            width: 100%;
+            max-width: 1380px;
+            margin: 0 auto;
+            padding: 1.5rem 1.75rem 2.5rem;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+        }}
+        .admin-footer {{
+            width: 100%;
+            max-width: 1380px;
+            margin: 0 auto;
+            padding: 1.15rem 1.75rem 1.75rem;
+            text-align: center;
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border-subtle);
         }}
         .tab-pane {{
             display: flex;
             flex-direction: column;
-            gap: 1.5rem;
+            gap: 1.35rem;
         }}
         .tab-pane.is-hidden {{ display: none !important; }}
 
-        /* Main & Footer */
-        .admin-main {{
-            width: 100%;
-            max-width: 1280px;
-            margin: 0 auto;
-            padding: 1.75rem 1.5rem 2.5rem;
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            gap: 1.5rem;
-        }}
-        .admin-footer {{
-            width: 100%;
-            max-width: 1280px;
-            margin: 0 auto;
-            padding: 1.25rem 1.5rem 2rem;
-            text-align: center;
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            border-top: 1px solid var(--border-subtle);
-        }}
-
         /* Notice Banners */
         .notice-banner {{
-            padding: 0.85rem 1.15rem;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.6rem;
+            padding: 0.72rem 1rem;
             border-radius: var(--radius-md);
             font-size: 0.84rem;
             font-weight: 500;
@@ -2871,18 +3136,21 @@ async fn handle_dashboard(
             border: 1px solid var(--border-subtle);
         }}
         .notice-banner--ok {{
-            background: var(--ok-bg);
-            border-color: var(--ok-border);
-            color: var(--ok-text);
+            background: var(--bg-surface);
+            border-color: var(--border-subtle);
+            border-left: 4px solid var(--ok-text);
+            color: var(--text-secondary);
         }}
         .notice-banner--warn {{
             background: var(--warn-bg);
             border-color: var(--warn-border);
+            border-left: 4px solid var(--warn-text);
             color: var(--warn-text);
         }}
         .notice-banner--info {{
             background: var(--info-bg);
             border-color: var(--info-border);
+            border-left: 4px solid var(--info-text);
             color: var(--info-text);
         }}
 
@@ -2891,23 +3159,24 @@ async fn handle_dashboard(
             background: var(--bg-surface);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-lg);
-            padding: 1.5rem;
+            padding: 1.4rem 1.5rem;
             box-shadow: var(--shadow-card);
             display: flex;
             flex-direction: column;
-            gap: 1.25rem;
+            gap: 1.15rem;
         }}
         .card--table {{
             padding: 0;
             gap: 0;
             overflow: hidden;
         }}
-        .card--orange {{ border-color: rgba(249, 115, 22, 0.34); }}
-        .card--green {{ border-color: rgba(34, 197, 94, 0.34); }}
-        .card--purple {{ border-color: rgba(168, 85, 247, 0.35); }}
+        .card--orange {{ border-top: 3px solid var(--brand-bright); }}
+        .card--green {{ border-top: 3px solid var(--ok-text); }}
+        .card--purple {{ border-top: 3px solid var(--purple-text); }}
         .card--social {{
-            background: linear-gradient(120deg, rgba(88, 28, 135, 0.3), rgba(131, 24, 67, 0.24), rgba(154, 52, 18, 0.22));
-            border-color: rgba(168, 85, 247, 0.34);
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-left: 4px solid var(--brand-bright);
             flex-direction: row;
             flex-wrap: wrap;
             align-items: center;
@@ -2917,29 +3186,33 @@ async fn handle_dashboard(
         .social-left {{
             display: flex;
             align-items: center;
-            gap: 0.9rem;
+            gap: 0.95rem;
             flex: 1 1 380px;
         }}
         .social-icon {{
-            width: 48px;
-            height: 48px;
-            border-radius: 0.9rem;
-            background: linear-gradient(135deg, #9333ea, #ec4899, #f97316);
+            width: 46px;
+            height: 46px;
+            border-radius: 0.85rem;
+            background: var(--brand-soft-bg);
+            border: 1px solid var(--brand-soft-border);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.45rem;
+            font-size: 1.35rem;
             flex-shrink: 0;
-            box-shadow: 0 8px 20px rgba(168, 85, 247, 0.3);
         }}
-        .social-hint {{
-            background: var(--bg-inset);
-            border: 1px solid var(--border-subtle);
-            border-radius: var(--radius-md);
-            padding: 0.55rem 0.85rem;
+        .social-meta {{
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 0.35rem;
+            text-align: right;
+            min-width: 225px;
+        }}
+        .meta-time {{
+            color: var(--text-primary);
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.74rem;
-            color: var(--text-secondary);
+            font-weight: 600;
         }}
         .card-head {{
             display: flex;
@@ -2947,13 +3220,13 @@ async fn handle_dashboard(
             align-items: flex-start;
             justify-content: space-between;
             gap: 0.75rem;
-            padding-bottom: 1rem;
+            padding-bottom: 0.95rem;
             border-bottom: 1px solid var(--border-subtle);
         }}
         .card-head--table {{
-            padding: 1.25rem 1.5rem;
+            padding: 1.15rem 1.5rem;
             margin: 0;
-            background: rgba(10, 16, 31, 0.55);
+            background: var(--bg-elevated);
         }}
         .card-head-actions {{
             display: flex;
@@ -2963,7 +3236,7 @@ async fn handle_dashboard(
         }}
         .card-title {{
             margin: 0;
-            font-size: 1.06rem;
+            font-size: 1.02rem;
             font-weight: 700;
             color: var(--text-primary);
             display: flex;
@@ -2972,8 +3245,8 @@ async fn handle_dashboard(
             gap: 0.5rem;
         }}
         .card-desc {{
-            margin: 0.35rem 0 0;
-            font-size: 0.78rem;
+            margin: 0.32rem 0 0;
+            font-size: 0.82rem;
             color: var(--text-muted);
             line-height: 1.55;
         }}
@@ -2982,28 +3255,28 @@ async fn handle_dashboard(
         .kpi-grid {{
             display: grid;
             grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 1.15rem;
+            gap: 1rem;
         }}
         .kpi-card {{
             background: var(--bg-surface);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-lg);
-            padding: 1.25rem;
+            padding: 1.2rem 1.25rem;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
-            gap: 0.8rem;
+            gap: 0.9rem;
             box-shadow: var(--shadow-card);
             transition: border-color 0.15s ease;
         }}
         .kpi-card:hover {{ border-color: var(--border-strong); }}
-        .kpi-card--orange {{ border-color: rgba(249, 115, 22, 0.32); }}
-        .kpi-card--green {{ border-color: rgba(34, 197, 94, 0.32); }}
+        .kpi-card--orange {{ border-top: 3px solid var(--brand-bright); }}
+        .kpi-card--green {{ border-top: 3px solid var(--ok-text); }}
         .kpi-card__top {{
             display: flex;
             align-items: center;
             justify-content: space-between;
-            font-size: 0.72rem;
+            font-size: 0.73rem;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.05em;
@@ -3012,44 +3285,55 @@ async fn handle_dashboard(
         .kpi-card__icon {{
             width: 2rem;
             height: 2rem;
-            border-radius: 0.6rem;
+            border-radius: 0.55rem;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.92rem;
-            background: rgba(148, 163, 184, 0.1);
+            font-size: 0.95rem;
+            background: var(--bg-inset);
             border: 1px solid var(--border-subtle);
         }}
         .kpi-card__val {{
-            margin-top: 0.35rem;
-            font-size: 1.9rem;
+            margin-top: 0.45rem;
+            font-size: 1.95rem;
             font-weight: 800;
             line-height: 1.15;
             letter-spacing: -0.02em;
+            font-variant-numeric: tabular-nums;
             color: var(--text-primary);
         }}
-        .kpi-card__val--amber {{ color: #fbbf24; }}
-        .kpi-card__val--orange {{ color: #fb923c; }}
-        .kpi-card__val--green {{ color: #4ade80; font-size: 0.95rem; font-weight: 700; margin-top: 0.45rem; }}
+        .kpi-card__val--amber {{ color: var(--brand-primary); }}
+        .kpi-card__val--orange {{ color: var(--brand-primary); }}
+        .kpi-card__val--green {{ color: var(--ok-text); font-size: 1rem; font-weight: 700; margin-top: 0.5rem; }}
         .kpi-card__meta {{
             background: var(--bg-inset);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-md);
-            padding: 0.65rem 0.75rem;
-            font-size: 0.73rem;
+            padding: 0.58rem 0.75rem;
+            font-size: 0.76rem;
             color: var(--text-secondary);
             display: flex;
             flex-direction: column;
-            gap: 0.3rem;
+            gap: 0.32rem;
         }}
         .kpi-card__pill {{
-            background: rgba(6, 182, 212, 0.12);
-            border: 1px solid rgba(6, 182, 212, 0.28);
-            color: #67e8f9;
+            background: var(--bg-inset);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
             border-radius: var(--radius-sm);
-            padding: 0.45rem 0.7rem;
-            font-size: 0.73rem;
-            font-weight: 500;
+            padding: 0.48rem 0.72rem;
+            font-size: 0.76rem;
+            font-weight: 600;
+        }}
+        .refresh-chip {{
+            background: var(--info-bg);
+            border: 1px solid var(--info-border);
+            color: var(--info-text);
+            border-radius: var(--radius-sm);
+            padding: 0.48rem 0.72rem;
+            font-size: 0.76rem;
+            font-weight: 700;
+            text-align: center;
         }}
         .kpi-row {{
             display: flex;
@@ -3085,7 +3369,7 @@ async fn handle_dashboard(
 
         /* ACCESSTRADE Platform Status List */
         .plat-panel {{
-            background: var(--bg-inset);
+            background: var(--bg-elevated);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-md);
             padding: 1rem;
@@ -3094,7 +3378,7 @@ async fn handle_dashboard(
             gap: 0.85rem;
         }}
         .plat-panel__title {{
-            font-size: 0.72rem;
+            font-size: 0.73rem;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.06em;
@@ -3110,7 +3394,7 @@ async fn handle_dashboard(
             align-items: center;
             justify-content: space-between;
             gap: 0.75rem;
-            padding: 0.65rem 0.8rem;
+            padding: 0.65rem 0.85rem;
             background: var(--bg-surface);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-md);
@@ -3122,12 +3406,12 @@ async fn handle_dashboard(
             min-width: 0;
         }}
         .plat-row__name {{
-            font-size: 0.82rem;
+            font-size: 0.85rem;
             font-weight: 600;
             color: var(--text-primary);
         }}
         .plat-row__sub {{
-            font-size: 0.7rem;
+            font-size: 0.74rem;
             color: var(--text-muted);
             font-family: 'JetBrains Mono', monospace;
             white-space: nowrap;
@@ -3135,25 +3419,33 @@ async fn handle_dashboard(
             text-overflow: ellipsis;
         }}
         .inset-note {{
-            background: rgba(15, 23, 42, 0.85);
+            background: var(--bg-surface);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-sm);
-            padding: 0.75rem 0.85rem;
-            font-size: 0.74rem;
+            padding: 0.78rem 0.9rem;
+            font-size: 0.78rem;
             color: var(--text-muted);
             line-height: 1.55;
             display: flex;
             flex-direction: column;
             gap: 0.3rem;
         }}
-        .inset-note strong, .inset-note b {{ color: var(--text-secondary); }}
+        .inset-note strong, .inset-note b {{ color: var(--text-primary); }}
         .inset-note--ok {{
             border-color: var(--ok-border);
-            background: rgba(20, 83, 45, 0.22);
+            background: var(--ok-bg);
             color: var(--ok-text);
         }}
-        .err-text {{ color: var(--err-text); font-size: 0.8rem; font-weight: 500; }}
-        .muted-text {{ color: var(--text-muted); font-size: 0.75rem; margin-top: 0.3rem; }}
+        .err-text {{ color: var(--err-text); font-size: 0.82rem; font-weight: 600; }}
+        .muted-text {{ color: var(--text-muted); font-size: 0.78rem; margin-top: 0.3rem; }}
+        .ok-strong {{ color: var(--ok-text); }}
+        .primary-strong {{ color: var(--text-primary); }}
+        .label-accent {{ color: var(--brand-soft-text); font-weight: 700; }}
+        .label-info {{ color: var(--info-text); font-weight: 700; }}
+        .warn-hint {{ color: var(--warn-text); }}
+        .comm-val {{ color: var(--ok-text); font-weight: 700; }}
+        .font-mono {{ font-family: 'JetBrains Mono', monospace; }}
+        .inline-form {{ margin: 0; }}
 
         /* Badges & Pills */
         .badge {{
@@ -3162,7 +3454,7 @@ async fn handle_dashboard(
             gap: 0.3rem;
             padding: 0.28rem 0.65rem;
             border-radius: 9999px;
-            font-size: 0.72rem;
+            font-size: 0.74rem;
             font-weight: 600;
             border: 1px solid transparent;
             white-space: nowrap;
@@ -3174,56 +3466,57 @@ async fn handle_dashboard(
         .badge--warn {{ background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn-text); }}
         .badge--info {{ background: var(--info-bg); border-color: var(--info-border); color: var(--info-text); }}
         .badge--muted {{
-            background: rgba(148, 163, 184, 0.12);
-            border-color: rgba(148, 163, 184, 0.24);
+            background: var(--bg-inset);
+            border-color: var(--border-strong);
             color: var(--text-secondary);
         }}
         .badge--orange {{
-            background: rgba(249, 115, 22, 0.16);
-            border-color: rgba(249, 115, 22, 0.36);
-            color: #fdba74;
+            background: var(--brand-soft-bg);
+            border-color: var(--brand-soft-border);
+            color: var(--brand-soft-text);
         }}
         .badge--purple {{ background: var(--purple-bg); border-color: var(--purple-border); color: var(--purple-text); }}
         .badge--pink {{ background: var(--pink-bg); border-color: var(--pink-border); color: var(--pink-text); }}
         .badge--cyan {{
-            background: rgba(6, 182, 212, 0.15);
-            border-color: rgba(6, 182, 212, 0.34);
-            color: #67e8f9;
+            background: var(--info-bg);
+            border-color: var(--info-border);
+            color: var(--info-text);
         }}
         .code-pill {{
             display: inline-block;
             padding: 0.22rem 0.55rem;
             border-radius: 0.45rem;
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.74rem;
+            font-size: 0.76rem;
             font-weight: 600;
-            background: var(--bg-inset);
-            color: #fcd34d;
-            border: 1px solid var(--border-strong);
+            background: var(--code-bg);
+            color: var(--code-text);
+            border: 1px solid var(--code-border);
         }}
 
         /* Forms & Controls */
         .form-stack {{ display: flex; flex-direction: column; gap: 1rem; }}
         .subpanel {{
-            background: var(--bg-inset);
+            background: var(--bg-elevated);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-md);
-            padding: 1.1rem;
+            padding: 1.15rem;
             display: flex;
             flex-direction: column;
             gap: 0.85rem;
         }}
         .subpanel__title {{
-            font-size: 0.75rem;
+            font-size: 0.76rem;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.05em;
             color: var(--text-secondary);
         }}
-        .divider-top {{ border-top: 1px solid var(--border-subtle); padding-top: 0.9rem; }}
+        .subpanel__title--purple {{ color: var(--purple-text); }}
+        .divider-top {{ border-top: 1px solid var(--border-subtle); padding-top: 0.95rem; }}
         .field-label {{
             display: block;
-            font-size: 0.75rem;
+            font-size: 0.78rem;
             font-weight: 600;
             color: var(--text-secondary);
             margin-bottom: 0.35rem;
@@ -3237,35 +3530,38 @@ async fn handle_dashboard(
         .field-input,
         .code-textarea {{
             width: 100%;
+            min-height: 42px;
             background: var(--bg-input);
             border: 1px solid var(--border-strong);
             border-radius: var(--radius-md);
             color: var(--text-primary);
-            padding: 0.62rem 0.85rem;
-            font-size: 0.82rem;
-            outline: none;
+            padding: 0.58rem 0.85rem;
+            font-size: 0.84rem;
             transition: border-color 0.15s ease, box-shadow 0.15s ease;
         }}
+        textarea.code-textarea {{ min-height: 110px; }}
         .field-input--mono, .code-textarea {{
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.79rem;
+            font-size: 0.8rem;
         }}
-        input::placeholder, textarea::placeholder {{ color: #64748b; }}
+        input::placeholder, textarea::placeholder {{ color: var(--text-placeholder); }}
         input:focus, select:focus, textarea:focus {{
-            border-color: var(--brand-accent);
-            box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.22);
+            outline: none;
+            border-color: var(--brand-primary);
+            box-shadow: 0 0 0 3px var(--brand-ring);
         }}
         .check-row {{
             display: inline-flex;
             align-items: center;
             gap: 0.55rem;
-            font-size: 0.8rem;
+            font-size: 0.82rem;
             color: var(--text-secondary);
             cursor: pointer;
         }}
+        .check-row--mt {{ margin-top: 0.45rem; }}
         .check-row input[type="checkbox"] {{
-            width: 1rem;
-            height: 1rem;
+            width: 1.05rem;
+            height: 1.05rem;
             accent-color: var(--brand-primary);
             cursor: pointer;
         }}
@@ -3274,19 +3570,19 @@ async fn handle_dashboard(
             flex-wrap: wrap;
             align-items: center;
             gap: 0.65rem;
-            background: var(--bg-inset);
+            background: var(--bg-elevated);
             border: 1px solid var(--border-subtle);
-            padding: 0.75rem 0.9rem;
+            padding: 0.78rem 0.95rem;
             border-radius: var(--radius-md);
         }}
         .filter-bar select {{
             width: auto;
-            min-width: 190px;
+            min-width: 195px;
         }}
         .inline-form-grow {{
             display: flex;
             flex: 1 1 280px;
-            align-items: center;
+            align-items: flex-end;
             gap: 0.65rem;
             flex-wrap: wrap;
         }}
@@ -3301,58 +3597,63 @@ async fn handle_dashboard(
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            gap: 0.4rem;
-            padding: 0.62rem 1.05rem;
+            gap: 0.42rem;
+            min-height: 40px;
+            padding: 0.55rem 1.05rem;
             border-radius: var(--radius-md);
-            font-size: 0.8rem;
+            font-size: 0.82rem;
             font-weight: 700;
             border: 1px solid transparent;
             cursor: pointer;
             text-decoration: none;
             white-space: nowrap;
-            transition: all 0.15s ease;
+            transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
         }}
         .btn--primary {{
-            background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%);
-            color: #070b14;
-            border-color: #fb923c;
-            box-shadow: 0 6px 18px rgba(249, 115, 22, 0.26);
+            background: var(--brand-primary);
+            color: var(--brand-contrast);
+            border-color: var(--brand-primary);
         }}
-        .btn--primary:hover {{ filter: brightness(1.07); transform: translateY(-1px); }}
+        .btn--primary:hover {{
+            background: var(--brand-hover);
+            border-color: var(--brand-hover);
+        }}
         .btn--secondary {{
-            background: #1a2640;
+            background: var(--bg-surface);
             color: var(--text-primary);
             border-color: var(--border-strong);
         }}
         .btn--secondary:hover {{
-            background: #233354;
-            border-color: rgba(148, 163, 184, 0.45);
+            background: var(--bg-inset);
+            border-color: var(--brand-primary);
         }}
         .btn--success {{
-            background: linear-gradient(135deg, #22c55e, #16a34a);
-            color: #052e16;
-            border-color: #4ade80;
+            background: var(--ok-text);
+            color: #FFFFFF;
+            border-color: var(--ok-text);
         }}
-        .btn--success:hover {{ filter: brightness(1.07); }}
+        .btn--success:hover {{ opacity: 0.92; }}
         .btn--purple {{
-            background: linear-gradient(135deg, #9333ea, #6366f1);
-            color: #ffffff;
-            border-color: #a855f7;
+            background: var(--purple-text);
+            color: #FFFFFF;
+            border-color: var(--purple-text);
         }}
-        .btn--purple:hover {{ filter: brightness(1.08); }}
+        .btn--purple:hover {{ opacity: 0.92; }}
+        html[data-theme="dark"] .btn--success,
+        html[data-theme="dark"] .btn--purple {{ color: #090D16; }}
         .btn--danger {{
             background: var(--err-bg);
             color: var(--err-text);
             border-color: var(--err-border);
         }}
-        .btn--danger:hover {{ background: rgba(239, 68, 68, 0.25); }}
+        .btn--danger:hover {{ opacity: 0.9; }}
         .btn--orange-soft {{
-            background: rgba(249, 115, 22, 0.16);
-            color: #fdba74;
-            border-color: rgba(249, 115, 22, 0.4);
+            background: var(--brand-soft-bg);
+            color: var(--brand-soft-text);
+            border-color: var(--brand-soft-border);
         }}
-        .btn--orange-soft:hover {{ background: rgba(249, 115, 22, 0.28); }}
-        .btn--sm {{ padding: 0.38rem 0.75rem; font-size: 0.74rem; border-radius: var(--radius-sm); }}
+        .btn--orange-soft:hover {{ border-color: var(--brand-primary); }}
+        .btn--sm {{ min-height: 34px; padding: 0.35rem 0.78rem; font-size: 0.76rem; border-radius: var(--radius-sm); }}
         .btn--block {{ width: 100%; }}
         .row-actions {{ display: flex; align-items: center; gap: 0.45rem; flex-wrap: nowrap; }}
 
@@ -3361,26 +3662,25 @@ async fn handle_dashboard(
             overflow-x: auto;
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-md);
-            background: rgba(10, 16, 31, 0.45);
+            background: var(--bg-surface);
         }}
         .card--table .table-wrap {{
             border: none;
             border-radius: 0;
-            background: transparent;
         }}
         .data-table {{
             width: 100%;
             border-collapse: collapse;
             text-align: left;
-            font-size: 0.8rem;
+            font-size: 0.82rem;
         }}
         .data-table thead {{
-            background: var(--bg-inset);
+            background: var(--bg-table-head);
             border-bottom: 1px solid var(--border-subtle);
         }}
         .data-table th {{
-            padding: 0.78rem 0.95rem;
-            font-size: 0.7rem;
+            padding: 0.82rem 1rem;
+            font-size: 0.72rem;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.05em;
@@ -3388,51 +3688,52 @@ async fn handle_dashboard(
             white-space: nowrap;
         }}
         .data-table td {{
-            padding: 0.78rem 0.95rem;
-            border-bottom: 1px solid rgba(148, 163, 184, 0.09);
+            padding: 0.82rem 1rem;
+            border-bottom: 1px solid var(--border-subtle);
             vertical-align: middle;
         }}
-        .data-table tbody tr:hover {{ background: rgba(30, 41, 59, 0.42); }}
+        .data-table tbody tr:hover {{ background: var(--bg-table-hover); }}
+        .data-table tbody tr:last-child td {{ border-bottom: none; }}
         .cell-strong {{ font-weight: 600; color: var(--text-primary); }}
-        .cell-sub {{ font-size: 0.72rem; color: var(--text-muted); margin-top: 0.2rem; }}
-        .cell-muted {{ color: var(--text-muted); font-size: 0.75rem; }}
-        .table-link {{ color: #7dd3fc; font-weight: 600; }}
+        .cell-sub {{ font-size: 0.76rem; color: var(--text-muted); margin-top: 0.22rem; }}
+        .cell-muted {{ color: var(--text-muted); font-size: 0.78rem; }}
+        .table-link {{ color: var(--link-text); font-weight: 600; }}
         .table-link:hover {{ text-decoration: underline; }}
-        .table-link--amber {{ color: #fbbf24; }}
+        .table-link--amber {{ color: var(--brand-primary); font-weight: 700; }}
         .truncate-url {{
-            max-width: 240px;
+            max-width: 260px;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }}
         .empty-cell {{
-            padding: 2rem 1rem !important;
+            padding: 2.25rem 1rem !important;
             text-align: center;
             color: var(--text-muted);
-            font-size: 0.82rem;
+            font-size: 0.84rem;
         }}
 
         /* Cloudflare Details */
         .cf-details {{
-            background: var(--bg-inset);
+            background: var(--bg-elevated);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-md);
-            padding: 0.75rem 1rem;
+            padding: 0.78rem 1rem;
         }}
         .cf-summary {{
             cursor: pointer;
-            font-size: 0.8rem;
-            font-weight: 600;
-            color: #fdba74;
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: var(--brand-soft-text);
         }}
         .cf-body {{
-            margin-top: 0.75rem;
-            font-size: 0.76rem;
+            margin-top: 0.78rem;
+            font-size: 0.8rem;
             color: var(--text-secondary);
             line-height: 1.55;
             display: flex;
             flex-direction: column;
-            gap: 0.45rem;
+            gap: 0.5rem;
         }}
         .cf-steps {{
             margin: 0.25rem 0 0 1.25rem;
@@ -3442,430 +3743,533 @@ async fn handle_dashboard(
             gap: 0.35rem;
         }}
 
-        /* Scrollbar & Responsive */
-        ::-webkit-scrollbar {{ width: 6px; height: 6px; }}
+        /* Scrollbar & Responsive Collapse */
+        ::-webkit-scrollbar {{ width: 7px; height: 7px; }}
         ::-webkit-scrollbar-track {{ background: var(--bg-base); }}
-        ::-webkit-scrollbar-thumb {{ background: #334155; border-radius: 9999px; }}
+        ::-webkit-scrollbar-thumb {{ background: var(--border-strong); border-radius: 9999px; }}
         ::-webkit-scrollbar-thumb:hover {{ background: var(--brand-primary); }}
 
-        @media (max-width: 1080px) {{
+        @media (max-width: 1180px) {{
             .kpi-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
             .split-at, .grid-2, .grid-3 {{ grid-template-columns: minmax(0, 1fr); }}
         }}
-        @media (max-width: 820px) {{
-            .hide-sm {{ display: none !important; }}
-            .tab-bar {{ top: 69px; }}
+        @media (max-width: 960px) {{
+            .app-shell {{
+                grid-template-columns: minmax(0, 1fr);
+            }}
+            .sidebar {{
+                position: static;
+                height: auto;
+                border-right: none;
+                border-bottom: 1px solid var(--border-subtle);
+                padding: 0.9rem 1rem;
+                gap: 0.8rem;
+                overflow-y: visible;
+            }}
+            .brand {{
+                padding-bottom: 0.75rem;
+            }}
+            .sidebar__section-label {{ display: none; }}
+            .tab-nav {{
+                flex-direction: row;
+                overflow-x: auto;
+                padding-bottom: 0.2rem;
+            }}
+            .tab-btn {{
+                width: auto;
+                flex: 0 0 auto;
+                padding: 0.5rem 0.85rem;
+            }}
+            .tab-btn.active {{
+                box-shadow: none;
+            }}
+            .sidebar__footer {{
+                display: none;
+            }}
+            .topbar {{
+                padding: 0.75rem 1rem;
+            }}
         }}
-        @media (max-width: 600px) {{
+        @media (max-width: 640px) {{
             .kpi-grid, .form-grid-2 {{ grid-template-columns: minmax(0, 1fr); }}
-            .admin-main {{ padding: 1.15rem 1rem 2rem; }}
-            .admin-header__inner, .tab-nav {{ padding-left: 1rem; padding-right: 1rem; }}
+            .admin-main {{ padding: 1rem; }}
+            .hide-sm {{ display: none !important; }}
+            .social-meta {{ align-items: flex-start; text-align: left; min-width: 0; }}
+        }}
+        @media (prefers-reduced-motion: reduce) {{
+            *, *::before, *::after {{ transition: none !important; animation: none !important; }}
         }}
     </style>
 </head>
 <body>
-    <!-- Navbar Header -->
-    <header class="admin-header">
-        <div class="admin-header__inner">
+    <div class="app-shell">
+        <!-- Left Sidebar -->
+        <aside class="sidebar">
             <div class="brand">
                 <div class="brand__logo-wrap">
                     <img src="/assets/bot-logo.webp" alt="Logo Thế Giới Siêu Sale" class="brand__logo">
-                    <span class="brand__dot"></span>
+                    <span class="brand__dot" aria-hidden="true"></span>
                 </div>
                 <div>
                     <div class="brand__title-row">
                         <h1 class="brand__title">THẾ GIỚI SIÊU SALE</h1>
                         <span class="brand__tag">Console</span>
                     </div>
-                    <p class="brand__sub">Trung Tâm Điều Hành &amp; Quản Trị Hệ Thống Săn Sale Đa Sàn</p>
+                    <p class="brand__sub">Trung Tâm Điều Hành &amp; Săn Sale Đa Sàn</p>
                 </div>
             </div>
 
-            <div class="header-actions">
-                <a href="/" target="_blank" rel="noopener noreferrer" class="btn btn--secondary btn--sm hide-sm">
-                    <span>🌐 Xem Trang Đích Bot 3D ↗</span>
+            <div>
+                <div class="sidebar__section-label">Điều Hướng Hệ Thống</div>
+                <nav class="tab-nav" aria-label="Danh mục quản trị">
+                    <button type="button" onclick="switchTab('overview')" id="tab-btn-overview" class="tab-btn active" aria-current="page">
+                        <span class="tab-btn__icon" aria-hidden="true">📊</span>
+                        <span>Tổng Quan</span>
+                    </button>
+                    <button type="button" onclick="switchTab('platforms')" id="tab-btn-platforms" class="tab-btn">
+                        <span class="tab-btn__icon" aria-hidden="true">🔗</span>
+                        <span>Kết Nối Sàn &amp; API</span>
+                    </button>
+                    <button type="button" onclick="switchTab('vouchers')" id="tab-btn-vouchers" class="tab-btn">
+                        <span class="tab-btn__icon" aria-hidden="true">🎟️</span>
+                        <span>Kho Voucher Thị Trường</span>
+                    </button>
+                    <button type="button" onclick="switchTab('orders')" id="tab-btn-orders" class="tab-btn">
+                        <span class="tab-btn__icon" aria-hidden="true">🔔</span>
+                        <span>Báo Đơn &amp; Doanh Thu</span>
+                    </button>
+                </nav>
+            </div>
+
+            <div class="sidebar__footer">
+                <div class="bot-status-card">
+                    <div class="bot-status-card__row">
+                        <span class="cell-muted">Bot Telegram</span>
+                        <span style="display:inline-flex;align-items:center;gap:0.35rem;">
+                            <span class="pulse-dot" aria-hidden="true"></span>
+                            <a href="https://t.me/{}" target="_blank" rel="noopener noreferrer" class="bot-link">@{}</a>
+                        </span>
+                    </div>
+                    <div class="bot-status-card__row">
+                        <span class="cell-muted">Chế độ chạy</span>
+                        {}
+                    </div>
+                </div>
+                <a href="/" target="_blank" rel="noopener noreferrer" class="btn btn--secondary btn--sm btn--block">
+                    🌐 Xem Trang Đích Bot 3D ↗
                 </a>
-                <div class="status-pill hide-sm">
-                    <span class="pulse-dot"></span>
-                    <span>Admin: <strong>{}</strong></span>
-                    <span class="status-sep">|</span>
-                    <span>Bot: <a href="https://t.me/{}" target="_blank" rel="noopener noreferrer">@{}</a></span>
-                    <span class="status-sep">|</span>
+            </div>
+        </aside>
+
+        <!-- Main Column -->
+        <div class="shell-main">
+            <header class="topbar">
+                <div class="topbar__left">
+                    <h2 id="top-page-title" class="topbar__title">Tổng Quan Hệ Thống</h2>
+                    <p id="top-page-subtitle" class="topbar__sub">Theo dõi lưu lượng Bot Telegram, Kho Mã Thị Trường &amp; Social Harvester thời gian thực</p>
+                </div>
+                <div class="topbar__actions">
+                    <div class="admin-pill hide-sm">
+                        <span>Admin: <strong>{}</strong></span>
+                    </div>
+                    {}
+                    <button type="button" id="theme-toggle-btn" class="theme-btn" onclick="toggleTheme()" aria-label="Chuyển đổi giao diện Sáng/Tối">🌙 Tối</button>
+                </div>
+            </header>
+
+            <main class="admin-main">
+                {}
+                {}
+
+                <!-- TAB 1: TỔNG QUAN (OVERVIEW) -->
+                <div id="tab-pane-overview" class="tab-pane">
+                    <section class="kpi-grid" aria-label="Chỉ số tổng quan">
+                        <div class="kpi-card">
+                            <div>
+                                <div class="kpi-card__top">
+                                    <span>Người Dùng Telegram</span>
+                                    <span class="kpi-card__icon" aria-hidden="true">👥</span>
+                                </div>
+                                <div class="kpi-card__val">{}</div>
+                            </div>
+                            <div class="kpi-card__pill">✨ Khách thực tế đã tương tác bot</div>
+                        </div>
+
+                        <div class="kpi-card">
+                            <div>
+                                <div class="kpi-card__top">
+                                    <span>Tổng Lượt Dán Link</span>
+                                    <span class="kpi-card__icon" aria-hidden="true">⚡</span>
+                                </div>
+                                <div class="kpi-card__val kpi-card__val--amber">{}</div>
+                            </div>
+                            <div class="kpi-card__meta">
+                                <div class="kpi-row"><span>🟠 Shopee: <strong>{}</strong></span><span>🔵 Lazada: <strong>{}</strong></span></div>
+                                <div class="kpi-row"><span>🎵 TikTok: <strong>{}</strong></span><span>🔹 Tiki: <strong>{}</strong></span></div>
+                            </div>
+                        </div>
+
+                        <div class="kpi-card kpi-card--orange">
+                            <div>
+                                <div class="kpi-card__top">
+                                    <span>Kho Mã Thị Trường</span>
+                                    <span class="kpi-card__icon" aria-hidden="true">🔥</span>
+                                </div>
+                                <div class="kpi-card__val kpi-card__val--orange">{}</div>
+                            </div>
+                            <div class="kpi-card__meta">
+                                <div class="kpi-row"><span>🔥 Giảm ≥20%: <strong>{}</strong></span><span>💸 Tiền/Khác: <strong>{}</strong></span></div>
+                                <div class="kpi-row"><span>🟠 Shopee: <strong>{}</strong></span><span>🔹 Tiki: <strong>{}</strong></span><span>👑 Độc quyền: <strong>{}</strong></span></div>
+                            </div>
+                        </div>
+
+                        <div class="kpi-card kpi-card--green">
+                            <div>
+                                <div class="kpi-card__top">
+                                    <span>Tự Động Quét Nền</span>
+                                    <span class="kpi-card__icon" aria-hidden="true">⏱️</span>
+                                </div>
+                                <div class="kpi-card__val--green">Chu kỳ 60 giây / lần</div>
+                                <div class="muted-text">Lần cuối: <strong class="meta-time">{}</strong></div>
+                            </div>
+                            <div class="refresh-chip">
+                                ⚡ Tự làm mới Dashboard mỗi 30 giây
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Widget Shopee Social Harvester -->
+                    <section class="card card--social">
+                        <div class="social-left">
+                            <div class="social-icon" aria-hidden="true">🤖</div>
+                            <div>
+                                <div class="card-title">
+                                    <span>Shopee Social Harvester — Tự Động Nhặt Mã &amp; Chữ Ký FB / IG Reels</span>
+                                    {}
+                                </div>
+                                <p class="card-desc">
+                                    Hệ thống chạy tự động hoàn toàn ngay khi mở app &amp; tự quét lại mỗi 5 phút từ Telegram/Web deal công khai để nhặt <b>Mã Instagram / Facebook KOL</b> và chữ ký số (<code>channel_type=fb/ig</code>, tự nâng cấp <code>sm_sig_id</code> nếu phát hiện) — không cần thao tác tay!
+                                </p>
+                            </div>
+                        </div>
+                        {}
+                    </section>
+
+                    <!-- Lịch sử dán link gần nhất -->
+                    <section class="card card--table">
+                        <div class="card-head card-head--table">
+                            <div>
+                                <h2 class="card-title"><span>📋</span><span>Lịch Sử Khách Dán Link Săn Sale Gần Đây (50 lượt mới nhất)</span></h2>
+                                <p class="card-desc">Theo dõi thời gian thực các liên kết khách gửi vào bot Telegram</p>
+                            </div>
+                        </div>
+                        <div class="table-wrap">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Telegram ID</th>
+                                        <th>Sàn</th>
+                                        <th>Link Khách Gửi</th>
+                                        <th>Link Đầu Ra</th>
+                                        <th>Thời Gian</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="clicks-tbody">
+                                    {}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- TAB 2: KẾT NỐI SÀN & API (PLATFORMS) -->
+                <div id="tab-pane-platforms" class="tab-pane is-hidden">
+                    <section class="card">
+                        <div class="card-head">
+                            <div>
+                                <h2 class="card-title"><span>🚀</span><span>Kết Nối ACCESSTRADE API (Tự Động Đa Sàn)</span></h2>
+                                <p class="card-desc">
+                                    Bot tự động gọi API <code>v1/product_link/create</code> &amp; TikTok v2 Universal Deeplink, đồng thời kiểm tra HTTP 302/200 chống lỗi link 404/500.
+                                </p>
+                            </div>
+                            <div class="card-head-actions">
+                                {}
+                                <form method="POST" action="/admin/settings/accesstrade/sync" class="inline-form">
+                                    <button type="submit" class="btn btn--secondary btn--sm">🔄 Đồng Bộ Lại Chiến Dịch</button>
+                                </form>
+                            </div>
+                        </div>
+
+                        <div class="split-at">
+                            <div class="plat-panel">
+                                <div class="plat-panel__title">Trạng Thái Duyệt &amp; Chuẩn Hóa Link</div>
+                                <div>{}</div>
+                                <div class="inset-note">
+                                    <div><b>🛡️ Cơ chế bảo vệ Link Đầu Ra 100% Sống:</b></div>
+                                    <div>• <b>TikTok Shop:</b> Link v2 <code>tiktok.com/t/...</code> mở thẳng sản phẩm trên App.</div>
+                                    <div>• <b>Tiki &amp; Alibaba:</b> Tự dùng gói <b>TIKI CREATOR</b> &amp; <b>ALIBABA</b> đã duyệt + kiểm tra gateway <code>HTTP 200</code> trước khi gửi.</div>
+                                    <div>• <b>Shopee / Lazada:</b> Hỗ trợ song song Shopee Chính Chủ &amp; Deeplink dự phòng.</div>
+                                </div>
+                            </div>
+
+                            <form method="POST" action="/admin/settings/accesstrade" class="form-stack">
+                                <div>
+                                    <label class="field-label" for="at-api-token">ACCESSTRADE API Access Key (Token)</label>
+                                    <input id="at-api-token" type="password" name="api_token" placeholder="Dán API Access Key mới (hoặc để trống để giữ Token hiện tại)..." class="field-input field-input--mono">
+                                    <p class="muted-text">💡 Đã tích hợp sẵn API Token từ cấu hình hệ thống — tự động giữ kết nối khi khởi động lại.</p>
+                                </div>
+
+                                <div class="form-grid-2">
+                                    <div>
+                                        <label class="field-label" for="camp-shopee">Campaign ID Shopee (Tùy chọn)</label>
+                                        <input id="camp-shopee" type="text" name="campaign_shopee" value="{}" placeholder="Tự động nhận diện nếu để trống" class="field-input field-input--mono">
+                                    </div>
+                                    <div>
+                                        <label class="field-label" for="camp-lazada">Campaign ID Lazada (Tùy chọn)</label>
+                                        <input id="camp-lazada" type="text" name="campaign_lazada" value="{}" placeholder="Tự động nhận diện nếu để trống" class="field-input field-input--mono">
+                                    </div>
+                                    <div>
+                                        <label class="field-label" for="camp-tiki">Campaign ID Tiki (Tùy chọn)</label>
+                                        <input id="camp-tiki" type="text" name="campaign_tiki" value="{}" placeholder="Tự động nhận diện nếu để trống" class="field-input field-input--mono">
+                                    </div>
+                                    <div>
+                                        <label class="field-label" for="camp-tiktok">Campaign ID TikTok Shop (Tùy chọn)</label>
+                                        <input id="camp-tiktok" type="text" name="campaign_tiktok" value="{}" placeholder="Tự động nhận diện nếu để trống" class="field-input field-input--mono">
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <button type="submit" class="btn btn--primary">Lưu &amp; Kích Hoạt ACCESSTRADE API</button>
+                                </div>
+                            </form>
+                        </div>
+                    </section>
+
+                    <!-- Card Shopee Chính Chủ & Bọc Link -->
+                    {}
+
+                    <!-- Cấu hình Link Tiếp Thị Dự Phòng (Deeplink Template) -->
+                    <section class="card">
+                        <div>
+                            <h2 class="card-title"><span>🔗</span><span>Cấu Hình Deeplink Dự Phòng (Nếu Chưa Dùng API Token)</span></h2>
+                            <p class="card-desc">
+                                Nếu chiến dịch trên API chưa duyệt, hệ thống sẽ kiểm tra mẫu link dự phòng này. Nếu để trống, bot tự động trả về link sản phẩm sạch để khách mở App mua hàng không bị lỗi 404.
+                            </p>
+                        </div>
+                        <form method="POST" action="/admin/settings/affiliate" class="form-stack">
+                            <div>
+                                <label class="field-label" for="aff-template">Mẫu Deeplink Template</label>
+                                <input id="aff-template" type="text" name="template" value="{}" placeholder="Ví dụ: https://go.isclix.com/deep_link/PUB_ID/CAMPAIGN_ID?url={{CLEAN_URL}}&amp;utm_source=facebook&amp;sub1={{USER_ID}}" class="field-input field-input--mono">
+                            </div>
+                            <div>
+                                <button type="submit" class="btn btn--secondary">Lưu Deeplink Dự Phòng</button>
+                            </div>
+                        </form>
+                    </section>
+                </div>
+
+                <!-- TAB 3: KHO VOUCHER THỊ TRƯỜNG & ĐỘC QUYỀN (VOUCHERS) -->
+                <div id="tab-pane-vouchers" class="tab-pane is-hidden">
+                    <section class="card">
+                        <div class="card-head">
+                            <div>
+                                <h2 class="card-title">
+                                    <span>🔥</span>
+                                    <span>Kho Mã Giảm Giá Toàn Thị Trường (Cập Nhật Mỗi 60 Giây)</span>
+                                    <span class="badge badge--orange">{} mã đang sẵn ({} mã &gt;=20%)</span>
+                                </h2>
+                                <p class="card-desc">
+                                    Quét từ hệ thống ACCESSTRADE (mã %, giảm tiền K/VNĐ, mã hot, coupon Tiki/Shopee/Lazada/TikTok). Lần quét gần nhất: <strong class="ok-strong">{}</strong>.
+                                </p>
+                            </div>
+                            <form method="POST" action="/admin/vouchers/sync" class="inline-form">
+                                <button type="submit" class="btn btn--orange-soft">🔄 Quét Sâu Toàn Bộ Ngay</button>
+                            </form>
+                        </div>
+
+                        <form method="GET" action="/admin" class="filter-bar">
+                            <input type="text" name="q" value="{}" aria-label="Tìm kiếm mã giảm giá" placeholder="Tìm tên shop, mã code, mức giảm (VD: 35%, LANGXDKKP, Tiki)..." class="field-input grow-field">
+                            <select name="plat" aria-label="Lọc theo sàn hoặc mức giảm" class="field-input">
+                                <option value="all" {}>🌟 Tất Cả Sàn &amp; Loại</option>
+                                <option value="pct20" {}>🔥 Giảm Sâu 20% - 35%+</option>
+                                <option value="other" {}>💸 Giảm Tiền K/VNĐ &amp; Khác</option>
+                                <option value="Shopee" {}>🟠 Chỉ Shopee</option>
+                                <option value="Tiki" {}>🔹 Chỉ Tiki</option>
+                            </select>
+                            <button type="submit" class="btn btn--secondary btn--sm">🔍 Lọc Mã</button>
+                            <span class="cell-muted">Hiển thị <strong class="primary-strong">{}</strong> / <strong>{}</strong> mã khớp</span>
+                        </form>
+
+                        <div class="table-wrap">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Mức Giảm</th>
+                                        <th>Sàn</th>
+                                        <th>Mã Code</th>
+                                        <th>Gian Hàng &amp; Điều Kiện Áp Mã</th>
+                                        <th>HSD</th>
+                                        <th>Link Áp Mã</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section class="card card--purple">
+                        <div class="card-head">
+                            <div>
+                                <h2 class="card-title">
+                                    <span>👑</span>
+                                    <span>Kho Mã Độc Quyền Hợp Tác (Cấp Riêng AM / MCN / Nhãn Hàng)</span>
+                                    <span class="badge badge--purple">{} mã đã lưu</span>
+                                </h2>
+                                <p class="card-desc">
+                                    Dán hàng loạt mã độc quyền nhận được từ Account Manager ACCESSTRADE (MCN / Super Hoa Hồng) hoặc hợp tác trực tiếp với Shop. Các mã này luôn được <b>ưu tiên hàng đầu</b> trên Telegram Bot!
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="grid-2">
+                            <form method="POST" action="/admin/deals/import" class="subpanel">
+                                <div class="subpanel__title subpanel__title--purple">⚡ Nhập Nhanh Hàng Loạt (Hỗ trợ dấu | hoặc copy thẳng từ Excel/Google Sheets)</div>
+                                <p class="card-desc" style="margin: 0;">
+                                    Mỗi dòng 1 mã theo thứ tự: <code>Sàn | Tên/Shop | Mã Code | Mức giảm | Link áp mã | Đơn tối thiểu</code>
+                                </p>
+                                <textarea name="bulk_lines" rows="5" required aria-label="Danh sách mã độc quyền nhập hàng loạt" placeholder="Shopee | Deal Độc Quyền MCN 30% | ATVIP30 | Giảm 30% tối đa 100k | https://shopee.vn/search?... | 200000" class="code-textarea"></textarea>
+                                <div>
+                                    <button type="submit" class="btn btn--purple">📥 Nhập Danh Sách Mã Độc Quyền</button>
+                                </div>
+                            </form>
+
+                            <form method="POST" action="/admin/deals/add" class="subpanel">
+                                <div class="subpanel__title">➕ Thêm Lẻ 1 Mã Độc Quyền</div>
+                                <div class="form-grid-2">
+                                    <select name="platform" aria-label="Chọn sàn" class="field-input">
+                                        <option value="Shopee">Shopee</option>
+                                        <option value="TikTok Shop">TikTok Shop</option>
+                                        <option value="Lazada">Lazada</option>
+                                        <option value="Tiki">Tiki</option>
+                                        <option value="Alibaba">Alibaba</option>
+                                    </select>
+                                    <input type="text" name="coupon_code" required placeholder="Mã Code (VD: ATVIP35)" class="field-input field-input--mono">
+                                    <input type="text" name="title" required placeholder="Tên Shop / Chương trình" class="field-input">
+                                    <input type="text" name="discount_desc" required placeholder="Mức giảm (VD: Giảm 35% tối đa 120k)" class="field-input">
+                                    <input type="url" name="deal_url" required placeholder="Link áp mã (https://...)" class="field-input field-input--mono">
+                                    <input type="number" name="min_spend" min="0" step="1000" value="0" placeholder="Đơn tối thiểu (VNĐ)" class="field-input field-input--mono">
+                                </div>
+                                <label class="check-row">
+                                    <input type="checkbox" name="is_exclusive" value="1" checked>
+                                    <span>Đánh dấu là 👑 Mã Độc Quyền Hợp Tác (Ưu tiên hiển thị đầu tiên)</span>
+                                </label>
+                                <div>
+                                    <button type="submit" class="btn btn--secondary">💾 Lưu Mã Độc Quyền</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <div class="table-wrap">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Loại</th>
+                                        <th>Sàn</th>
+                                        <th>Tên &amp; Mô Tả</th>
+                                        <th>Mã Code</th>
+                                        <th>Trạng Thái</th>
+                                        <th>Hành Động</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- TAB 4: BÁO ĐƠN & DOANH THU (ORDERS) -->
+                <div id="tab-pane-orders" class="tab-pane is-hidden">
                     {}
                 </div>
-                {}
-            </div>
-        </div>
-    </header>
+            </main>
 
-    <!-- Sub-Navbar / Tab Navigation -->
-    <div class="tab-bar">
-        <div class="tab-nav">
-            <button type="button" onclick="switchTab('overview')" id="tab-btn-overview" class="tab-btn active">
-                <span>📊</span>
-                <span>Tổng Quan</span>
-            </button>
-            <button type="button" onclick="switchTab('platforms')" id="tab-btn-platforms" class="tab-btn">
-                <span>🔗</span>
-                <span>Kết Nối Sàn &amp; API</span>
-            </button>
-            <button type="button" onclick="switchTab('vouchers')" id="tab-btn-vouchers" class="tab-btn">
-                <span>🎟️</span>
-                <span>Kho Voucher Thị Trường</span>
-            </button>
-            <button type="button" onclick="switchTab('orders')" id="tab-btn-orders" class="tab-btn">
-                <span>🔔</span>
-                <span>Báo Đơn &amp; Doanh Thu</span>
-            </button>
+            <footer class="admin-footer">
+                Thế Giới Siêu Sale Affiliate System · Bản Quyền 2026 · Vận hành bảo mật trên Rust + LibSQL
+            </footer>
         </div>
     </div>
 
-    <!-- Main Content Panes -->
-    <main class="admin-main">
-        {}
-        {}
-
-        <!-- TAB 1: TỔNG QUAN (OVERVIEW) -->
-        <div id="tab-pane-overview" class="tab-pane">
-            <!-- 4 Thẻ KPI Thống Kê Hiện Đại -->
-            <section class="kpi-grid">
-                <div class="kpi-card">
-                    <div>
-                        <div class="kpi-card__top">
-                            <span>Người Dùng Telegram</span>
-                            <span class="kpi-card__icon">👥</span>
-                        </div>
-                        <div class="kpi-card__val">{}</div>
-                    </div>
-                    <div class="kpi-card__pill">✨ Khách thực tế đã tương tác bot</div>
-                </div>
-
-                <div class="kpi-card">
-                    <div>
-                        <div class="kpi-card__top">
-                            <span>Tổng Lượt Dán Link</span>
-                            <span class="kpi-card__icon">⚡</span>
-                        </div>
-                        <div class="kpi-card__val kpi-card__val--amber">{}</div>
-                    </div>
-                    <div class="kpi-card__meta">
-                        <div class="kpi-row"><span>🟠 Shopee: <strong>{}</strong></span><span>🔵 Lazada: <strong>{}</strong></span></div>
-                        <div class="kpi-row"><span>🎵 TikTok: <strong>{}</strong></span><span>🔹 Tiki: <strong>{}</strong></span></div>
-                    </div>
-                </div>
-
-                <div class="kpi-card kpi-card--orange">
-                    <div>
-                        <div class="kpi-card__top">
-                            <span>Kho Mã Thị Trường</span>
-                            <span class="kpi-card__icon">🔥</span>
-                        </div>
-                        <div class="kpi-card__val kpi-card__val--orange">{}</div>
-                    </div>
-                    <div class="kpi-card__meta">
-                        <div class="kpi-row"><span>🔥 Giảm ≥20%: <strong>{}</strong></span><span>💸 Tiền/Khác: <strong>{}</strong></span></div>
-                        <div class="kpi-row"><span>🟠 Shopee: <strong>{}</strong></span><span>🔹 Tiki: <strong>{}</strong></span><span>👑 Độc quyền: <strong>{}</strong></span></div>
-                    </div>
-                </div>
-
-                <div class="kpi-card kpi-card--green">
-                    <div>
-                        <div class="kpi-card__top">
-                            <span>Tự Động Quét Nền</span>
-                            <span class="kpi-card__icon">⏱️</span>
-                        </div>
-                        <div class="kpi-card__val--green">Chu kỳ 60 giây / lần</div>
-                        <div class="muted-text">Lần cuối: <strong style="color: var(--text-primary); font-family: 'JetBrains Mono', monospace;">{}</strong></div>
-                    </div>
-                    <div style="font-size:0.78rem;font-weight:700;color:#7dd3fc;background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.28);border-radius:0.55rem;padding:0.45rem 0.65rem;text-align:center;">
-                        ⚡ Tự làm mới Dashboard mỗi 30 giây
-                    </div>
-                </div>
-            </section>
-
-            <!-- Widget Shopee Social Harvester -->
-            <section class="card card--social">
-                <div class="social-left">
-                    <div class="social-icon">🤖</div>
-                    <div>
-                        <div class="card-title">
-                            <span>Shopee Social Harvester — Tự Động Nhặt Mã &amp; Chữ Ký FB / IG Reels</span>
-                            {}
-                        </div>
-                        <p class="card-desc">
-                            Hệ thống chạy tự động hoàn toàn ngay khi mở app &amp; tự quét lại mỗi 5 phút từ Telegram/Web deal công khai để nhặt <b>Mã Instagram / Facebook KOL</b> và chữ ký số (<code>channel_type=fb/ig</code>, tự nâng cấp <code>sm_sig_id</code> nếu phát hiện) — không cần thao tác tay!
-                        </p>
-                    </div>
-                </div>
-                {}
-            </section>
-
-            <!-- Lịch sử dán link gần nhất -->
-            <section class="card card--table">
-                <div class="card-head card-head--table">
-                    <div>
-                        <h2 class="card-title"><span>📋</span><span>Lịch Sử Khách Dán Link Săn Sale Gần Đây (50 lượt mới nhất)</span></h2>
-                        <p class="card-desc">Theo dõi thời gian thực các liên kết khách gửi vào bot Telegram</p>
-                    </div>
-                </div>
-                <div class="table-wrap">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Telegram ID</th>
-                                <th>Sàn</th>
-                                <th>Link Khách Gửi</th>
-                                <th>Link Đầu Ra</th>
-                                <th>Thời Gian</th>
-                            </tr>
-                        </thead>
-                        <tbody id="clicks-tbody">
-                            {}
-                        </tbody>
-                    </table>
-                </div>
-            </section>
-        </div>
-
-        <!-- TAB 2: KẾT NỐI SÀN & API (PLATFORMS) -->
-        <div id="tab-pane-platforms" class="tab-pane is-hidden">
-            <!-- Kết nối ACCESSTRADE API Full 4 Sàn -->
-            <section class="card">
-                <div class="card-head">
-                    <div>
-                        <h2 class="card-title"><span>🚀</span><span>Kết Nối ACCESSTRADE API (Tự Động Đa Sàn)</span></h2>
-                        <p class="card-desc">
-                            Bot tự động gọi API <code>v1/product_link/create</code> &amp; TikTok v2 Universal Deeplink, đồng thời kiểm tra HTTP 302/200 chống lỗi link 404/500.
-                        </p>
-                    </div>
-                    <div class="card-head-actions">
-                        {}
-                        <form method="POST" action="/admin/settings/accesstrade/sync" style="margin: 0;">
-                            <button type="submit" class="btn btn--secondary btn--sm">🔄 Đồng Bộ Lại Chiến Dịch</button>
-                        </form>
-                    </div>
-                </div>
-
-                <div class="split-at">
-                    <div class="plat-panel">
-                        <div class="plat-panel__title">Trạng Thái Duyệt &amp; Chuẩn Hóa Link</div>
-                        <div>{}</div>
-                        <div class="inset-note">
-                            <div><b>🛡️ Cơ chế bảo vệ Link Đầu Ra 100% Sống:</b></div>
-                            <div>• <b>TikTok Shop:</b> Link v2 <code>tiktok.com/t/...</code> mở thẳng sản phẩm trên App.</div>
-                            <div>• <b>Tiki &amp; Alibaba:</b> Tự dùng gói <b>TIKI CREATOR</b> &amp; <b>ALIBABA</b> đã duyệt + kiểm tra gateway <code>HTTP 200</code> trước khi gửi.</div>
-                            <div>• <b>Shopee / Lazada:</b> Hỗ trợ song song Shopee Chính Chủ &amp; Deeplink dự phòng.</div>
-                        </div>
-                    </div>
-
-                    <form method="POST" action="/admin/settings/accesstrade" class="form-stack">
-                        <div>
-                            <label class="field-label">ACCESSTRADE API Access Key (Token)</label>
-                            <input type="password" name="api_token" placeholder="Dán API Access Key mới (hoặc để trống để giữ Token hiện tại)..." class="field-input field-input--mono">
-                            <p class="muted-text">💡 Đã tích hợp sẵn API Token từ cấu hình hệ thống — tự động giữ kết nối khi khởi động lại.</p>
-                        </div>
-
-                        <div class="form-grid-2">
-                            <div>
-                                <label class="field-label">Campaign ID Shopee (Tùy chọn)</label>
-                                <input type="text" name="campaign_shopee" value="{}" placeholder="Tự động nhận diện nếu để trống" class="field-input field-input--mono">
-                            </div>
-                            <div>
-                                <label class="field-label">Campaign ID Lazada (Tùy chọn)</label>
-                                <input type="text" name="campaign_lazada" value="{}" placeholder="Tự động nhận diện nếu để trống" class="field-input field-input--mono">
-                            </div>
-                            <div>
-                                <label class="field-label">Campaign ID Tiki (Tùy chọn)</label>
-                                <input type="text" name="campaign_tiki" value="{}" placeholder="Tự động nhận diện nếu để trống" class="field-input field-input--mono">
-                            </div>
-                            <div>
-                                <label class="field-label">Campaign ID TikTok Shop (Tùy chọn)</label>
-                                <input type="text" name="campaign_tiktok" value="{}" placeholder="Tự động nhận diện nếu để trống" class="field-input field-input--mono">
-                            </div>
-                        </div>
-
-                        <div>
-                            <button type="submit" class="btn btn--primary">Lưu &amp; Kích Hoạt ACCESSTRADE API</button>
-                        </div>
-                    </form>
-                </div>
-            </section>
-
-            <!-- Card Shopee Chính Chủ & Bọc Link -->
-            {}
-
-            <!-- Cấu hình Link Tiếp Thị Dự Phòng (Deeplink Template) -->
-            <section class="card">
-                <div>
-                    <h2 class="card-title"><span>🔗</span><span>Cấu Hình Deeplink Dự Phòng (Nếu Chưa Dùng API Token)</span></h2>
-                    <p class="card-desc">
-                        Nếu chiến dịch trên API chưa duyệt, hệ thống sẽ kiểm tra mẫu link dự phòng này. Nếu để trống, bot tự động trả về link sản phẩm sạch để khách mở App mua hàng không bị lỗi 404.
-                    </p>
-                </div>
-                <form method="POST" action="/admin/settings/affiliate" class="form-stack">
-                    <div>
-                        <label class="field-label">Mẫu Deeplink Template</label>
-                        <input type="text" name="template" value="{}" placeholder="Ví dụ: https://go.isclix.com/deep_link/PUB_ID/CAMPAIGN_ID?url={{CLEAN_URL}}&amp;utm_source=facebook&amp;sub1={{USER_ID}}" class="field-input field-input--mono">
-                    </div>
-                    <div>
-                        <button type="submit" class="btn btn--secondary">Lưu Deeplink Dự Phòng</button>
-                    </div>
-                </form>
-            </section>
-        </div>
-
-        <!-- TAB 3: KHO VOUCHER THỊ TRƯỜNG & ĐỘC QUYỀN (VOUCHERS) -->
-        <div id="tab-pane-vouchers" class="tab-pane is-hidden">
-            <!-- Kho Mã Giảm Giá Toàn Thị Trường -->
-            <section class="card">
-                <div class="card-head">
-                    <div>
-                        <h2 class="card-title">
-                            <span>🔥</span>
-                            <span>Kho Mã Giảm Giá Toàn Thị Trường (Cập Nhật Mỗi 60 Giây)</span>
-                            <span class="badge badge--orange">{} mã đang sẵn ({} mã &gt;=20%)</span>
-                        </h2>
-                        <p class="card-desc">
-                            Quét từ hệ thống ACCESSTRADE (mã %, giảm tiền K/VNĐ, mã hot, coupon Tiki/Shopee/Lazada/TikTok). Lần quét gần nhất: <strong style="color: var(--ok-text);">{}</strong>.
-                        </p>
-                    </div>
-                    <form method="POST" action="/admin/vouchers/sync" style="margin: 0;">
-                        <button type="submit" class="btn btn--orange-soft">🔄 Quét Sâu Toàn Bộ Ngay</button>
-                    </form>
-                </div>
-
-                <!-- Thanh tìm kiếm & lọc trên Web -->
-                <form method="GET" action="/admin" class="filter-bar">
-                    <input type="text" name="q" value="{}" placeholder="Tìm tên shop, mã code, mức giảm (VD: 35%, LANGXDKKP, Tiki)..." class="field-input grow-field">
-                    <select name="plat" class="field-input">
-                        <option value="all" {}>🌟 Tất Cả Sàn &amp; Loại</option>
-                        <option value="pct20" {}>🔥 Giảm Sâu 20% - 35%+</option>
-                        <option value="other" {}>💸 Giảm Tiền K/VNĐ &amp; Khác</option>
-                        <option value="Shopee" {}>🟠 Chỉ Shopee</option>
-                        <option value="Tiki" {}>🔹 Chỉ Tiki</option>
-                    </select>
-                    <button type="submit" class="btn btn--secondary btn--sm">🔍 Lọc Mã</button>
-                    <span class="cell-muted">Hiển thị <strong style="color: var(--text-primary);">{}</strong> / <strong>{}</strong> mã khớp</span>
-                </form>
-
-                <div class="table-wrap">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Mức Giảm</th>
-                                <th>Sàn</th>
-                                <th>Mã Code</th>
-                                <th>Gian Hàng &amp; Điều Kiện Áp Mã</th>
-                                <th>HSD</th>
-                                <th>Link Áp Mã</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {}
-                        </tbody>
-                    </table>
-                </div>
-            </section>
-
-            <!-- Kho Mã Độc Quyền Hợp Tác (Cấp Riêng AM / MCN / Shop) -->
-            <section class="card card--purple">
-                <div class="card-head">
-                    <div>
-                        <h2 class="card-title">
-                            <span>👑</span>
-                            <span>Kho Mã Độc Quyền Hợp Tác (Cấp Riêng AM / MCN / Nhãn Hàng)</span>
-                            <span class="badge badge--purple">{} mã đã lưu</span>
-                        </h2>
-                        <p class="card-desc">
-                            Dán hàng loạt mã độc quyền nhận được từ Account Manager ACCESSTRADE (MCN / Super Hoa Hồng) hoặc hợp tác trực tiếp với Shop. Các mã này luôn được <b>ưu tiên hàng đầu</b> trên Telegram Bot!
-                        </p>
-                    </div>
-                </div>
-
-                <div class="grid-2">
-                    <!-- Nhập hàng loạt -->
-                    <form method="POST" action="/admin/deals/import" class="subpanel">
-                        <div class="subpanel__title" style="color: var(--purple-text);">⚡ Nhập Nhanh Hàng Loạt (Hỗ trợ dấu | hoặc copy thẳng từ Excel/Google Sheets)</div>
-                        <p class="card-desc" style="margin: 0;">
-                            Mỗi dòng 1 mã theo thứ tự: <code>Sàn | Tên/Shop | Mã Code | Mức giảm | Link áp mã | Đơn tối thiểu</code>
-                        </p>
-                        <textarea name="bulk_lines" rows="5" required placeholder="Shopee | Deal Độc Quyền MCN 30% | ATVIP30 | Giảm 30% tối đa 100k | https://shopee.vn/search?... | 200000" class="code-textarea"></textarea>
-                        <div>
-                            <button type="submit" class="btn btn--purple">📥 Nhập Danh Sách Mã Độc Quyền</button>
-                        </div>
-                    </form>
-
-                    <!-- Thêm lẻ 1 mã -->
-                    <form method="POST" action="/admin/deals/add" class="subpanel">
-                        <div class="subpanel__title">➕ Thêm Lẻ 1 Mã Độc Quyền</div>
-                        <div class="form-grid-2">
-                            <select name="platform" class="field-input">
-                                <option value="Shopee">Shopee</option>
-                                <option value="TikTok Shop">TikTok Shop</option>
-                                <option value="Lazada">Lazada</option>
-                                <option value="Tiki">Tiki</option>
-                                <option value="Alibaba">Alibaba</option>
-                            </select>
-                            <input type="text" name="coupon_code" required placeholder="Mã Code (VD: ATVIP35)" class="field-input field-input--mono">
-                            <input type="text" name="title" required placeholder="Tên Shop / Chương trình" class="field-input">
-                            <input type="text" name="discount_desc" required placeholder="Mức giảm (VD: Giảm 35% tối đa 120k)" class="field-input">
-                            <input type="url" name="deal_url" required placeholder="Link áp mã (https://...)" class="field-input field-input--mono">
-                            <input type="number" name="min_spend" min="0" step="1000" value="0" placeholder="Đơn tối thiểu (VNĐ)" class="field-input field-input--mono">
-                        </div>
-                        <label class="check-row">
-                            <input type="checkbox" name="is_exclusive" value="1" checked>
-                            <span>Đánh dấu là 👑 Mã Độc Quyền Hợp Tác (Ưu tiên hiển thị đầu tiên)</span>
-                        </label>
-                        <div>
-                            <button type="submit" class="btn btn--secondary">💾 Lưu Mã Độc Quyền</button>
-                        </div>
-                    </form>
-                </div>
-
-                <div class="table-wrap">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Loại</th>
-                                <th>Sàn</th>
-                                <th>Tên &amp; Mô Tả</th>
-                                <th>Mã Code</th>
-                                <th>Trạng Thái</th>
-                                <th>Hành Động</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {}
-                        </tbody>
-                    </table>
-                </div>
-            </section>
-        </div>
-
-        <!-- TAB 4: BÁO ĐƠN & DOANH THU (ORDERS) -->
-        <div id="tab-pane-orders" class="tab-pane is-hidden">
-            {}
-        </div>
-    </main>
-
-    <footer class="admin-footer">
-        Thế Giới Siêu Sale Affiliate System · Bản Quyền 2026 · Vận hành bảo mật trên Rust + LibSQL
-    </footer>
-
     <script>
+        const TAB_META = {{
+            overview: {{
+                title: 'Tổng Quan Hệ Thống',
+                sub: 'Theo dõi lưu lượng Bot Telegram, Kho Mã Thị Trường & Social Harvester thời gian thực'
+            }},
+            platforms: {{
+                title: 'Kết Nối Sàn & API',
+                sub: 'Cấu hình ACCESSTRADE đa sàn, Shopee Chính Chủ & Cloudflare Tunnel tự động'
+            }},
+            vouchers: {{
+                title: 'Kho Voucher Thị Trường',
+                sub: 'Tra cứu mã giảm giá quét tự động và quản lý Mã Độc Quyền Hợp Tác'
+            }},
+            orders: {{
+                title: 'Báo Đơn & Doanh Thu',
+                sub: 'Cài đặt thông báo Telegram Admin và đối soát hoa hồng đơn hàng'
+            }}
+        }};
+
+        function syncThemeButton() {{
+            const btn = document.getElementById('theme-toggle-btn');
+            if (!btn) return;
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            btn.textContent = isDark ? '☀️ Sáng' : '🌙 Tối';
+            btn.setAttribute('aria-pressed', isDark ? 'true' : 'false');
+        }}
+
+        function toggleTheme() {{
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const next = isDark ? 'light' : 'dark';
+            if (next === 'dark') {{
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }} else {{
+                document.documentElement.removeAttribute('data-theme');
+            }}
+            try {{ localStorage.setItem('dealx-theme', next); }} catch (e) {{}}
+            syncThemeButton();
+        }}
+
         function switchTab(tabId) {{
             document.querySelectorAll('.tab-pane').forEach(el => el.classList.add('is-hidden'));
-            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(btn => {{
+                btn.classList.remove('active');
+                btn.removeAttribute('aria-current');
+            }});
             const target = document.getElementById('tab-pane-' + tabId);
             const btn = document.getElementById('tab-btn-' + tabId);
             if (target) target.classList.remove('is-hidden');
-            if (btn) btn.classList.add('active');
+            if (btn) {{
+                btn.classList.add('active');
+                btn.setAttribute('aria-current', 'page');
+            }}
+            const meta = TAB_META[tabId];
+            if (meta) {{
+                const tEl = document.getElementById('top-page-title');
+                const sEl = document.getElementById('top-page-subtitle');
+                if (tEl) tEl.textContent = meta.title;
+                if (sEl) sEl.textContent = meta.sub;
+            }}
             try {{
                 history.replaceState(null, '', '#' + tabId);
             }} catch (e) {{}}
         }}
 
         window.addEventListener('DOMContentLoaded', () => {{
+            syncThemeButton();
             let hash = window.location.hash.replace('#', '');
             if (!['overview', 'platforms', 'vouchers', 'orders'].includes(hash)) {{
                 const urlParams = new URLSearchParams(window.location.search);
@@ -3910,10 +4314,10 @@ async fn handle_dashboard(
     <script src="/assets/home.js" defer></script>
 </body>
 </html>"#,
-        escape_html(&state.config.admin_username),
         escape_html(&state.config.bot_username),
         escape_html(&state.config.bot_username),
         bot_mode_badge,
+        escape_html(&state.config.admin_username),
         auth_action_html,
         notice_banner,
         persistence_banner,
@@ -4104,9 +4508,9 @@ fn render_shopee_card(
                 <div class="grid-2 divider-top">
                     <div class="form-stack">
                         <div>
-                            <label class="field-label">Bộ Tham Số Phiên IG/FB Reels Passthrough (<span style="color:#fdba74;">{}</span>)</label>
+                            <label class="field-label">Bộ Tham Số Phiên IG/FB Reels Passthrough (<span class="label-accent">{}</span>)</label>
                             <input type="password" name="shopee_social_params" placeholder="{}" class="field-input field-input--mono">
-                            <label class="check-row" style="margin-top:0.45rem;">
+                            <label class="check-row check-row--mt">
                                 <input type="checkbox" name="clear_social_params" value="1">
                                 <span>Xóa bộ tham số phiên IG/FB đang lưu</span>
                             </label>
@@ -4118,7 +4522,7 @@ fn render_shopee_card(
                             <input type="text" name="shortlink_base_url" value="{}" placeholder="Mặc định: tự động Quick Tunnel hoặc https://thegioisieusale.click (nhập off để tắt)" class="field-input field-input--mono">
                         </div>
                         <div>
-                            <label class="field-label">Cloudflare Named Tunnel Token (<span style="color:#7dd3fc;">{}</span>)</label>
+                            <label class="field-label">Cloudflare Named Tunnel Token (<span class="label-info">{}</span>)</label>
                             <input type="password" name="cloudflare_tunnel_token" placeholder="{}" class="field-input field-input--mono">
                             <label class="check-row" style="margin-top:0.45rem;">
                                 <input type="checkbox" name="clear_tunnel_token" value="1">
@@ -4329,7 +4733,7 @@ fn render_order_alerts_card(admin_telegram_id: &str, orders: &[TrackedOrder]) ->
                 <td class="font-mono cell-muted">{}</td>
                 <td><span class="{}">{}</span></td>
                 <td class="cell-strong">{}</td>
-                <td class="font-mono" style="color:#4ade80;font-weight:700;">{}</td>
+                <td class="font-mono comm-val">{}</td>
                 <td class="font-mono cell-muted">{}</td>
             </tr>"#,
             escape_html(&ord.platform),
@@ -5441,5 +5845,70 @@ DongLoiThieuCot | 123
 
         cloud_srv.abort();
         let _ = std::fs::remove_file(&cloud_db);
+    }
+
+    #[tokio::test]
+    async fn test_admin_ui_light_first_sidebar_and_theme_toggle() {
+        let test_db_path = format!("target/test_admin_ui_{}.db", uuid::Uuid::new_v4().simple());
+        let mut state = make_test_state(&test_db_path, None).await;
+        state.config.public_base_url = None;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = build_router(state).into_make_service_with_connect_info::<SocketAddr>();
+        let srv = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let client = reqwest::Client::new();
+        let base = format!("http://127.0.0.1:{}", addr.port());
+
+        let dash_resp = client.get(format!("{}/admin", base)).send().await.unwrap();
+        assert_eq!(dash_resp.status().as_u16(), 200);
+        let dash_html = dash_resp.text().await.unwrap();
+
+        assert!(dash_html.contains("--bg-base: #F4F6F9;"));
+        assert!(dash_html.contains(r#"html[data-theme="dark"]"#));
+        assert!(dash_html.contains(r#"<aside class="sidebar">"#));
+        assert!(dash_html.contains(r#"id="theme-toggle-btn""#));
+        assert!(dash_html.contains("toggleTheme()"));
+        assert!(dash_html.contains("Be Vietnam Pro"));
+        assert!(dash_html.contains("DOMParser"));
+        assert!(dash_html.contains("tab-pane-overview"));
+        assert!(dash_html.contains("tab-pane-platforms"));
+        assert!(dash_html.contains("tab-pane-vouchers"));
+        assert!(dash_html.contains("tab-pane-orders"));
+        assert!(dash_html.contains("PC Local (Miễn đăng nhập)"));
+        assert!(!dash_html.contains("#070b14"));
+        assert!(!dash_html.contains("rgba(88, 28, 135"));
+
+        srv.abort();
+        let _ = std::fs::remove_file(&test_db_path);
+
+        // Kiểm tra giao diện trang Login (ở chế độ Cloud chưa đăng nhập để không redirect thẳng vào /admin)
+        let login_db = format!("target/test_admin_login_ui_{}.db", uuid::Uuid::new_v4().simple());
+        let login_state = make_test_state(&login_db, None).await;
+        let login_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let login_addr = login_listener.local_addr().unwrap();
+        let login_app = build_router(login_state).into_make_service_with_connect_info::<SocketAddr>();
+        let login_srv = tokio::spawn(async move {
+            let _ = axum::serve(login_listener, login_app).await;
+        });
+
+        let login_resp = client
+            .get(format!("http://127.0.0.1:{}/admin/login", login_addr.port()))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(login_resp.status().as_u16(), 200);
+        let login_html = login_resp.text().await.unwrap();
+        assert!(login_html.contains("--bg-base: #F4F6F9;"));
+        assert!(login_html.contains(r#"id="login-theme-btn""#));
+        assert!(login_html.contains("dealx-theme"));
+        assert!(login_html.contains("Đăng Nhập Quản Trị"));
+        assert!(!login_html.contains("#070b14"));
+
+        login_srv.abort();
+        let _ = std::fs::remove_file(&login_db);
     }
 }
