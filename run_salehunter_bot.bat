@@ -13,14 +13,14 @@ if not exist .env (
     )
 )
 
-echo [1/2] Dang kiem tra va bien dich ban Release...
+echo [1/2] Dang kiem tra va bien dich ban Release (mat khoang 30-60 giay neu co sua code)...
 tasklist /FI "IMAGENAME eq salehunter_bot.exe" 2>nul | find /I "salehunter_bot.exe" >nul
 if %errorlevel% equ 0 (
     echo [CANH BAO] Phat hien salehunter_bot.exe cu dang chay nen khong the ghi de file .exe!
     echo            Vui long DONG cua so bot cu truoc roi nhan phim bat ky de tiep tuc...
     pause
 )
-cargo build --release --quiet
+cargo build --release
 if %errorlevel% neq 0 (
     echo [LOI] Khong the bien dich ma nguon Rust!
     pause
