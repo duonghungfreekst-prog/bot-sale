@@ -636,11 +636,33 @@ pub async fn handle_message(
                     _ => Vec::new(),
                 };
                 let mut portal_buttons = Vec::with_capacity(raw_portals.len());
+                let shopee_direct_aff = owned_aff
+                    .shopee_affiliate_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|id| crate::services::shopee_affiliate::is_valid_shopee_affiliate_id(id));
                 for (label, raw_portal_url) in raw_portals {
+                    let portal_target = if parsed.platform.as_str().eq_ignore_ascii_case("Shopee") {
+                        if let Some(aff_id) = shopee_direct_aff {
+                            let an_redir = crate::services::shopee_affiliate::build_direct_an_redir_link(
+                                raw_portal_url,
+                                aff_id,
+                                &parsed.sub_id,
+                            );
+                            crate::services::shopee_affiliate::append_social_params_to_shopee_link(
+                                &an_redir,
+                                owned_aff.shopee_social_params.as_deref(),
+                            )
+                        } else {
+                            raw_portal_url.to_string()
+                        }
+                    } else {
+                        raw_portal_url.to_string()
+                    };
                     let wrapped_portal = Repository::wrap_url_if_public(
                         &conn,
                         shortlink_base.as_deref(),
-                        raw_portal_url,
+                        &portal_target,
                         label,
                         parsed.platform.as_str(),
                     )

@@ -777,6 +777,7 @@ impl AccessTradeClient {
                 ("https://api.accesstrade.vn/v1/offers_informations/coupon?limit=50", 3),
                 ("https://api.accesstrade.vn/v1/offers_informations?status=1&is_hot=1&limit=50", 2),
                 ("https://api.accesstrade.vn/v1/offers_informations?status=1&scope=expiring&limit=50", 2),
+                ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=shopee.vn&limit=50", 3),
                 ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=tiki.vn&limit=50", 3),
                 ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=lazada.vn&limit=50", 2),
                 ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=tiktok.com&limit=50", 2),
@@ -786,6 +787,7 @@ impl AccessTradeClient {
             &[
                 ("https://api.accesstrade.vn/v1/offers_informations/coupon?limit=50", 1),
                 ("https://api.accesstrade.vn/v1/offers_informations?status=1&is_hot=1&limit=50", 1),
+                ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=shopee.vn&limit=50", 1),
                 ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=tiki.vn&limit=50", 1),
                 ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=lazada.vn&limit=50", 1),
                 ("https://api.accesstrade.vn/v1/offers_informations?status=1&domain=tiktok.com&limit=50", 1),
@@ -1708,7 +1710,13 @@ fn is_generic_platform_voucher_shop(shop_lower: &str, platform_lower: &str) -> b
             | "toàn sàn shopee"
             | "toàn sàn lazada"
             | "shopee"
+            | "shopee việt nam"
             | "shopee mall"
+            | "mã sàn shopee"
+            | "voucher xtra"
+            | "freeship xtra"
+            | "shopee video"
+            | "shopee live"
             | "lazada"
             | "lazmall"
             | "tiktok"
