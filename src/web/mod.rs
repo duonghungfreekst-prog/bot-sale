@@ -1649,79 +1649,93 @@ async fn handle_login_page(headers: HeaderMap, State(state): State<AppState>) ->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            background-color: #080c14;
-            background-image: radial-gradient(at 50% 0%, rgba(249, 115, 22, 0.15) 0px, transparent 60%);
+            background-color: #070b14;
+            background-image:
+                radial-gradient(circle at 50% 0%, rgba(249, 115, 22, 0.16), transparent 55%),
+                radial-gradient(circle at 10% 90%, rgba(56, 189, 248, 0.08), transparent 45%);
             font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             color: #f8fafc;
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 1rem;
+            padding: 1.25rem;
         }
-        .card-surface {
+        .login-card {
             background: #0f172a;
             border: 1px solid #1e293b;
-            box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7);
-            border-radius: 1.5rem;
+            box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.65);
+            border-radius: 1.35rem;
             width: 100%;
-            max-width: 28rem;
-            padding: 2.5rem;
+            max-width: 27rem;
+            padding: 2.25rem;
         }
-        img.login-logo {
-            width: 80px !important;
-            height: 80px !important;
-            min-width: 80px !important;
-            min-height: 80px !important;
-            max-width: 80px !important;
-            max-height: 80px !important;
-            border-radius: 9999px !important;
-            object-fit: cover !important;
-            display: block !important;
-            margin: 0 auto;
+        .login-head { text-align: center; margin-bottom: 1.75rem; }
+        .login-logo {
+            width: 80px; height: 80px; border-radius: 9999px; object-fit: cover; display: block;
+            margin: 0 auto 1rem; border: 2px solid #f97316;
+            box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.18), 0 12px 24px rgba(0, 0, 0, 0.45);
+        }
+        .login-title {
+            font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em;
+            background: linear-gradient(90deg, #fb923c, #fcd34d);
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+        }
+        .login-sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.35rem; font-weight: 500; }
+        .login-form { display: flex; flex-direction: column; gap: 1.15rem; }
+        .field-label {
+            display: block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.06em; color: #94a3b8; margin-bottom: 0.45rem;
+        }
+        .field-input {
+            width: 100%; padding: 0.78rem 1rem; background: #162033; border: 1px solid #293548;
+            border-radius: 0.75rem; color: #f8fafc; font-size: 0.9rem; font-family: inherit;
+            outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .field-input::placeholder { color: #64748b; }
+        .field-input:focus { border-color: #f97316; box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.2); }
+        .login-btn {
+            width: 100%; padding: 0.85rem 1rem; margin-top: 0.35rem;
+            background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%);
+            border: none; border-radius: 0.75rem; color: #070b14; font-weight: 800;
+            font-size: 0.9rem; font-family: inherit; cursor: pointer;
+            box-shadow: 0 8px 20px rgba(249, 115, 22, 0.28); transition: transform 0.12s, filter 0.15s;
+        }
+        .login-btn:hover { filter: brightness(1.06); }
+        .login-btn:active { transform: scale(0.98); }
+        .login-foot {
+            margin-top: 1.75rem; padding-top: 1.25rem; border-top: 1px solid #1e293b;
+            text-align: center; font-size: 0.75rem; color: #64748b;
         }
     </style>
 </head>
-<body class="flex items-center justify-center min-h-screen text-gray-100 p-4">
-    <div class="w-full max-w-md card-surface rounded-3xl p-8 sm:p-10">
-        <div class="text-center mb-8">
-            <div class="inline-block relative mb-4">
-                <img src="/assets/bot-logo.webp" alt="Logo Thế Giới Siêu Sale" style="width: 80px; height: 80px; min-width: 80px; min-height: 80px; max-width: 80px; max-height: 80px; border-radius: 9999px; object-fit: cover; display: block;" class="login-logo w-20 h-20 rounded-full border-2 border-orange-500/80 shadow-2xl object-cover ring-4 ring-orange-500/20 mx-auto">
-            </div>
-            <h1 class="text-2xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-orange-400 via-amber-300 to-yellow-400">THẾ GIỚI SIÊU SALE</h1>
-            <p class="text-xs text-gray-400 mt-1 font-medium">Cổng Quản Trị Hệ Thống Săn Sale Đa Sàn</p>
+<body>
+    <div class="login-card">
+        <div class="login-head">
+            <img src="/assets/bot-logo.webp" alt="Logo Thế Giới Siêu Sale" class="login-logo">
+            <h1 class="login-title">THẾ GIỚI SIÊU SALE</h1>
+            <p class="login-sub">Cổng Quản Trị Hệ Thống Săn Sale Đa Sàn</p>
         </div>
 
-        <form method="POST" action="/admin/login" class="space-y-5">
+        <form method="POST" action="/admin/login" class="login-form">
             <div>
-                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Tài khoản Quản Trị</label>
-                <input type="text" name="username" required autocomplete="username"
-                    class="w-full px-4 py-3 bg-gray-900/80 border border-gray-700/80 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition"
-                    placeholder="Nhập tên đăng nhập admin...">
+                <label class="field-label" for="admin-username">Tài khoản Quản Trị</label>
+                <input id="admin-username" type="text" name="username" required autocomplete="username" class="field-input" placeholder="Nhập tên đăng nhập admin...">
             </div>
 
             <div>
-                <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Mật khẩu</label>
-                <input type="password" name="password" required autocomplete="current-password"
-                    class="w-full px-4 py-3 bg-gray-900/80 border border-gray-700/80 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition"
-                    placeholder="Nhập mật khẩu quản trị...">
+                <label class="field-label" for="admin-password">Mật khẩu</label>
+                <input id="admin-password" type="password" name="password" required autocomplete="current-password" class="field-input" placeholder="Nhập mật khẩu quản trị...">
             </div>
 
-            <button type="submit"
-                class="w-full py-3.5 px-4 bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500 hover:from-orange-600 hover:to-yellow-600 font-bold rounded-xl text-gray-950 shadow-lg shadow-orange-500/25 transform active:scale-95 transition duration-150">
-                Đăng Nhập Quản Trị
-            </button>
+            <button type="submit" class="login-btn">Đăng Nhập Quản Trị</button>
         </form>
 
-        <div class="mt-8 pt-6 border-t border-gray-800/80 text-center">
-            <div class="inline-flex items-center text-xs text-gray-500 space-x-1.5">
-                <span>🛡️</span>
-                <span>Bảo mật 1 tài khoản Admin duy nhất · Đăng ký bị vô hiệu hoá</span>
-            </div>
+        <div class="login-foot">
+            🛡️ Bảo mật 1 tài khoản Admin duy nhất · Đăng ký bị vô hiệu hoá
         </div>
     </div>
 </body>
@@ -1883,9 +1897,12 @@ async fn handle_logout(State(state): State<AppState>, headers: HeaderMap) -> Res
 fn render_platform_status(label: &str, matched: &Option<(String, String)>, manual_id: &str, backup_note: Option<&str>) -> String {
     if !manual_id.trim().is_empty() {
         return format!(
-            "<div class=\"flex items-center justify-between p-3 rounded-xl bg-gray-950/60 border border-gray-800/80 hover:border-gray-700 transition\">\
-                <span class=\"text-xs font-semibold text-gray-200 flex items-center space-x-1.5\"><span>{}</span></span>\
-                <span class=\"text-xs px-2.5 py-1 bg-green-500/15 text-green-300 border border-green-500/30 rounded-lg font-mono font-bold\">🟢 Thủ công ({})</span>\
+            "<div class=\"plat-row\">\
+                <div class=\"plat-row__left\">\
+                    <div class=\"plat-row__name\">{}</div>\
+                    <div class=\"plat-row__sub\">ID thủ công: <code>{}</code></div>\
+                </div>\
+                <span class=\"badge badge--ok\">🟢 Thủ công</span>\
              </div>",
             label,
             escape_html(manual_id.trim())
@@ -1893,9 +1910,12 @@ fn render_platform_status(label: &str, matched: &Option<(String, String)>, manua
     }
     match matched {
         Some((id, _)) => format!(
-            "<div class=\"flex items-center justify-between p-3 rounded-xl bg-gray-950/60 border border-gray-800/80 hover:border-gray-700 transition\">\
-                <span class=\"text-xs font-semibold text-gray-200 flex items-center space-x-1.5\"><span>{}</span></span>\
-                <span class=\"text-xs px-2.5 py-1 bg-green-500/15 text-green-300 border border-green-500/30 rounded-lg font-mono font-bold\">🟢 Đã duyệt ({})</span>\
+            "<div class=\"plat-row\">\
+                <div class=\"plat-row__left\">\
+                    <div class=\"plat-row__name\">{}</div>\
+                    <div class=\"plat-row__sub\">Campaign: <code>{}</code></div>\
+                </div>\
+                <span class=\"badge badge--ok\">🟢 Đã duyệt</span>\
              </div>",
             label,
             escape_html(id)
@@ -1903,18 +1923,24 @@ fn render_platform_status(label: &str, matched: &Option<(String, String)>, manua
         None => {
             if let Some(note) = backup_note {
                 format!(
-                    "<div class=\"flex items-center justify-between p-3 rounded-xl bg-gray-950/60 border border-gray-800/80 hover:border-gray-700 transition\">\
-                        <span class=\"text-xs font-semibold text-gray-200 flex items-center space-x-1.5\"><span>{}</span></span>\
-                        <span class=\"text-xs px-2.5 py-1 bg-blue-500/15 text-blue-300 border border-blue-500/30 rounded-lg font-semibold\">🔵 {}</span>\
+                    "<div class=\"plat-row\">\
+                        <div class=\"plat-row__left\">\
+                            <div class=\"plat-row__name\">{}</div>\
+                            <div class=\"plat-row__sub\">{}</div>\
+                        </div>\
+                        <span class=\"badge badge--info\">🔵 Sẵn sàng</span>\
                      </div>",
                     label,
                     escape_html(note)
                 )
             } else {
                 format!(
-                    "<div class=\"flex items-center justify-between p-3 rounded-xl bg-gray-950/60 border border-gray-800/80 hover:border-gray-700 transition\">\
-                        <span class=\"text-xs font-semibold text-gray-200 flex items-center space-x-1.5\"><span>{}</span></span>\
-                        <span class=\"text-xs px-2.5 py-1 bg-yellow-500/15 text-yellow-300 border border-yellow-500/30 rounded-lg font-semibold\">🟡 Chưa duyệt AT</span>\
+                    "<div class=\"plat-row\">\
+                        <div class=\"plat-row__left\">\
+                            <div class=\"plat-row__name\">{}</div>\
+                            <div class=\"plat-row__sub\">Chưa duyệt trên pub2.accesstrade.vn</div>\
+                        </div>\
+                        <span class=\"badge badge--warn\">🟡 Chưa duyệt AT</span>\
                      </div>",
                     label
                 )
@@ -1973,33 +1999,27 @@ async fn handle_dashboard(
     let is_cloud_runtime = state.config.public_base_url.is_some();
     let persistence_banner = if !is_cloud_runtime && !has_turso {
         format!(
-            r#"<div class="flex items-center justify-between bg-emerald-950/30 border border-emerald-500/30 rounded-xl px-4 py-2.5 text-xs text-emerald-200">
-            <div class="flex items-center space-x-2">
-                <span class="text-base">💻</span>
+            r#"<div class="notice-banner notice-banner--ok">
+                <span>💻</span>
                 <span><b>Đang chạy trực tiếp trên PC (Local):</b> Dữ liệu được lưu bền vững trên máy tính tại <code>{}</code> · Bot chạy chế độ <b>Long Polling</b> và gọi API trực tiếp từ IP của bạn.</span>
-            </div>
-        </div>"#,
+            </div>"#,
             escape_html(&state.config.database_path)
         )
     } else if !has_env_token || !has_turso {
-        r#"<div class="flex items-center justify-between bg-amber-950/30 border border-amber-500/30 rounded-xl px-4 py-2.5 text-xs text-amber-200">
-            <div class="flex items-center space-x-2">
-                <span class="text-base">⚠️</span>
-                <span><b>Lưu ý lưu trữ:</b> Đang dùng ổ đĩa tạm thời trên Cloud. Hãy thêm <code>TURSO_DATABASE_URL</code> &amp; <code>ACCESSTRADE_API_TOKEN</code> vào Environment để lưu dữ liệu vĩnh viễn.</span>
-            </div>
+        r#"<div class="notice-banner notice-banner--warn">
+            <span>⚠️</span>
+            <span><b>Lưu ý lưu trữ:</b> Đang dùng ổ đĩa tạm thời trên Cloud. Hãy thêm <code>TURSO_DATABASE_URL</code> &amp; <code>ACCESSTRADE_API_TOKEN</code> vào Environment để lưu dữ liệu vĩnh viễn.</span>
         </div>"#.to_string()
     } else {
-        r#"<div class="flex items-center justify-between bg-emerald-950/30 border border-emerald-500/30 rounded-xl px-4 py-2.5 text-xs text-emerald-200">
-            <div class="flex items-center space-x-2">
-                <span class="text-base">🟢</span>
-                <span><b>Hệ thống lưu trữ bền vững:</b> Đã kết nối Turso Cloud Database &amp; cố định API Token an toàn.</span>
-            </div>
+        r#"<div class="notice-banner notice-banner--ok">
+            <span>🟢</span>
+            <span><b>Hệ thống lưu trữ bền vững:</b> Đã kết nối Turso Cloud Database &amp; cố định API Token an toàn.</span>
         </div>"#.to_string()
     };
 
     let notice_banner = match query.notice.as_deref() {
         Some(n) if !n.trim().is_empty() => format!(
-            r#"<div class="bg-blue-500/15 border border-blue-500/40 rounded-2xl px-4 py-3 text-sm text-blue-200 font-medium">ℹ️ {}</div>"#,
+            r#"<div class="notice-banner notice-banner--info"><span>ℹ️</span><span>{}</span></div>"#,
             escape_html(n)
         ),
         _ => String::new(),
@@ -2096,12 +2116,12 @@ async fn handle_dashboard(
         match state.accesstrade.get_approved_campaigns(token, false).await {
             Ok(approved) => {
                 let badge = format!(
-                    "<span class=\"px-2.5 py-1 bg-green-500/20 text-green-400 rounded-lg text-xs font-semibold\">🟢 Đã kết nối ({})</span>",
+                    "<span class=\"badge badge--ok\">🟢 Đã kết nối ({})</span>",
                     masked
                 );
                 let dyn_list = approved.dynamic_campaigns();
                 let dyn_line = if dyn_list.is_empty() {
-                    r#"<div class="text-xs text-gray-400 pt-2">✨ <b>Tự động nhận diện đa sàn:</b> Sẵn sàng — đăng ký thêm <i>Shein, CellphoneS, FPT Shop, Con Cưng, Fado, Klook...</i> trên <code>pub2.accesstrade.vn</code> sẽ tự kích hoạt không cần sửa code.</div>"#.to_string()
+                    r#"<div class="inset-note">✨ <b>Tự động nhận diện đa sàn:</b> Sẵn sàng — đăng ký thêm <i>Shein, CellphoneS, FPT Shop, Con Cưng, Fado, Klook...</i> trên <code>pub2.accesstrade.vn</code> sẽ tự kích hoạt không cần sửa code.</div>"#.to_string()
                 } else {
                     let labels: Vec<String> = dyn_list
                         .iter()
@@ -2109,7 +2129,7 @@ async fn handle_dashboard(
                         .map(|c| format!("{} (<code>{}</code>)", escape_html(&c.platform_group), escape_html(&c.domain)))
                         .collect();
                     format!(
-                        "<div class=\"text-xs text-green-300 pt-2\">✨ <b>Đã tự mở thêm {} sàn/hãng mở rộng:</b> {}</div>",
+                        "<div class=\"inset-note inset-note--ok\">✨ <b>Đã tự mở thêm {} sàn/hãng mở rộng:</b> {}</div>",
                         dyn_list.len(),
                         labels.join(", ")
                     )
@@ -2121,7 +2141,7 @@ async fn handle_dashboard(
                     None
                 };
                 let rows = format!(
-                    "<div class=\"grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1\">{}{}{}{}{}</div>{}",
+                    "<div class=\"plat-list\">{}{}{}{}{}</div>{}",
                     render_platform_status("🟠 Shopee", &approved.shopee, &camp_shopee, shopee_backup_note),
                     render_platform_status("🔵 Lazada", &approved.lazada, &camp_lazada, Some("Deeplink Template Sẵn Sàng")),
                     render_platform_status("🔹 Tiki", &approved.tiki, &camp_tiki, None),
@@ -2134,17 +2154,17 @@ async fn handle_dashboard(
             }
             Err(err) => {
                 let badge = format!(
-                    "<span class=\"px-2.5 py-1 bg-red-500/20 text-red-400 rounded-lg text-xs font-semibold\">🔴 Lỗi kết nối ({})</span>",
+                    "<span class=\"badge badge--err\">🔴 Lỗi kết nối ({})</span>",
                     masked
                 );
-                let err_box = format!("<p class=\"text-xs text-red-400\">{}</p>", escape_html(&err));
+                let err_box = format!("<p class=\"err-text\">{}</p>", escape_html(&err));
                 (badge, err_box)
             }
         }
     } else {
         (
-            "<span class=\"px-2.5 py-1 bg-gray-700 text-gray-300 rounded-lg text-xs font-semibold\">⚪ Chưa nhập API Key</span>".to_string(),
-            "<p class=\"text-xs text-gray-400\">Vui lòng nhập <b>ACCESSTRADE API Access Key</b> bên dưới hoặc thiết lập biến môi trường <code>ACCESSTRADE_API_TOKEN</code> trên Render.</p>".to_string(),
+            "<span class=\"badge badge--muted\">⚪ Chưa nhập API Key</span>".to_string(),
+            "<p class=\"muted-text\">Vui lòng nhập <b>ACCESSTRADE API Access Key</b> bên dưới hoặc thiết lập <code>ACCESSTRADE_API_TOKEN</code> trong file <code>.env</code>.</p>".to_string(),
         )
     };
 
@@ -2193,13 +2213,13 @@ async fn handle_dashboard(
     for v in filtered_vouchers.iter().take(50) {
         let target_url = v.best_target_url(approved_opt.as_ref());
         voucher_rows.push_str(&format!(
-            r#"<tr class="border-b border-gray-800/80 hover:bg-gray-800/40">
-                <td class="py-2.5 px-3 text-xs font-bold text-orange-400">{}</td>
-                <td class="py-2.5 px-3 text-xs text-white font-semibold">{}</td>
-                <td class="py-2.5 px-3 text-xs font-mono text-yellow-300">{}</td>
-                <td class="py-2.5 px-3 text-xs text-gray-200">{}<div class="text-gray-400">{}</div></td>
-                <td class="py-2.5 px-3 text-xs text-gray-400">{}</td>
-                <td class="py-2.5 px-3 text-xs"><a href="{}" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:underline">Mở Link Chuẩn ↗</a></td>
+            r#"<tr>
+                <td><span class="badge badge--orange">{}</span></td>
+                <td class="cell-strong">{}</td>
+                <td><code class="code-pill">{}</code></td>
+                <td><div class="cell-strong">{}</div><div class="cell-sub">{}</div></td>
+                <td class="cell-muted">{}</td>
+                <td><a href="{}" target="_blank" rel="noopener noreferrer" class="table-link">Mở Link Chuẩn ↗</a></td>
             </tr>"#,
             escape_html(&v.discount_badge()),
             escape_html(&v.platform),
@@ -2214,25 +2234,25 @@ async fn handle_dashboard(
         let empty_hint = if db_at_token.is_none() {
             r#"Chưa cấu hình ACCESSTRADE API Access Key. Vào tab <b>"Kết Nối Sàn &amp; API"</b> để nhập Token hoặc nạp mã vào mục <b>"Kho Mã Độc Quyền Hợp Tác"</b> bên dưới."#.to_string()
         } else if approved_opt.is_none() {
-            r#"⚠️ <b>ACCESSTRADE API đang bị lỗi kết nối (HTTP 403 Forbidden / Sai Key):</b> Bot chưa được cấp quyền kéo mã tự động từ sàn về.<br><span class="text-amber-300">👉 Cách khắc phục:</span> Vào <a href="https://pub2.accesstrade.vn" target="_blank" rel="noopener noreferrer" class="underline text-orange-400 font-semibold">pub2.accesstrade.vn</a> &gt; <b>Công cụ &gt; API</b> lấy lại Access Key mới rồi dán vào tab <b>"Kết Nối Sàn &amp; API"</b>. Hoặc dán danh sách mã sẵn có vào mục <b>"Kho Mã Độc Quyền Hợp Tác"</b> bên dưới!"#.to_string()
+            r#"⚠️ <b>ACCESSTRADE API đang bị lỗi kết nối (HTTP 403 Forbidden / Sai Key):</b> Bot chưa được cấp quyền kéo mã tự động từ sàn về.<br><span style="color:#fcd34d;">👉 Cách khắc phục:</span> Vào <a href="https://pub2.accesstrade.vn" target="_blank" rel="noopener noreferrer" class="table-link">pub2.accesstrade.vn</a> &gt; <b>Công cụ &gt; API</b> lấy lại Access Key mới rồi dán vào tab <b>"Kết Nối Sàn &amp; API"</b>."#.to_string()
         } else {
             r#"Không có mã nào khớp bộ lọc (hoặc đang nạp chu kỳ đầu tiên). Bấm nút <b>Quét Sâu Toàn Bộ Ngay</b> nếu cần làm mới ngay."#.to_string()
         };
-        voucher_rows = format!(r#"<tr><td colspan="6" class="py-8 px-4 text-center text-xs text-gray-300 leading-relaxed">{}</td></tr>"#, empty_hint);
+        voucher_rows = format!(r#"<tr><td colspan="6" class="empty-cell">{}</td></tr>"#, empty_hint);
     }
 
     // Bảng danh sách Mã Độc Quyền Hợp Tác & Deals trong DB
     let mut exclusive_rows = String::new();
     for d in &saved_deals {
         let kind_badge = if d.is_exclusive {
-            r#"<span class="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-xs font-semibold">👑 Độc Quyền</span>"#
+            r#"<span class="badge badge--purple">👑 Độc Quyền</span>"#
         } else {
-            r#"<span class="px-2 py-0.5 bg-gray-700 text-gray-300 rounded text-xs">Thường</span>"#
+            r#"<span class="badge badge--muted">Thường</span>"#
         };
         let status_badge = if d.is_active {
-            r#"<span class="text-green-400 text-xs font-semibold">🟢 Đang bật</span>"#
+            r#"<span class="badge badge--ok">🟢 Đang bật</span>"#
         } else {
-            r#"<span class="text-gray-500 text-xs">⚫ Đang tắt</span>"#
+            r#"<span class="badge badge--muted">⚫ Đang tắt</span>"#
         };
         let code_display = d.coupon_code.as_deref().unwrap_or("-");
         let min_note = if d.min_spend > 0.0 {
@@ -2241,21 +2261,21 @@ async fn handle_dashboard(
             String::new()
         };
         exclusive_rows.push_str(&format!(
-            r#"<tr class="border-b border-gray-800/80 hover:bg-gray-800/40">
-                <td class="py-2.5 px-3">{}</td>
-                <td class="py-2.5 px-3 text-xs font-semibold text-white">{}</td>
-                <td class="py-2.5 px-3 text-xs text-gray-200">{}<div class="text-gray-400">{}{}</div></td>
-                <td class="py-2.5 px-3 text-xs font-mono text-yellow-300">{}</td>
-                <td class="py-2.5 px-3">{}</td>
-                <td class="py-2.5 px-3 text-xs">
-                    <div class="flex items-center space-x-2">
+            r#"<tr>
+                <td>{}</td>
+                <td class="cell-strong">{}</td>
+                <td><div class="cell-strong">{}</div><div class="cell-sub">{}{}</div></td>
+                <td><code class="code-pill">{}</code></td>
+                <td>{}</td>
+                <td>
+                    <div class="row-actions">
                         <form method="POST" action="/admin/deals/toggle">
                             <input type="hidden" name="deal_id" value="{}">
-                            <button type="submit" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-gray-200">Bật/Tắt</button>
+                            <button type="submit" class="btn btn--secondary btn--sm">Bật/Tắt</button>
                         </form>
                         <form method="POST" action="/admin/deals/delete">
                             <input type="hidden" name="deal_id" value="{}">
-                            <button type="submit" class="px-2 py-1 bg-red-600/20 hover:bg-red-600/40 border border-red-500/40 rounded text-red-300">Xoá</button>
+                            <button type="submit" class="btn btn--danger btn--sm">Xoá</button>
                         </form>
                     </div>
                 </td>
@@ -2272,26 +2292,26 @@ async fn handle_dashboard(
         ));
     }
     if exclusive_rows.is_empty() {
-        exclusive_rows = r#"<tr><td colspan="6" class="py-6 text-center text-xs text-gray-500">Chưa có Mã Độc Quyền Hợp Tác nào. Hãy dán danh sách mã từ AM ACCESSTRADE / MCN / Nhãn hàng vào ô bên trên.</td></tr>"#.to_string();
+        exclusive_rows = r#"<tr><td colspan="6" class="empty-cell">Chưa có Mã Độc Quyền Hợp Tác nào. Hãy dán danh sách mã từ AM ACCESSTRADE / MCN / Nhãn hàng vào ô bên trên.</td></tr>"#.to_string();
     }
 
     // Render danh sách clicks gần đây (có escape chống XSS)
     let mut clicks_rows = String::new();
     for c in &clicks {
         let plat_badge = match c.platform.as_str() {
-            "Shopee" => r#"<span class="px-2 py-0.5 rounded bg-orange-500/15 text-orange-400 border border-orange-500/30 text-xs font-semibold">Shopee</span>"#,
-            "TikTok Shop" | "TikTok" => r#"<span class="px-2 py-0.5 rounded bg-pink-500/15 text-pink-400 border border-pink-500/30 text-xs font-semibold">TikTok Shop</span>"#,
-            "Lazada" => r#"<span class="px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30 text-xs font-semibold">Lazada</span>"#,
-            "Tiki" => r#"<span class="px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 text-xs font-semibold">Tiki</span>"#,
-            _ => r#"<span class="px-2 py-0.5 rounded bg-gray-800 text-gray-300 text-xs">Khác</span>"#,
+            "Shopee" => r#"<span class="badge badge--orange">Shopee</span>"#,
+            "TikTok Shop" | "TikTok" => r#"<span class="badge badge--pink">TikTok Shop</span>"#,
+            "Lazada" => r#"<span class="badge badge--info">Lazada</span>"#,
+            "Tiki" => r#"<span class="badge badge--cyan">Tiki</span>"#,
+            _ => r#"<span class="badge badge--muted">Khác</span>"#,
         };
         clicks_rows.push_str(&format!(
-            r#"<tr class="border-b border-gray-800/60 hover:bg-gray-800/30 transition">
-                <td class="py-3 px-4 text-xs font-mono text-gray-300">{}</td>
-                <td class="py-3 px-4">{}</td>
-                <td class="py-3 px-4 text-xs text-gray-300 max-w-[240px] truncate" title="{}">{}</td>
-                <td class="py-3 px-4 text-xs max-w-[200px] truncate"><a href="{}" target="_blank" rel="noopener noreferrer" class="text-amber-400 hover:text-amber-300 hover:underline font-medium">Mở link săn sale ↗</a></td>
-                <td class="py-3 px-4 text-xs text-gray-400 font-mono">{}</td>
+            r#"<tr>
+                <td class="font-mono cell-muted">{}</td>
+                <td>{}</td>
+                <td><div class="truncate-url" title="{}">{}</div></td>
+                <td><a href="{}" target="_blank" rel="noopener noreferrer" class="table-link table-link--amber">Mở link săn sale ↗</a></td>
+                <td class="font-mono cell-muted">{}</td>
             </tr>"#,
             c.user_id,
             plat_badge,
@@ -2303,13 +2323,13 @@ async fn handle_dashboard(
     }
 
     if clicks_rows.is_empty() {
-        clicks_rows = r#"<tr><td colspan="5" class="py-8 text-center text-gray-400 text-xs">Chưa có lượt dán link nào từ khách hàng. Dán link sản phẩm vào Bot Telegram @vvipass_vip_bot để kiểm tra.</td></tr>"#.to_string();
+        clicks_rows = r#"<tr><td colspan="5" class="empty-cell">Chưa có lượt dán link nào từ khách hàng. Dán link sản phẩm vào Bot Telegram @vvipass_vip_bot để kiểm tra.</td></tr>"#.to_string();
     }
 
     let bot_mode_badge = if state.webhook_tx.is_some() {
-        r#"<span class="text-green-400 font-semibold">🟢 Webhook 24/7</span>"#
+        r#"<span class="mode-tag mode-tag--ok">🟢 Webhook 24/7</span>"#
     } else {
-        r#"<span class="text-blue-400 font-semibold">🔵 Polling</span>"#
+        r#"<span class="mode-tag mode-tag--info">🔵 Polling PC</span>"#
     };
 
     let sel_all = if filter_plat == "all" { "selected" } else { "" };
@@ -2331,445 +2351,1019 @@ async fn handle_dashboard(
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        :root {{
+            --bg-base: #070b14;
+            --bg-surface: #0f172a;
+            --bg-elevated: #111c33;
+            --bg-inset: #0a101f;
+            --bg-input: #16223a;
+            --border-subtle: rgba(148, 163, 184, 0.14);
+            --border-strong: rgba(148, 163, 184, 0.28);
+            --text-primary: #f8fafc;
+            --text-secondary: #cbd5e1;
+            --text-muted: #94a3b8;
+            --brand-primary: #f97316;
+            --brand-accent: #f59e0b;
+            --ok-text: #86efac;
+            --ok-bg: rgba(34, 197, 94, 0.14);
+            --ok-border: rgba(34, 197, 94, 0.34);
+            --warn-text: #fde68a;
+            --warn-bg: rgba(245, 158, 11, 0.14);
+            --warn-border: rgba(245, 158, 11, 0.34);
+            --err-text: #fca5a5;
+            --err-bg: rgba(239, 68, 68, 0.14);
+            --err-border: rgba(239, 68, 68, 0.34);
+            --info-text: #7dd3fc;
+            --info-bg: rgba(14, 165, 233, 0.14);
+            --info-border: rgba(14, 165, 233, 0.34);
+            --purple-text: #d8b4fe;
+            --purple-bg: rgba(168, 85, 247, 0.16);
+            --purple-border: rgba(168, 85, 247, 0.35);
+            --pink-text: #f9a8d4;
+            --pink-bg: rgba(236, 72, 153, 0.15);
+            --pink-border: rgba(236, 72, 153, 0.34);
+            --radius-sm: 0.5rem;
+            --radius-md: 0.75rem;
+            --radius-lg: 1rem;
+            --shadow-card: 0 10px 30px -10px rgba(0, 0, 0, 0.55);
+        }}
         *, *::before, *::after {{ box-sizing: border-box; }}
         body {{
-            background-color: #080c14;
-            background-image: 
-                radial-gradient(at 0% 0%, rgba(249, 115, 22, 0.1) 0px, transparent 50%),
-                radial-gradient(at 100% 0%, rgba(6, 182, 212, 0.08) 0px, transparent 50%),
-                radial-gradient(at 50% 100%, rgba(139, 92, 246, 0.06) 0px, transparent 50%);
-            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            color: #f8fafc;
-            min-height: 100vh;
             margin: 0;
             padding: 0;
+            min-height: 100vh;
             display: flex;
             flex-direction: column;
+            background-color: var(--bg-base);
+            background-image:
+                radial-gradient(at 0% 0%, rgba(249, 115, 22, 0.11) 0px, transparent 52%),
+                radial-gradient(at 100% 0%, rgba(14, 165, 233, 0.08) 0px, transparent 50%),
+                radial-gradient(at 50% 100%, rgba(168, 85, 247, 0.06) 0px, transparent 52%);
+            color: var(--text-primary);
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            -webkit-font-smoothing: antialiased;
         }}
-        .font-mono {{ font-family: 'JetBrains Mono', monospace; }}
-        .hidden {{ display: none !important; }}
-        .tab-pane.hidden {{ display: none !important; }}
-        .flex {{ display: flex; }}
-        .inline-flex {{ display: inline-flex; }}
-        .flex-col {{ flex-direction: column; }}
-        .flex-wrap {{ flex-wrap: wrap; }}
-        .flex-1 {{ flex: 1 1 0%; }}
-        .flex-shrink-0 {{ flex-shrink: 0; }}
-        .items-center {{ align-items: center; }}
-        .justify-between {{ justify-content: space-between; }}
-        .justify-center {{ justify-content: center; }}
-        .space-x-1 > * + * {{ margin-left: 0.25rem; }}
-        .space-x-1\.5 > * + * {{ margin-left: 0.375rem; }}
-        .space-x-2 > * + * {{ margin-left: 0.5rem; }}
-        .space-x-2\.5 > * + * {{ margin-left: 0.625rem; }}
-        .space-x-3 > * + * {{ margin-left: 0.75rem; }}
-        .space-x-3\.5 > * + * {{ margin-left: 0.875rem; }}
-        .space-y-1 > * + * {{ margin-top: 0.25rem; }}
-        .space-y-2 > * + * {{ margin-top: 0.5rem; }}
-        .space-y-2\.5 > * + * {{ margin-top: 0.625rem; }}
-        .space-y-3 > * + * {{ margin-top: 0.75rem; }}
-        .space-y-4 > * + * {{ margin-top: 1rem; }}
-        .space-y-5 > * + * {{ margin-top: 1.25rem; }}
-        .space-y-6 > * + * {{ margin-top: 1.5rem; }}
-        .gap-2 {{ gap: 0.5rem; }}
-        .gap-2\.5 {{ gap: 0.625rem; }}
-        .gap-3 {{ gap: 0.75rem; }}
-        .gap-4 {{ gap: 1rem; }}
-        .gap-5 {{ gap: 1.25rem; }}
-        .gap-6 {{ gap: 1.5rem; }}
-        .grid {{ display: grid; }}
-        .grid-cols-1 {{ grid-template-columns: repeat(1, minmax(0, 1fr)); }}
-        @media (min-width: 640px) {{
-            .sm\:grid-cols-2 {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-            .sm\:flex {{ display: flex; }}
+        a {{ color: inherit; text-decoration: none; }}
+        button, input, select, textarea {{ font-family: inherit; }}
+        code {{
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            background: rgba(148, 163, 184, 0.12);
+            color: #fcd34d;
+            padding: 0.1rem 0.38rem;
+            border-radius: 0.32rem;
         }}
-        @media (min-width: 768px) {{
-            .md\:inline-flex {{ display: inline-flex; }}
+
+        /* Header */
+        .admin-header {{
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            background: rgba(7, 11, 20, 0.9);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            border-bottom: 1px solid var(--border-subtle);
         }}
-        @media (min-width: 1024px) {{
-            .lg\:grid-cols-2 {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-            .lg\:grid-cols-3 {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
-            .lg\:grid-cols-4 {{ grid-template-columns: repeat(4, minmax(0, 1fr)); }}
-            .lg\:col-span-2 {{ grid-column: span 2 / span 2; }}
+        .admin-header__inner {{
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 0.85rem 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
         }}
-        .w-full {{ width: 100%; }}
-        .max-w-7xl {{ max-width: 80rem; }}
-        .mx-auto {{ margin-left: auto; margin-right: auto; }}
-        .min-h-screen {{ min-height: 100vh; }}
-        .min-w-52 {{ min-width: 13rem; }}
-        .w-11 {{ width: 2.75rem !important; min-width: 2.75rem; }}
-        .h-11 {{ height: 2.75rem !important; min-height: 2.75rem; }}
-        .w-12 {{ width: 3rem !important; min-width: 3rem; }}
-        .h-12 {{ height: 3rem !important; min-height: 3rem; }}
-        .w-8 {{ width: 2rem !important; min-width: 2rem; }}
-        .h-8 {{ height: 2rem !important; min-height: 2rem; }}
-        .w-3 {{ width: 0.75rem; }}
-        .h-3 {{ height: 0.75rem; }}
-        .w-2 {{ width: 0.5rem; }}
-        .h-2 {{ height: 0.5rem; }}
-        .px-2 {{ padding-left: 0.5rem; padding-right: 0.5rem; }}
-        .px-2\.5 {{ padding-left: 0.625rem; padding-right: 0.625rem; }}
-        .px-3 {{ padding-left: 0.75rem; padding-right: 0.75rem; }}
-        .px-3\.5 {{ padding-left: 0.875rem; padding-right: 0.875rem; }}
-        .px-4 {{ padding-left: 1rem; padding-right: 1rem; }}
-        .px-5 {{ padding-left: 1.25rem; padding-right: 1.25rem; }}
-        .px-6 {{ padding-left: 1.5rem; padding-right: 1.5rem; }}
-        .py-0\.5 {{ padding-top: 0.125rem; padding-bottom: 0.125rem; }}
-        .py-1 {{ padding-top: 0.25rem; padding-bottom: 0.25rem; }}
-        .py-1\.5 {{ padding-top: 0.375rem; padding-bottom: 0.375rem; }}
-        .py-2 {{ padding-top: 0.5rem; padding-bottom: 0.5rem; }}
-        .py-2\.5 {{ padding-top: 0.625rem; padding-bottom: 0.625rem; }}
-        .py-3 {{ padding-top: 0.75rem; padding-bottom: 0.75rem; }}
-        .py-3\.5 {{ padding-top: 0.875rem; padding-bottom: 0.875rem; }}
-        .py-4 {{ padding-top: 1rem; padding-bottom: 1rem; }}
-        .py-6 {{ padding-top: 1.5rem; padding-bottom: 1.5rem; }}
-        .py-8 {{ padding-top: 2rem; padding-bottom: 2rem; }}
-        .p-2\.5 {{ padding: 0.625rem; }}
-        .p-3 {{ padding: 0.75rem; }}
-        .p-4 {{ padding: 1rem; }}
-        .p-5 {{ padding: 1.25rem; }}
-        .p-6 {{ padding: 1.5rem; }}
-        .mb-1 {{ margin-bottom: 0.25rem; }}
-        .mb-2 {{ margin-bottom: 0.5rem; }}
-        .mb-4 {{ margin-bottom: 1rem; }}
-        .mt-0\.5 {{ margin-top: 0.125rem; }}
-        .mt-1 {{ margin-top: 0.25rem; }}
-        .mt-2 {{ margin-top: 0.5rem; }}
-        .mt-3 {{ margin-top: 0.75rem; }}
-        .mt-12 {{ margin-top: 3rem; }}
-        .pt-1 {{ padding-top: 0.25rem; }}
-        .pt-2 {{ padding-top: 0.5rem; }}
-        .pb-4 {{ padding-bottom: 1rem; }}
-        .rounded {{ border-radius: 0.25rem; }}
-        .rounded-md {{ border-radius: 0.375rem; }}
-        .rounded-lg {{ border-radius: 0.5rem; }}
-        .rounded-xl {{ border-radius: 0.75rem; }}
-        .rounded-2xl {{ border-radius: 1rem; }}
-        .rounded-3xl {{ border-radius: 1.5rem; }}
-        .rounded-full {{ border-radius: 9999px; }}
-        .border {{ border: 1px solid #1e293b; }}
-        .border-2 {{ border: 2px solid #f97316; }}
-        .border-b {{ border-bottom: 1px solid rgba(31, 41, 55, 0.8); }}
-        .border-t {{ border-top: 1px solid rgba(31, 41, 55, 0.8); }}
-        .card-surface {{
-            background: #0f172a;
-            border: 1px solid #1e293b;
-            border-radius: 1rem;
-            box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.35);
-            transition: border-color 0.15s ease;
+        .brand {{
+            display: flex;
+            align-items: center;
+            gap: 0.875rem;
+            min-width: 0;
         }}
-        .card-surface:hover {{
-            border-color: #334155;
+        .brand__logo-wrap {{
+            position: relative;
+            width: 44px;
+            height: 44px;
+            flex-shrink: 0;
+        }}
+        .brand__logo {{
+            width: 44px;
+            height: 44px;
+            border-radius: 9999px;
+            object-fit: cover;
+            display: block;
+            border: 2px solid var(--brand-primary);
+            box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.18);
+        }}
+        .brand__dot {{
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            width: 11px;
+            height: 11px;
+            border-radius: 9999px;
+            background: #22c55e;
+            border: 2px solid var(--bg-base);
+        }}
+        .brand__title-row {{
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }}
+        .brand__title {{
+            margin: 0;
+            font-size: 1.06rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            background: linear-gradient(90deg, #fb923c, #fcd34d);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }}
+        .brand__tag {{
+            padding: 0.15rem 0.48rem;
+            border-radius: 0.375rem;
+            font-size: 0.65rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: #fdba74;
+            background: rgba(249, 115, 22, 0.15);
+            border: 1px solid rgba(249, 115, 22, 0.35);
+        }}
+        .brand__sub {{
+            margin: 0.14rem 0 0;
+            font-size: 0.72rem;
+            color: var(--text-muted);
+        }}
+        .header-actions {{
+            display: flex;
+            align-items: center;
+            gap: 0.65rem;
+            flex-wrap: wrap;
+        }}
+        .status-pill {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.55rem;
+            padding: 0.42rem 0.85rem;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }}
+        .status-pill strong {{ color: var(--text-primary); }}
+        .status-pill a {{ color: #fbbf24; font-weight: 600; }}
+        .status-pill a:hover {{ text-decoration: underline; }}
+        .status-sep {{ color: rgba(148, 163, 184, 0.3); }}
+        .pulse-dot {{
+            width: 8px;
+            height: 8px;
+            border-radius: 9999px;
+            background: #22c55e;
+            display: inline-block;
+            flex-shrink: 0;
+            box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
+        }}
+        .mode-tag {{ font-weight: 600; font-size: 0.74rem; }}
+        .mode-tag--ok {{ color: var(--ok-text); }}
+        .mode-tag--info {{ color: var(--info-text); }}
+
+        /* Tabs */
+        .tab-bar {{
+            position: sticky;
+            top: 71px;
+            z-index: 40;
+            background: rgba(9, 14, 26, 0.88);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border-bottom: 1px solid var(--border-subtle);
+        }}
+        .tab-nav {{
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 0.65rem 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            overflow-x: auto;
         }}
         .tab-btn {{
             display: inline-flex;
             align-items: center;
-            gap: 0.5rem;
-            padding: 0.625rem 1.25rem;
-            border-radius: 0.75rem;
-            font-size: 0.875rem;
+            gap: 0.45rem;
+            padding: 0.55rem 1rem;
+            border-radius: var(--radius-md);
+            font-size: 0.84rem;
             font-weight: 600;
-            color: #94a3b8;
+            color: var(--text-muted);
             background: transparent;
             border: 1px solid transparent;
             cursor: pointer;
-            transition: all 0.15s ease;
             white-space: nowrap;
+            transition: all 0.15s ease;
         }}
         .tab-btn:hover {{
-            color: #ffffff;
-            background: rgba(30, 41, 59, 0.6);
-            border-color: #334155;
+            color: var(--text-primary);
+            background: rgba(30, 41, 59, 0.65);
+            border-color: var(--border-subtle);
         }}
         .tab-btn.active {{
-            color: #080c14 !important;
-            background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%) !important;
-            border-color: #f59e0b !important;
-            font-weight: 700 !important;
-            box-shadow: 0 4px 14px rgba(249, 115, 22, 0.35) !important;
+            color: #070b14;
+            background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%);
+            border-color: #fb923c;
+            font-weight: 700;
+            box-shadow: 0 4px 14px rgba(249, 115, 22, 0.32);
         }}
-        .text-white {{ color: #ffffff; }}
-        .text-gray-100 {{ color: #f3f4f6; }}
-        .text-gray-200 {{ color: #e5e7eb; }}
-        .text-gray-300 {{ color: #d1d5db; }}
-        .text-gray-400 {{ color: #9ca3af; }}
-        .text-gray-500 {{ color: #6b7280; }}
-        .text-gray-700 {{ color: #374151; }}
-        .text-orange-300 {{ color: #fdba74; }}
-        .text-orange-400 {{ color: #fb923c; }}
-        .text-amber-200 {{ color: #fde68a; }}
-        .text-amber-300 {{ color: #fcd34d; }}
-        .text-amber-400 {{ color: #fbbf24; }}
-        .text-yellow-300 {{ color: #fde047; }}
-        .text-yellow-400 {{ color: #facc15; }}
-        .text-green-300 {{ color: #86efac; }}
-        .text-green-400 {{ color: #4ade80; }}
-        .text-cyan-300 {{ color: #67e8f9; }}
-        .text-cyan-400 {{ color: #22d3ee; }}
-        .text-purple-300 {{ color: #d8b4fe; }}
-        .text-purple-400 {{ color: #c084fc; }}
-        .text-pink-300 {{ color: #f9a8d4; }}
-        .text-pink-400 {{ color: #f472b6; }}
-        .text-red-300 {{ color: #fca5a5; }}
-        .text-red-400 {{ color: #f87171; }}
-        .text-blue-200 {{ color: #bfdbfe; }}
-        .text-blue-400 {{ color: #60a5fa; }}
-        .text-\[11px\] {{ font-size: 11px; line-height: 1.25rem; }}
-        .text-xs {{ font-size: 0.75rem; line-height: 1rem; }}
-        .text-sm {{ font-size: 0.875rem; line-height: 1.25rem; }}
-        .text-base {{ font-size: 1rem; line-height: 1.5rem; }}
-        .text-lg {{ font-size: 1.125rem; line-height: 1.75rem; }}
-        .text-2xl {{ font-size: 1.5rem; line-height: 2rem; }}
-        .text-3xl {{ font-size: 1.875rem; line-height: 2.25rem; }}
-        .font-medium {{ font-weight: 500; }}
-        .font-semibold {{ font-weight: 600; }}
-        .font-bold {{ font-weight: 700; }}
-        .font-extrabold {{ font-weight: 800; }}
-        .font-black {{ font-weight: 900; }}
-        .uppercase {{ text-transform: uppercase; }}
-        .tracking-wider {{ letter-spacing: 0.05em; }}
-        .tracking-tight {{ letter-spacing: -0.025em; }}
-        .text-left {{ text-align: left; }}
-        .text-center {{ text-align: center; }}
-        .truncate {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-        .max-w-\[240px\] {{ max-width: 240px; }}
-        .max-w-\[200px\] {{ max-width: 200px; }}
-        table {{ border-collapse: collapse; width: 100%; }}
-        th, td {{ padding: 0.625rem 0.75rem; }}
-        input, select, textarea, button {{ font-family: inherit; }}
-        input[type="text"], input[type="password"], input[type="url"], input[type="number"], select, textarea {{
-            background: rgba(30, 41, 59, 0.9);
-            border: 1px solid #374151;
-            border-radius: 0.75rem;
-            color: #ffffff;
-            padding: 0.5rem 0.75rem;
-            outline: none;
+        .tab-pane {{
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }}
+        .tab-pane.is-hidden {{ display: none !important; }}
+
+        /* Main & Footer */
+        .admin-main {{
             width: 100%;
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 1.75rem 1.5rem 2.5rem;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
         }}
-        input:focus, select:focus, textarea:focus {{
-            border-color: #f59e0b;
-            box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
+        .admin-footer {{
+            width: 100%;
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 1.25rem 1.5rem 2rem;
+            text-align: center;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border-subtle);
         }}
-        button {{ cursor: pointer; }}
-        a {{ color: inherit; text-decoration: none; }}
-        .sticky {{ position: sticky; }}
-        .top-0 {{ top: 0; }}
-        .top-16 {{ top: 4rem; }}
-        .z-40 {{ z-index: 40; }}
-        .z-50 {{ z-index: 50; }}
-        .relative {{ position: relative; }}
-        .absolute {{ position: absolute; }}
-        .bottom-0 {{ bottom: 0; }}
-        .right-0 {{ right: 0; }}
-        .backdrop-blur-2xl, .backdrop-blur-lg {{ backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }}
-        .overflow-x-auto {{ overflow-x: auto; }}
-        .overflow-hidden {{ overflow: hidden; }}
-        img.nav-logo {{
-            width: 44px !important;
-            height: 44px !important;
-            min-width: 44px !important;
-            min-height: 44px !important;
-            max-width: 44px !important;
-            max-height: 44px !important;
-            border-radius: 9999px !important;
-            object-fit: cover !important;
-            display: block !important;
+
+        /* Notice Banners */
+        .notice-banner {{
+            padding: 0.85rem 1.15rem;
+            border-radius: var(--radius-md);
+            font-size: 0.84rem;
+            font-weight: 500;
+            line-height: 1.5;
+            border: 1px solid var(--border-subtle);
         }}
-        ::-webkit-scrollbar {{
-            width: 6px;
-            height: 6px;
+        .notice-banner--ok {{
+            background: var(--ok-bg);
+            border-color: var(--ok-border);
+            color: var(--ok-text);
         }}
-        ::-webkit-scrollbar-track {{
-            background: #080c14;
+        .notice-banner--warn {{
+            background: var(--warn-bg);
+            border-color: var(--warn-border);
+            color: var(--warn-text);
         }}
-        ::-webkit-scrollbar-thumb {{
-            background: #334155;
+        .notice-banner--info {{
+            background: var(--info-bg);
+            border-color: var(--info-border);
+            color: var(--info-text);
+        }}
+
+        /* Cards */
+        .card {{
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 1.5rem;
+            box-shadow: var(--shadow-card);
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+        }}
+        .card--table {{
+            padding: 0;
+            gap: 0;
+            overflow: hidden;
+        }}
+        .card--orange {{ border-color: rgba(249, 115, 22, 0.34); }}
+        .card--green {{ border-color: rgba(34, 197, 94, 0.34); }}
+        .card--purple {{ border-color: rgba(168, 85, 247, 0.35); }}
+        .card--social {{
+            background: linear-gradient(120deg, rgba(88, 28, 135, 0.3), rgba(131, 24, 67, 0.24), rgba(154, 52, 18, 0.22));
+            border-color: rgba(168, 85, 247, 0.34);
+            flex-direction: row;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+        }}
+        .social-left {{
+            display: flex;
+            align-items: center;
+            gap: 0.9rem;
+            flex: 1 1 380px;
+        }}
+        .social-icon {{
+            width: 48px;
+            height: 48px;
+            border-radius: 0.9rem;
+            background: linear-gradient(135deg, #9333ea, #ec4899, #f97316);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.45rem;
+            flex-shrink: 0;
+            box-shadow: 0 8px 20px rgba(168, 85, 247, 0.3);
+        }}
+        .social-hint {{
+            background: var(--bg-inset);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 0.55rem 0.85rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.74rem;
+            color: var(--text-secondary);
+        }}
+        .card-head {{
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-subtle);
+        }}
+        .card-head--table {{
+            padding: 1.25rem 1.5rem;
+            margin: 0;
+            background: rgba(10, 16, 31, 0.55);
+        }}
+        .card-head-actions {{
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            flex-wrap: wrap;
+        }}
+        .card-title {{
+            margin: 0;
+            font-size: 1.06rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.5rem;
+        }}
+        .card-desc {{
+            margin: 0.35rem 0 0;
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            line-height: 1.55;
+        }}
+
+        /* KPI Grid */
+        .kpi-grid {{
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 1.15rem;
+        }}
+        .kpi-card {{
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 1.25rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            gap: 0.8rem;
+            box-shadow: var(--shadow-card);
+            transition: border-color 0.15s ease;
+        }}
+        .kpi-card:hover {{ border-color: var(--border-strong); }}
+        .kpi-card--orange {{ border-color: rgba(249, 115, 22, 0.32); }}
+        .kpi-card--green {{ border-color: rgba(34, 197, 94, 0.32); }}
+        .kpi-card__top {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+        }}
+        .kpi-card__icon {{
+            width: 2rem;
+            height: 2rem;
+            border-radius: 0.6rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.92rem;
+            background: rgba(148, 163, 184, 0.1);
+            border: 1px solid var(--border-subtle);
+        }}
+        .kpi-card__val {{
+            margin-top: 0.35rem;
+            font-size: 1.9rem;
+            font-weight: 800;
+            line-height: 1.15;
+            letter-spacing: -0.02em;
+            color: var(--text-primary);
+        }}
+        .kpi-card__val--amber {{ color: #fbbf24; }}
+        .kpi-card__val--orange {{ color: #fb923c; }}
+        .kpi-card__val--green {{ color: #4ade80; font-size: 0.95rem; font-weight: 700; margin-top: 0.45rem; }}
+        .kpi-card__meta {{
+            background: var(--bg-inset);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 0.65rem 0.75rem;
+            font-size: 0.73rem;
+            color: var(--text-secondary);
+            display: flex;
+            flex-direction: column;
+            gap: 0.3rem;
+        }}
+        .kpi-card__pill {{
+            background: rgba(6, 182, 212, 0.12);
+            border: 1px solid rgba(6, 182, 212, 0.28);
+            color: #67e8f9;
+            border-radius: var(--radius-sm);
+            padding: 0.45rem 0.7rem;
+            font-size: 0.73rem;
+            font-weight: 500;
+        }}
+        .kpi-row {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }}
+        .kpi-row strong {{ font-family: 'JetBrains Mono', monospace; color: var(--text-primary); }}
+
+        /* Responsive Layout Grids */
+        .split-at {{
+            display: grid;
+            grid-template-columns: minmax(340px, 1.08fr) minmax(0, 1.42fr);
+            gap: 1.5rem;
+            align-items: start;
+        }}
+        .grid-2 {{
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 1.25rem;
+        }}
+        .grid-3 {{
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 1rem;
+        }}
+        .form-grid-2 {{
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.85rem;
+        }}
+
+        /* ACCESSTRADE Platform Status List */
+        .plat-panel {{
+            background: var(--bg-inset);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.85rem;
+        }}
+        .plat-panel__title {{
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+        }}
+        .plat-list {{
+            display: flex;
+            flex-direction: column;
+            gap: 0.55rem;
+        }}
+        .plat-row {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding: 0.65rem 0.8rem;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+        }}
+        .plat-row__left {{
+            display: flex;
+            flex-direction: column;
+            gap: 0.18rem;
+            min-width: 0;
+        }}
+        .plat-row__name {{
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }}
+        .plat-row__sub {{
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .inset-note {{
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 0.75rem 0.85rem;
+            font-size: 0.74rem;
+            color: var(--text-muted);
+            line-height: 1.55;
+            display: flex;
+            flex-direction: column;
+            gap: 0.3rem;
+        }}
+        .inset-note strong, .inset-note b {{ color: var(--text-secondary); }}
+        .inset-note--ok {{
+            border-color: var(--ok-border);
+            background: rgba(20, 83, 45, 0.22);
+            color: var(--ok-text);
+        }}
+        .err-text {{ color: var(--err-text); font-size: 0.8rem; font-weight: 500; }}
+        .muted-text {{ color: var(--text-muted); font-size: 0.75rem; margin-top: 0.3rem; }}
+
+        /* Badges & Pills */
+        .badge {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.28rem 0.65rem;
             border-radius: 9999px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            border: 1px solid transparent;
+            white-space: nowrap;
+            line-height: 1.25;
+            flex-shrink: 0;
         }}
-        ::-webkit-scrollbar-thumb:hover {{
-            background: #f97316;
+        .badge--ok {{ background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok-text); }}
+        .badge--err {{ background: var(--err-bg); border-color: var(--err-border); color: var(--err-text); }}
+        .badge--warn {{ background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn-text); }}
+        .badge--info {{ background: var(--info-bg); border-color: var(--info-border); color: var(--info-text); }}
+        .badge--muted {{
+            background: rgba(148, 163, 184, 0.12);
+            border-color: rgba(148, 163, 184, 0.24);
+            color: var(--text-secondary);
+        }}
+        .badge--orange {{
+            background: rgba(249, 115, 22, 0.16);
+            border-color: rgba(249, 115, 22, 0.36);
+            color: #fdba74;
+        }}
+        .badge--purple {{ background: var(--purple-bg); border-color: var(--purple-border); color: var(--purple-text); }}
+        .badge--pink {{ background: var(--pink-bg); border-color: var(--pink-border); color: var(--pink-text); }}
+        .badge--cyan {{
+            background: rgba(6, 182, 212, 0.15);
+            border-color: rgba(6, 182, 212, 0.34);
+            color: #67e8f9;
+        }}
+        .code-pill {{
+            display: inline-block;
+            padding: 0.22rem 0.55rem;
+            border-radius: 0.45rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.74rem;
+            font-weight: 600;
+            background: var(--bg-inset);
+            color: #fcd34d;
+            border: 1px solid var(--border-strong);
+        }}
+
+        /* Forms & Controls */
+        .form-stack {{ display: flex; flex-direction: column; gap: 1rem; }}
+        .subpanel {{
+            background: var(--bg-inset);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 1.1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.85rem;
+        }}
+        .subpanel__title {{
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+        }}
+        .divider-top {{ border-top: 1px solid var(--border-subtle); padding-top: 0.9rem; }}
+        .field-label {{
+            display: block;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 0.35rem;
+        }}
+        input[type="text"],
+        input[type="password"],
+        input[type="url"],
+        input[type="number"],
+        select,
+        textarea,
+        .field-input,
+        .code-textarea {{
+            width: 100%;
+            background: var(--bg-input);
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            padding: 0.62rem 0.85rem;
+            font-size: 0.82rem;
+            outline: none;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }}
+        .field-input--mono, .code-textarea {{
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.79rem;
+        }}
+        input::placeholder, textarea::placeholder {{ color: #64748b; }}
+        input:focus, select:focus, textarea:focus {{
+            border-color: var(--brand-accent);
+            box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.22);
+        }}
+        .check-row {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.55rem;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+        }}
+        .check-row input[type="checkbox"] {{
+            width: 1rem;
+            height: 1rem;
+            accent-color: var(--brand-primary);
+            cursor: pointer;
+        }}
+        .filter-bar {{
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.65rem;
+            background: var(--bg-inset);
+            border: 1px solid var(--border-subtle);
+            padding: 0.75rem 0.9rem;
+            border-radius: var(--radius-md);
+        }}
+        .filter-bar select {{
+            width: auto;
+            min-width: 190px;
+        }}
+        .inline-form-grow {{
+            display: flex;
+            flex: 1 1 280px;
+            align-items: center;
+            gap: 0.65rem;
+            flex-wrap: wrap;
+        }}
+        .grow-field {{
+            flex: 1 1 220px;
+            min-width: 180px;
+            width: auto !important;
+        }}
+
+        /* Buttons */
+        .btn {{
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.4rem;
+            padding: 0.62rem 1.05rem;
+            border-radius: var(--radius-md);
+            font-size: 0.8rem;
+            font-weight: 700;
+            border: 1px solid transparent;
+            cursor: pointer;
+            text-decoration: none;
+            white-space: nowrap;
+            transition: all 0.15s ease;
+        }}
+        .btn--primary {{
+            background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%);
+            color: #070b14;
+            border-color: #fb923c;
+            box-shadow: 0 6px 18px rgba(249, 115, 22, 0.26);
+        }}
+        .btn--primary:hover {{ filter: brightness(1.07); transform: translateY(-1px); }}
+        .btn--secondary {{
+            background: #1a2640;
+            color: var(--text-primary);
+            border-color: var(--border-strong);
+        }}
+        .btn--secondary:hover {{
+            background: #233354;
+            border-color: rgba(148, 163, 184, 0.45);
+        }}
+        .btn--success {{
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+            color: #052e16;
+            border-color: #4ade80;
+        }}
+        .btn--success:hover {{ filter: brightness(1.07); }}
+        .btn--purple {{
+            background: linear-gradient(135deg, #9333ea, #6366f1);
+            color: #ffffff;
+            border-color: #a855f7;
+        }}
+        .btn--purple:hover {{ filter: brightness(1.08); }}
+        .btn--danger {{
+            background: var(--err-bg);
+            color: var(--err-text);
+            border-color: var(--err-border);
+        }}
+        .btn--danger:hover {{ background: rgba(239, 68, 68, 0.25); }}
+        .btn--orange-soft {{
+            background: rgba(249, 115, 22, 0.16);
+            color: #fdba74;
+            border-color: rgba(249, 115, 22, 0.4);
+        }}
+        .btn--orange-soft:hover {{ background: rgba(249, 115, 22, 0.28); }}
+        .btn--sm {{ padding: 0.38rem 0.75rem; font-size: 0.74rem; border-radius: var(--radius-sm); }}
+        .btn--block {{ width: 100%; }}
+        .row-actions {{ display: flex; align-items: center; gap: 0.45rem; flex-wrap: nowrap; }}
+
+        /* Tables */
+        .table-wrap {{
+            overflow-x: auto;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            background: rgba(10, 16, 31, 0.45);
+        }}
+        .card--table .table-wrap {{
+            border: none;
+            border-radius: 0;
+            background: transparent;
+        }}
+        .data-table {{
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.8rem;
+        }}
+        .data-table thead {{
+            background: var(--bg-inset);
+            border-bottom: 1px solid var(--border-subtle);
+        }}
+        .data-table th {{
+            padding: 0.78rem 0.95rem;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }}
+        .data-table td {{
+            padding: 0.78rem 0.95rem;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.09);
+            vertical-align: middle;
+        }}
+        .data-table tbody tr:hover {{ background: rgba(30, 41, 59, 0.42); }}
+        .cell-strong {{ font-weight: 600; color: var(--text-primary); }}
+        .cell-sub {{ font-size: 0.72rem; color: var(--text-muted); margin-top: 0.2rem; }}
+        .cell-muted {{ color: var(--text-muted); font-size: 0.75rem; }}
+        .table-link {{ color: #7dd3fc; font-weight: 600; }}
+        .table-link:hover {{ text-decoration: underline; }}
+        .table-link--amber {{ color: #fbbf24; }}
+        .truncate-url {{
+            max-width: 240px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .empty-cell {{
+            padding: 2rem 1rem !important;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.82rem;
+        }}
+
+        /* Cloudflare Details */
+        .cf-details {{
+            background: var(--bg-inset);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 0.75rem 1rem;
+        }}
+        .cf-summary {{
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #fdba74;
+        }}
+        .cf-body {{
+            margin-top: 0.75rem;
+            font-size: 0.76rem;
+            color: var(--text-secondary);
+            line-height: 1.55;
+            display: flex;
+            flex-direction: column;
+            gap: 0.45rem;
+        }}
+        .cf-steps {{
+            margin: 0.25rem 0 0 1.25rem;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }}
+
+        /* Scrollbar & Responsive */
+        ::-webkit-scrollbar {{ width: 6px; height: 6px; }}
+        ::-webkit-scrollbar-track {{ background: var(--bg-base); }}
+        ::-webkit-scrollbar-thumb {{ background: #334155; border-radius: 9999px; }}
+        ::-webkit-scrollbar-thumb:hover {{ background: var(--brand-primary); }}
+
+        @media (max-width: 1080px) {{
+            .kpi-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+            .split-at, .grid-2, .grid-3 {{ grid-template-columns: minmax(0, 1fr); }}
+        }}
+        @media (max-width: 820px) {{
+            .hide-sm {{ display: none !important; }}
+            .tab-bar {{ top: 69px; }}
+        }}
+        @media (max-width: 600px) {{
+            .kpi-grid, .form-grid-2 {{ grid-template-columns: minmax(0, 1fr); }}
+            .admin-main {{ padding: 1.15rem 1rem 2rem; }}
+            .admin-header__inner, .tab-nav {{ padding-left: 1rem; padding-right: 1rem; }}
         }}
     </style>
 </head>
-<body class="text-gray-100 flex flex-col min-h-screen">
+<body>
     <!-- Navbar Header -->
-    <header class="border-b border-gray-800/80 bg-gray-950/80 backdrop-blur-2xl sticky top-0 z-50">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between">
-            <div class="flex items-center space-x-3.5">
-                <div class="relative" style="width: 44px; height: 44px; min-width: 44px; min-height: 44px;">
-                    <img src="/assets/bot-logo.webp" alt="Logo Thế Giới Siêu Sale" style="width: 44px; height: 44px; min-width: 44px; min-height: 44px; max-width: 44px; max-height: 44px; border-radius: 9999px; object-fit: cover; display: block;" class="nav-logo w-11 h-11 rounded-full border-2 border-orange-500 shadow-xl object-cover ring-2 ring-orange-500/30">
-                    <span class="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-green-500 border-2 border-gray-950"></span>
+    <header class="admin-header">
+        <div class="admin-header__inner">
+            <div class="brand">
+                <div class="brand__logo-wrap">
+                    <img src="/assets/bot-logo.webp" alt="Logo Thế Giới Siêu Sale" class="brand__logo">
+                    <span class="brand__dot"></span>
                 </div>
                 <div>
-                    <div class="flex items-center space-x-2">
-                        <h1 class="font-black text-lg text-transparent bg-clip-text bg-gradient-to-r from-orange-400 via-amber-300 to-yellow-400 tracking-tight">THẾ GIỚI SIÊU SALE</h1>
-                        <span class="px-2 py-0.5 bg-orange-500/15 text-orange-300 border border-orange-500/30 rounded-md text-[11px] font-bold uppercase tracking-wider">Console</span>
+                    <div class="brand__title-row">
+                        <h1 class="brand__title">THẾ GIỚI SIÊU SALE</h1>
+                        <span class="brand__tag">Console</span>
                     </div>
-                    <p class="text-[11px] text-gray-400 font-medium">Trung Tâm Điều Hành &amp; Quản Trị Hệ Thống Săn Sale Đa Sàn</p>
+                    <p class="brand__sub">Trung Tâm Điều Hành &amp; Quản Trị Hệ Thống Săn Sale Đa Sàn</p>
                 </div>
             </div>
 
-            <div class="flex items-center space-x-3">
-                <a href="/" target="_blank" rel="noopener noreferrer" class="hidden md:inline-flex items-center space-x-1.5 px-3.5 py-1.5 bg-gray-900/90 hover:bg-gray-800 border border-gray-700/80 rounded-xl text-xs font-semibold text-gray-200 transition shadow-sm hover:border-orange-500/40">
+            <div class="header-actions">
+                <a href="/" target="_blank" rel="noopener noreferrer" class="btn btn--secondary btn--sm hide-sm">
                     <span>🌐 Xem Trang Đích Bot 3D ↗</span>
                 </a>
-                <div class="hidden sm:flex items-center space-x-2.5 text-xs text-gray-400 bg-gray-900/80 px-3.5 py-1.5 rounded-xl border border-gray-800 shadow-inner">
-                    <span class="flex h-2 w-2 relative">
-                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                        <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                    </span>
-                    <span>Admin: <strong class="text-white">{}</strong></span>
-                    <span class="text-gray-700">|</span>
-                    <span>Bot: <a href="https://t.me/{}" target="_blank" rel="noopener noreferrer" class="text-amber-400 hover:underline font-medium">@{}</a></span>
-                    <span class="text-gray-700">|</span>
+                <div class="status-pill hide-sm">
+                    <span class="pulse-dot"></span>
+                    <span>Admin: <strong>{}</strong></span>
+                    <span class="status-sep">|</span>
+                    <span>Bot: <a href="https://t.me/{}" target="_blank" rel="noopener noreferrer">@{}</a></span>
+                    <span class="status-sep">|</span>
                     {}
                 </div>
-                <a href="/admin/logout" class="px-3.5 py-1.5 bg-red-600/15 hover:bg-red-600/30 border border-red-500/30 text-red-300 rounded-xl text-xs font-semibold transition">
-                    Đăng Xuất
-                </a>
+                <a href="/admin/logout" class="btn btn--danger btn--sm">Đăng Xuất</a>
             </div>
         </div>
     </header>
 
     <!-- Sub-Navbar / Tab Navigation -->
-    <div class="border-b border-gray-800/60 bg-gray-950/40 backdrop-blur-lg sticky top-16 z-40">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5">
-            <nav class="flex items-center space-x-2 overflow-x-auto no-scrollbar">
-                <button type="button" onclick="switchTab('overview')" id="tab-btn-overview" class="tab-btn active px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center space-x-2">
-                    <span>📊</span>
-                    <span>Tổng Quan</span>
-                </button>
-                <button type="button" onclick="switchTab('platforms')" id="tab-btn-platforms" class="tab-btn px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center space-x-2">
-                    <span>🔗</span>
-                    <span>Kết Nối Sàn &amp; API</span>
-                </button>
-                <button type="button" onclick="switchTab('vouchers')" id="tab-btn-vouchers" class="tab-btn px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center space-x-2">
-                    <span>🎟️</span>
-                    <span>Kho Voucher Thị Trường</span>
-                </button>
-                <button type="button" onclick="switchTab('orders')" id="tab-btn-orders" class="tab-btn px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center space-x-2">
-                    <span>🔔</span>
-                    <span>Báo Đơn &amp; Doanh Thu</span>
-                </button>
-            </nav>
+    <div class="tab-bar">
+        <div class="tab-nav">
+            <button type="button" onclick="switchTab('overview')" id="tab-btn-overview" class="tab-btn active">
+                <span>📊</span>
+                <span>Tổng Quan</span>
+            </button>
+            <button type="button" onclick="switchTab('platforms')" id="tab-btn-platforms" class="tab-btn">
+                <span>🔗</span>
+                <span>Kết Nối Sàn &amp; API</span>
+            </button>
+            <button type="button" onclick="switchTab('vouchers')" id="tab-btn-vouchers" class="tab-btn">
+                <span>🎟️</span>
+                <span>Kho Voucher Thị Trường</span>
+            </button>
+            <button type="button" onclick="switchTab('orders')" id="tab-btn-orders" class="tab-btn">
+                <span>🔔</span>
+                <span>Báo Đơn &amp; Doanh Thu</span>
+            </button>
         </div>
     </div>
 
     <!-- Main Content Panes -->
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 space-y-6">
+    <main class="admin-main">
         {}
         {}
 
         <!-- TAB 1: TỔNG QUAN (OVERVIEW) -->
-        <div id="tab-pane-overview" class="tab-pane space-y-6">
+        <div id="tab-pane-overview" class="tab-pane">
             <!-- 4 Thẻ KPI Thống Kê Hiện Đại -->
-            <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                <div class="card-surface p-5 rounded-2xl flex flex-col justify-between">
+            <section class="kpi-grid">
+                <div class="kpi-card">
                     <div>
-                        <div class="flex items-center justify-between text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                        <div class="kpi-card__top">
                             <span>Người Dùng Telegram</span>
-                            <div class="w-8 h-8 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 text-sm">👥</div>
+                            <span class="kpi-card__icon">👥</span>
                         </div>
-                        <div class="text-3xl font-extrabold text-white tracking-tight">{}</div>
+                        <div class="kpi-card__val">{}</div>
                     </div>
-                    <div class="text-[11px] text-cyan-300/90 bg-cyan-950/40 border border-cyan-800/40 px-2.5 py-1 rounded-lg mt-3 font-medium">
-                        ✨ Khách thực tế đã tương tác bot
-                    </div>
+                    <div class="kpi-card__pill">✨ Khách thực tế đã tương tác bot</div>
                 </div>
 
-                <div class="card-surface p-5 rounded-2xl flex flex-col justify-between">
+                <div class="kpi-card">
                     <div>
-                        <div class="flex items-center justify-between text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                        <div class="kpi-card__top">
                             <span>Tổng Lượt Dán Link</span>
-                            <div class="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 text-sm">⚡</div>
+                            <span class="kpi-card__icon">⚡</span>
                         </div>
-                        <div class="text-3xl font-extrabold text-amber-400 tracking-tight">{}</div>
+                        <div class="kpi-card__val kpi-card__val--amber">{}</div>
                     </div>
-                    <div class="text-[11px] space-y-1 mt-3 bg-gray-950/60 border border-gray-800/80 p-2.5 rounded-xl text-gray-300">
-                        <div class="flex justify-between"><span>🟠 Shopee: <strong class="text-white font-mono">{}</strong></span><span>🔵 Lazada: <strong class="text-white font-mono">{}</strong></span></div>
-                        <div class="flex justify-between"><span>🎵 TikTok: <strong class="text-white font-mono">{}</strong></span><span>🔹 Tiki: <strong class="text-white font-mono">{}</strong></span></div>
+                    <div class="kpi-card__meta">
+                        <div class="kpi-row"><span>🟠 Shopee: <strong>{}</strong></span><span>🔵 Lazada: <strong>{}</strong></span></div>
+                        <div class="kpi-row"><span>🎵 TikTok: <strong>{}</strong></span><span>🔹 Tiki: <strong>{}</strong></span></div>
                     </div>
                 </div>
 
-                <div class="card-surface p-5 rounded-2xl border-orange-500/30 flex flex-col justify-between">
+                <div class="kpi-card kpi-card--orange">
                     <div>
-                        <div class="flex items-center justify-between text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                        <div class="kpi-card__top">
                             <span>Kho Mã Thị Trường</span>
-                            <div class="w-8 h-8 rounded-xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-400 text-sm">🔥</div>
+                            <span class="kpi-card__icon">🔥</span>
                         </div>
-                        <div class="text-3xl font-extrabold text-orange-400 tracking-tight">{}</div>
+                        <div class="kpi-card__val kpi-card__val--orange">{}</div>
                     </div>
-                    <div class="text-[11px] space-y-1 mt-3 bg-gray-950/60 border border-gray-800/80 p-2.5 rounded-xl text-gray-300">
-                        <div class="flex justify-between"><span>🔥 Giảm ≥20%: <strong class="text-orange-300 font-mono">{}</strong></span><span>💸 Tiền/Khác: <strong class="text-white font-mono">{}</strong></span></div>
-                        <div class="flex justify-between"><span>🟠 Shopee: <strong class="text-white font-mono">{}</strong></span><span>🔹 Tiki: <strong class="text-white font-mono">{}</strong></span><span>👑 Độc quyền: <strong class="text-purple-300 font-mono">{}</strong></span></div>
+                    <div class="kpi-card__meta">
+                        <div class="kpi-row"><span>🔥 Giảm ≥20%: <strong>{}</strong></span><span>💸 Tiền/Khác: <strong>{}</strong></span></div>
+                        <div class="kpi-row"><span>🟠 Shopee: <strong>{}</strong></span><span>🔹 Tiki: <strong>{}</strong></span><span>👑 Độc quyền: <strong>{}</strong></span></div>
                     </div>
                 </div>
 
-                <div class="card-surface p-5 rounded-2xl border-green-500/30 flex flex-col justify-between">
+                <div class="kpi-card kpi-card--green">
                     <div>
-                        <div class="flex items-center justify-between text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                        <div class="kpi-card__top">
                             <span>Tự Động Quét Nền</span>
-                            <div class="w-8 h-8 rounded-xl bg-green-500/10 border border-green-500/20 flex items-center justify-center text-green-400 text-sm">⏱️</div>
+                            <span class="kpi-card__icon">⏱️</span>
                         </div>
-                        <div class="text-sm font-bold text-green-400 flex items-center space-x-1.5">
-                            <span>Chu kỳ 60 giây / lần</span>
-                        </div>
-                        <div class="text-xs text-gray-400 mt-1">Lần cuối: <strong class="text-white font-mono text-xs">{}</strong></div>
+                        <div class="kpi-card__val--green">Chu kỳ 60 giây / lần</div>
+                        <div class="muted-text">Lần cuối: <strong style="color: var(--text-primary); font-family: 'JetBrains Mono', monospace;">{}</strong></div>
                     </div>
-                    <div class="mt-3">
-                        <a href="/admin" class="inline-flex items-center justify-center w-full px-3 py-1.5 bg-gray-800/90 hover:bg-gray-700 border border-gray-700 rounded-xl text-xs text-gray-200 font-semibold transition shadow-sm">
-                            🔄 Làm Mới Số Liệu Web
-                        </a>
-                    </div>
+                    <a href="/admin" class="btn btn--secondary btn--sm btn--block">🔄 Làm Mới Số Liệu Web</a>
                 </div>
             </section>
 
             <!-- Widget Shopee Social Harvester -->
-            <section class="card-surface bg-gradient-to-r from-purple-950/40 via-pink-950/30 to-orange-950/30 border border-purple-500/30 rounded-2xl p-5 shadow-xl flex flex-wrap items-center justify-between gap-4">
-                <div class="flex items-center space-x-3.5">
-                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center text-2xl shadow-lg flex-shrink-0">
-                        🤖
-                    </div>
+            <section class="card card--social">
+                <div class="social-left">
+                    <div class="social-icon">🤖</div>
                     <div>
-                        <div class="flex flex-wrap items-center gap-2">
-                            <h2 class="text-sm font-bold text-white uppercase tracking-wider">Shopee Social Harvester — Tự Động Bắt Chữ Ký FB &amp; IG Reels</h2>
-                            <span class="px-2.5 py-0.5 bg-green-500/20 text-green-300 border border-green-500/30 rounded-full text-xs font-semibold">🟢 Quét Ngầm 30 Phút/Lần</span>
+                        <div class="card-title">
+                            <span>Shopee Social Harvester — Tự Động Bắt Chữ Ký FB &amp; IG Reels</span>
+                            <span class="badge badge--ok">🟢 Quét Ngầm 30 Phút/Lần</span>
                         </div>
-                        <p class="text-xs text-gray-300 mt-1">
+                        <p class="card-desc">
                             Hệ thống tự động quét các nguồn deal lớn để trích xuất chữ ký số mạng xã hội (<code>sm_sig_id</code>, <code>channel_type=ig</code>) giúp 100% link Shopee do bot cấp cho khách mở khóa <b>Mã Giảm 20% - 30% độc quyền</b>!
                         </p>
                     </div>
                 </div>
-                <div class="flex items-center space-x-2 text-xs">
-                    <span class="text-gray-300 bg-gray-900/90 border border-gray-800 px-3 py-2 rounded-xl font-mono text-xs shadow-sm">💡 Hoặc dán thẳng link FB/Insta vào bot Telegram @vvipass_vip_bot để nạp ngay!</span>
-                </div>
+                <div class="social-hint">💡 Hoặc dán thẳng link FB/Insta vào bot Telegram @vvipass_vip_bot để nạp ngay!</div>
             </section>
 
             <!-- Lịch sử dán link gần nhất -->
-            <section class="card-surface rounded-2xl overflow-hidden shadow-xl">
-                <div class="p-5 border-b border-gray-800/80 bg-gray-950/40 flex items-center justify-between">
+            <section class="card card--table">
+                <div class="card-head card-head--table">
                     <div>
-                        <h2 class="text-base font-bold text-white flex items-center space-x-2">
-                            <span>📋</span>
-                            <span>Lịch Sử Khách Dán Link Săn Sale Gần Đây (50 lượt mới nhất)</span>
-                        </h2>
-                        <p class="text-xs text-gray-400 mt-0.5">Theo dõi thời gian thực các liên kết khách gửi vào bot Telegram</p>
+                        <h2 class="card-title"><span>📋</span><span>Lịch Sử Khách Dán Link Săn Sale Gần Đây (50 lượt mới nhất)</span></h2>
+                        <p class="card-desc">Theo dõi thời gian thực các liên kết khách gửi vào bot Telegram</p>
                     </div>
                 </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left">
-                        <thead class="bg-gray-950/70 text-xs uppercase text-gray-400 border-b border-gray-800/80">
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead>
                             <tr>
-                                <th class="py-3 px-4">Telegram ID</th>
-                                <th class="py-3 px-4">Sàn</th>
-                                <th class="py-3 px-4">Link Khách Gửi</th>
-                                <th class="py-3 px-4">Link Đầu Ra</th>
-                                <th class="py-3 px-4">Thời Gian</th>
+                                <th>Telegram ID</th>
+                                <th>Sàn</th>
+                                <th>Link Khách Gửi</th>
+                                <th>Link Đầu Ra</th>
+                                <th>Thời Gian</th>
                             </tr>
                         </thead>
-                        <tbody class="divide-y divide-gray-800/60">
+                        <tbody>
                             {}
                         </tbody>
                     </table>
@@ -2778,72 +3372,65 @@ async fn handle_dashboard(
         </div>
 
         <!-- TAB 2: KẾT NỐI SÀN & API (PLATFORMS) -->
-        <div id="tab-pane-platforms" class="tab-pane hidden space-y-6">
+        <div id="tab-pane-platforms" class="tab-pane is-hidden">
             <!-- Kết nối ACCESSTRADE API Full 4 Sàn -->
-            <section class="card-surface rounded-2xl p-6 shadow-xl space-y-5">
-                <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800/80 pb-4">
+            <section class="card">
+                <div class="card-head">
                     <div>
-                        <h2 class="text-lg font-bold text-white flex items-center space-x-2">
-                            <span>🚀</span>
-                            <span>Kết Nối ACCESSTRADE API (Tự Động Đa Sàn)</span>
-                        </h2>
-                        <p class="text-xs text-gray-400 mt-1">
+                        <h2 class="card-title"><span>🚀</span><span>Kết Nối ACCESSTRADE API (Tự Động Đa Sàn)</span></h2>
+                        <p class="card-desc">
                             Bot tự động gọi API <code>v1/product_link/create</code> &amp; TikTok v2 Universal Deeplink, đồng thời kiểm tra HTTP 302/200 chống lỗi link 404/500.
                         </p>
                     </div>
-                    <div class="flex items-center space-x-2">
+                    <div class="card-head-actions">
                         {}
-                        <form method="POST" action="/admin/settings/accesstrade/sync" class="inline">
-                            <button type="submit" class="px-3.5 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-xl text-xs text-amber-400 font-semibold transition">
-                                🔄 Đồng Bộ Lại Chiến Dịch
-                            </button>
+                        <form method="POST" action="/admin/settings/accesstrade/sync" style="margin: 0;">
+                            <button type="submit" class="btn btn--secondary btn--sm">🔄 Đồng Bộ Lại Chiến Dịch</button>
                         </form>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div class="bg-gray-950/60 border border-gray-800/80 rounded-xl p-4 space-y-3">
-                        <div class="text-xs font-bold uppercase tracking-wider text-gray-400">Trạng Thái Duyệt &amp; Chuẩn Hóa Link</div>
-                        <div class="text-sm space-y-2">
-                            {}
-                        </div>
-                        <div class="text-xs text-gray-400 bg-gray-900/80 border border-gray-800 rounded-lg p-2.5 space-y-1">
-                            <div class="font-semibold text-gray-200">🛡️ Cơ chế bảo vệ Link Đầu Ra 100% Sống:</div>
+                <div class="split-at">
+                    <div class="plat-panel">
+                        <div class="plat-panel__title">Trạng Thái Duyệt &amp; Chuẩn Hóa Link</div>
+                        <div>{}</div>
+                        <div class="inset-note">
+                            <div><b>🛡️ Cơ chế bảo vệ Link Đầu Ra 100% Sống:</b></div>
                             <div>• <b>TikTok Shop:</b> Link v2 <code>tiktok.com/t/...</code> mở thẳng sản phẩm trên App.</div>
                             <div>• <b>Tiki &amp; Alibaba:</b> Tự dùng gói <b>TIKI CREATOR</b> &amp; <b>ALIBABA</b> đã duyệt + kiểm tra gateway <code>HTTP 200</code> trước khi gửi.</div>
                             <div>• <b>Shopee / Lazada:</b> Hỗ trợ song song Shopee Chính Chủ &amp; Deeplink dự phòng.</div>
                         </div>
                     </div>
 
-                    <form method="POST" action="/admin/settings/accesstrade" class="lg:col-span-2 space-y-4">
+                    <form method="POST" action="/admin/settings/accesstrade" class="form-stack">
                         <div>
-                            <label class="block text-xs font-semibold text-gray-400 mb-1">ACCESSTRADE API Access Key (Token)</label>
-                            <input type="password" name="api_token" placeholder="Dán API Access Key mới (hoặc để trống để giữ Token hiện tại)..." class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
-                            <p class="text-[11px] text-gray-500 mt-1">💡 Đã tích hợp sẵn API Token dự phòng trong cấu hình — không bao giờ mất kết nối khi deploy lại.</p>
+                            <label class="field-label">ACCESSTRADE API Access Key (Token)</label>
+                            <input type="password" name="api_token" placeholder="Dán API Access Key mới (hoặc để trống để giữ Token hiện tại)..." class="field-input field-input--mono">
+                            <p class="muted-text">💡 Đã tích hợp sẵn API Token từ cấu hình hệ thống — tự động giữ kết nối khi khởi động lại.</p>
                         </div>
 
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div class="form-grid-2">
                             <div>
-                                <label class="block text-xs font-semibold text-gray-400 mb-1">Campaign ID Shopee (Tùy chọn)</label>
-                                <input type="text" name="campaign_shopee" value="{}" placeholder="Tự động nhận diện nếu để trống" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-amber-500">
+                                <label class="field-label">Campaign ID Shopee (Tùy chọn)</label>
+                                <input type="text" name="campaign_shopee" value="{}" placeholder="Tự động nhận diện nếu để trống" class="field-input field-input--mono">
                             </div>
                             <div>
-                                <label class="block text-xs font-semibold text-gray-400 mb-1">Campaign ID Lazada (Tùy chọn)</label>
-                                <input type="text" name="campaign_lazada" value="{}" placeholder="Tự động nhận diện nếu để trống" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-amber-500">
+                                <label class="field-label">Campaign ID Lazada (Tùy chọn)</label>
+                                <input type="text" name="campaign_lazada" value="{}" placeholder="Tự động nhận diện nếu để trống" class="field-input field-input--mono">
                             </div>
                             <div>
-                                <label class="block text-xs font-semibold text-gray-400 mb-1">Campaign ID Tiki (Tùy chọn)</label>
-                                <input type="text" name="campaign_tiki" value="{}" placeholder="Tự động nhận diện nếu để trống" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-amber-500">
+                                <label class="field-label">Campaign ID Tiki (Tùy chọn)</label>
+                                <input type="text" name="campaign_tiki" value="{}" placeholder="Tự động nhận diện nếu để trống" class="field-input field-input--mono">
                             </div>
                             <div>
-                                <label class="block text-xs font-semibold text-gray-400 mb-1">Campaign ID TikTok Shop (Tùy chọn)</label>
-                                <input type="text" name="campaign_tiktok" value="{}" placeholder="Tự động nhận diện nếu để trống" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-amber-500">
+                                <label class="field-label">Campaign ID TikTok Shop (Tùy chọn)</label>
+                                <input type="text" name="campaign_tiktok" value="{}" placeholder="Tự động nhận diện nếu để trống" class="field-input field-input--mono">
                             </div>
                         </div>
 
-                        <button type="submit" class="px-6 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-gray-950 font-bold rounded-xl shadow-lg transition text-xs">
-                            Lưu &amp; Kích Hoạt ACCESSTRADE API
-                        </button>
+                        <div>
+                            <button type="submit" class="btn btn--primary">Lưu &amp; Kích Hoạt ACCESSTRADE API</button>
+                        </div>
                     </form>
                 </div>
             </section>
@@ -2852,77 +3439,72 @@ async fn handle_dashboard(
             {}
 
             <!-- Cấu hình Link Tiếp Thị Dự Phòng (Deeplink Template) -->
-            <section class="card-surface rounded-2xl p-6 shadow-xl space-y-4">
-                <h2 class="text-lg font-bold text-white mb-2 flex items-center space-x-2">
-                    <span>🔗</span>
-                    <span>Cấu Hình Deeplink Dự Phòng (Nếu Chưa Dùng API Token)</span>
-                </h2>
-                <p class="text-xs text-gray-400 mb-4">
-                    Nếu chiến dịch trên API chưa duyệt, hệ thống sẽ kiểm tra mẫu link dự phòng này. Nếu để trống, bot tự động trả về link sản phẩm sạch để khách mở App mua hàng không bị lỗi 404.
-                </p>
-                <form method="POST" action="/admin/settings/affiliate" class="space-y-4">
+            <section class="card">
+                <div>
+                    <h2 class="card-title"><span>🔗</span><span>Cấu Hình Deeplink Dự Phòng (Nếu Chưa Dùng API Token)</span></h2>
+                    <p class="card-desc">
+                        Nếu chiến dịch trên API chưa duyệt, hệ thống sẽ kiểm tra mẫu link dự phòng này. Nếu để trống, bot tự động trả về link sản phẩm sạch để khách mở App mua hàng không bị lỗi 404.
+                    </p>
+                </div>
+                <form method="POST" action="/admin/settings/affiliate" class="form-stack">
                     <div>
-                        <label class="block text-xs font-semibold text-gray-400 mb-1">Mẫu Deeplink Template</label>
-                        <input type="text" name="template" value="{}" placeholder="Ví dụ: https://go.isclix.com/deep_link/PUB_ID/CAMPAIGN_ID?url={{CLEAN_URL}}&utm_source=facebook&sub1={{USER_ID}}" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                        <label class="field-label">Mẫu Deeplink Template</label>
+                        <input type="text" name="template" value="{}" placeholder="Ví dụ: https://go.isclix.com/deep_link/PUB_ID/CAMPAIGN_ID?url={{CLEAN_URL}}&amp;utm_source=facebook&amp;sub1={{USER_ID}}" class="field-input field-input--mono">
                     </div>
-                    <button type="submit" class="px-5 py-2.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white font-semibold rounded-xl transition text-xs shadow-md">
-                        Lưu Deeplink Dự Phòng
-                    </button>
+                    <div>
+                        <button type="submit" class="btn btn--secondary">Lưu Deeplink Dự Phòng</button>
+                    </div>
                 </form>
             </section>
         </div>
 
         <!-- TAB 3: KHO VOUCHER THỊ TRƯỜNG & ĐỘC QUYỀN (VOUCHERS) -->
-        <div id="tab-pane-vouchers" class="tab-pane hidden space-y-6">
+        <div id="tab-pane-vouchers" class="tab-pane is-hidden">
             <!-- Kho Mã Giảm Giá Toàn Thị Trường -->
-            <section class="card-surface rounded-2xl p-6 shadow-xl space-y-5">
-                <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800/80 pb-4">
+            <section class="card">
+                <div class="card-head">
                     <div>
-                        <h2 class="text-lg font-bold text-white flex flex-wrap items-center gap-2">
+                        <h2 class="card-title">
                             <span>🔥</span>
                             <span>Kho Mã Giảm Giá Toàn Thị Trường (Cập Nhật Mỗi 60 Giây)</span>
-                            <span class="px-2.5 py-0.5 bg-orange-500/20 text-orange-300 border border-orange-500/30 rounded-lg text-xs font-semibold">{} mã đang sẵn ({} mã &gt;=20%)</span>
+                            <span class="badge badge--orange">{} mã đang sẵn ({} mã &gt;=20%)</span>
                         </h2>
-                        <p class="text-xs text-gray-400 mt-1">
-                            Quét vét cạn từ 7 cổng ACCESSTRADE (mã %, giảm tiền K/VNĐ, mã hot, coupon Tiki/Shopee/Lazada/TikTok). Lần quét gần nhất: <strong class="text-green-400">{}</strong>.
+                        <p class="card-desc">
+                            Quét từ hệ thống ACCESSTRADE (mã %, giảm tiền K/VNĐ, mã hot, coupon Tiki/Shopee/Lazada/TikTok). Lần quét gần nhất: <strong style="color: var(--ok-text);">{}</strong>.
                         </p>
                     </div>
-                    <form method="POST" action="/admin/vouchers/sync">
-                        <button type="submit" class="px-4 py-2 bg-gradient-to-r from-orange-500/30 to-amber-500/30 hover:from-orange-500/40 hover:to-amber-500/40 border border-orange-500/50 text-orange-200 rounded-xl text-xs font-semibold transition shadow-md">
-                            🔄 Quét Sâu Toàn Bộ Ngay
-                        </button>
+                    <form method="POST" action="/admin/vouchers/sync" style="margin: 0;">
+                        <button type="submit" class="btn btn--orange-soft">🔄 Quét Sâu Toàn Bộ Ngay</button>
                     </form>
                 </div>
 
                 <!-- Thanh tìm kiếm & lọc trên Web -->
-                <form method="GET" action="/admin" class="flex flex-wrap items-center gap-3 bg-gray-950/60 border border-gray-800/80 p-3 rounded-xl">
-                    <input type="text" name="q" value="{}" placeholder="Tìm tên shop, mã code, mức giảm (VD: 35%, LANGXDKKP, Tiki)..." class="flex-1 min-w-52 bg-gray-800 border border-gray-700/80 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
-                    <select name="plat" class="bg-gray-800 border border-gray-700/80 rounded-lg px-3 py-1.5 text-white text-xs">
+                <form method="GET" action="/admin" class="filter-bar">
+                    <input type="text" name="q" value="{}" placeholder="Tìm tên shop, mã code, mức giảm (VD: 35%, LANGXDKKP, Tiki)..." class="field-input grow-field">
+                    <select name="plat" class="field-input">
                         <option value="all" {}>🌟 Tất Cả Sàn &amp; Loại</option>
                         <option value="pct20" {}>🔥 Giảm Sâu 20% - 35%+</option>
                         <option value="other" {}>💸 Giảm Tiền K/VNĐ &amp; Khác</option>
                         <option value="Shopee" {}>🟠 Chỉ Shopee</option>
                         <option value="Tiki" {}>🔹 Chỉ Tiki</option>
                     </select>
-                    <button type="submit" class="px-4 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white rounded-lg text-xs font-semibold transition">
-                        🔍 Lọc Mã
-                    </button>
-                    <span class="text-xs text-gray-400">Hiển thị <strong class="text-white">{}</strong> / <strong>{}</strong> mã khớp</span>
+                    <button type="submit" class="btn btn--secondary btn--sm">🔍 Lọc Mã</button>
+                    <span class="cell-muted">Hiển thị <strong style="color: var(--text-primary);">{}</strong> / <strong>{}</strong> mã khớp</span>
                 </form>
 
-                <div class="overflow-x-auto rounded-xl border border-gray-800/80">
-                    <table class="w-full text-left">
-                        <thead class="bg-gray-950/70 text-xs uppercase text-gray-400 border-b border-gray-800/80">
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead>
                             <tr>
-                                <th class="py-2.5 px-3">Mức Giảm</th>
-                                <th class="py-2.5 px-3">Sàn</th>
-                                <th class="py-2.5 px-3">Mã Code</th>
-                                <th class="py-2.5 px-3">Gian Hàng &amp; Điều Kiện Áp Mã</th>
-                                <th class="py-2.5 px-3">HSD</th>
-                                <th class="py-2.5 px-3">Link Áp Mã</th>
+                                <th>Mức Giảm</th>
+                                <th>Sàn</th>
+                                <th>Mã Code</th>
+                                <th>Gian Hàng &amp; Điều Kiện Áp Mã</th>
+                                <th>HSD</th>
+                                <th>Link Áp Mã</th>
                             </tr>
                         </thead>
-                        <tbody class="divide-y divide-gray-800/60">
+                        <tbody>
                             {}
                         </tbody>
                     </table>
@@ -2930,75 +3512,73 @@ async fn handle_dashboard(
             </section>
 
             <!-- Kho Mã Độc Quyền Hợp Tác (Cấp Riêng AM / MCN / Shop) -->
-            <section class="card-surface border-purple-500/30 rounded-2xl p-6 shadow-xl space-y-5">
-                <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800/80 pb-4">
+            <section class="card card--purple">
+                <div class="card-head">
                     <div>
-                        <h2 class="text-lg font-bold text-white flex items-center space-x-2">
+                        <h2 class="card-title">
                             <span>👑</span>
                             <span>Kho Mã Độc Quyền Hợp Tác (Cấp Riêng AM / MCN / Nhãn Hàng)</span>
-                            <span class="px-2.5 py-0.5 bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded-lg text-xs font-semibold">{} mã đã lưu</span>
+                            <span class="badge badge--purple">{} mã đã lưu</span>
                         </h2>
-                        <p class="text-xs text-gray-400 mt-1">
+                        <p class="card-desc">
                             Dán hàng loạt mã độc quyền nhận được từ Account Manager ACCESSTRADE (MCN / Super Hoa Hồng) hoặc hợp tác trực tiếp với Shop. Các mã này luôn được <b>ưu tiên hàng đầu</b> trên Telegram Bot!
                         </p>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="grid-2">
                     <!-- Nhập hàng loạt -->
-                    <form method="POST" action="/admin/deals/import" class="bg-gray-950/60 border border-gray-800/80 rounded-xl p-4 space-y-3">
-                        <div class="text-xs font-bold uppercase tracking-wider text-purple-300">⚡ Nhập Nhanh Hàng Loạt (Hỗ trợ dấu | hoặc copy thẳng từ Excel/Google Sheets)</div>
-                        <p class="text-xs text-gray-400">
+                    <form method="POST" action="/admin/deals/import" class="subpanel">
+                        <div class="subpanel__title" style="color: var(--purple-text);">⚡ Nhập Nhanh Hàng Loạt (Hỗ trợ dấu | hoặc copy thẳng từ Excel/Google Sheets)</div>
+                        <p class="card-desc" style="margin: 0;">
                             Mỗi dòng 1 mã theo thứ tự: <code>Sàn | Tên/Shop | Mã Code | Mức giảm | Link áp mã | Đơn tối thiểu</code>
                         </p>
-                        <textarea name="bulk_lines" rows="5" required placeholder="Shopee | Deal Độc Quyền MCN 30% | ATVIP30 | Giảm 30% tối đa 100k | https://shopee.vn/search?... | 200000" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
-                        <button type="submit" class="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold rounded-xl text-xs transition shadow-md">
-                            📥 Nhập Danh Sách Mã Độc Quyền
-                        </button>
+                        <textarea name="bulk_lines" rows="5" required placeholder="Shopee | Deal Độc Quyền MCN 30% | ATVIP30 | Giảm 30% tối đa 100k | https://shopee.vn/search?... | 200000" class="code-textarea"></textarea>
+                        <div>
+                            <button type="submit" class="btn btn--purple">📥 Nhập Danh Sách Mã Độc Quyền</button>
+                        </div>
                     </form>
 
                     <!-- Thêm lẻ 1 mã -->
-                    <form method="POST" action="/admin/deals/add" class="bg-gray-950/60 border border-gray-800/80 rounded-xl p-4 space-y-3">
-                        <div class="text-xs font-bold uppercase tracking-wider text-gray-300">➕ Thêm Lẻ 1 Mã Độc Quyền</div>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                            <select name="platform" class="bg-gray-800 border border-gray-700/80 rounded-xl px-3 py-2 text-white text-xs">
+                    <form method="POST" action="/admin/deals/add" class="subpanel">
+                        <div class="subpanel__title">➕ Thêm Lẻ 1 Mã Độc Quyền</div>
+                        <div class="form-grid-2">
+                            <select name="platform" class="field-input">
                                 <option value="Shopee">Shopee</option>
                                 <option value="TikTok Shop">TikTok Shop</option>
                                 <option value="Lazada">Lazada</option>
                                 <option value="Tiki">Tiki</option>
                                 <option value="Alibaba">Alibaba</option>
                             </select>
-                            <input type="text" name="coupon_code" required placeholder="Mã Code (VD: ATVIP35)" class="bg-gray-800 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs">
-                            <input type="text" name="title" required placeholder="Tên Shop / Chương trình" class="bg-gray-800 border border-gray-700/80 rounded-xl px-3 py-2 text-white text-xs">
-                            <input type="text" name="discount_desc" required placeholder="Mức giảm (VD: Giảm 35% tối đa 120k)" class="bg-gray-800 border border-gray-700/80 rounded-xl px-3 py-2 text-white text-xs">
-                            <input type="url" name="deal_url" required placeholder="Link áp mã (https://...)" class="bg-gray-800 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs">
-                            <input type="number" name="min_spend" min="0" step="1000" value="0" placeholder="Đơn tối thiểu (VNĐ)" class="bg-gray-800 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs">
+                            <input type="text" name="coupon_code" required placeholder="Mã Code (VD: ATVIP35)" class="field-input field-input--mono">
+                            <input type="text" name="title" required placeholder="Tên Shop / Chương trình" class="field-input">
+                            <input type="text" name="discount_desc" required placeholder="Mức giảm (VD: Giảm 35% tối đa 120k)" class="field-input">
+                            <input type="url" name="deal_url" required placeholder="Link áp mã (https://...)" class="field-input field-input--mono">
+                            <input type="number" name="min_spend" min="0" step="1000" value="0" placeholder="Đơn tối thiểu (VNĐ)" class="field-input field-input--mono">
                         </div>
-                        <label class="inline-flex items-center space-x-2 text-xs text-gray-300">
-                            <input type="checkbox" name="is_exclusive" value="1" checked class="rounded bg-gray-800 border-gray-600">
+                        <label class="check-row">
+                            <input type="checkbox" name="is_exclusive" value="1" checked>
                             <span>Đánh dấu là 👑 Mã Độc Quyền Hợp Tác (Ưu tiên hiển thị đầu tiên)</span>
                         </label>
                         <div>
-                            <button type="submit" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white font-semibold rounded-xl text-xs transition">
-                                💾 Lưu Mã Độc Quyền
-                            </button>
+                            <button type="submit" class="btn btn--secondary">💾 Lưu Mã Độc Quyền</button>
                         </div>
                     </form>
                 </div>
 
-                <div class="overflow-x-auto rounded-xl border border-gray-800/80">
-                    <table class="w-full text-left">
-                        <thead class="bg-gray-950/70 text-xs uppercase text-gray-400 border-b border-gray-800/80">
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead>
                             <tr>
-                                <th class="py-2.5 px-3">Loại</th>
-                                <th class="py-2.5 px-3">Sàn</th>
-                                <th class="py-2.5 px-3">Tên &amp; Mô Tả</th>
-                                <th class="py-2.5 px-3">Mã Code</th>
-                                <th class="py-2.5 px-3">Trạng Thái</th>
-                                <th class="py-2.5 px-3">Hành Động</th>
+                                <th>Loại</th>
+                                <th>Sàn</th>
+                                <th>Tên &amp; Mô Tả</th>
+                                <th>Mã Code</th>
+                                <th>Trạng Thái</th>
+                                <th>Hành Động</th>
                             </tr>
                         </thead>
-                        <tbody class="divide-y divide-gray-800/60">
+                        <tbody>
                             {}
                         </tbody>
                     </table>
@@ -3007,24 +3587,22 @@ async fn handle_dashboard(
         </div>
 
         <!-- TAB 4: BÁO ĐƠN & DOANH THU (ORDERS) -->
-        <div id="tab-pane-orders" class="tab-pane hidden space-y-6">
+        <div id="tab-pane-orders" class="tab-pane is-hidden">
             {}
         </div>
     </main>
 
-    <footer class="max-w-7xl mx-auto px-4 py-6 text-center text-xs text-gray-500 border-t border-gray-800/50 mt-12">
+    <footer class="admin-footer">
         Thế Giới Siêu Sale Affiliate System · Bản Quyền 2026 · Vận hành bảo mật trên Rust + LibSQL
     </footer>
 
     <script>
         function switchTab(tabId) {{
-            document.querySelectorAll('.tab-pane').forEach(el => el.classList.add('hidden'));
-            document.querySelectorAll('.tab-btn').forEach(btn => {{
-                btn.classList.remove('active');
-            }});
+            document.querySelectorAll('.tab-pane').forEach(el => el.classList.add('is-hidden'));
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             const target = document.getElementById('tab-pane-' + tabId);
             const btn = document.getElementById('tab-btn-' + tabId);
-            if (target) target.classList.remove('hidden');
+            if (target) target.classList.remove('is-hidden');
             if (btn) btn.classList.add('active');
             try {{
                 history.replaceState(null, '', '#' + tabId);
@@ -3185,75 +3763,76 @@ fn render_shopee_card(
     }
 
     format!(
-        r##"<section class="card-surface border-orange-500/30 rounded-2xl p-6 shadow-xl space-y-5">
-            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800/80 pb-4">
+        r##"<section class="card card--orange">
+            <div class="card-head">
                 <div>
-                    <h2 class="text-lg font-bold text-white flex items-center space-x-2">
-                        <span>🟠</span>
-                        <span>Kết Nối Shopee Affiliate Chính Chủ &amp; Bọc Link Riêng</span>
-                    </h2>
-                    <p class="text-xs text-gray-400 mt-1">
-                        Bot tự động bọc 100% link đầu ra dạng <code>/8_ký_tự</code>, ưu tiên link <code>s.shopee.vn</code> chính chủ và che hoàn toàn tên miền Web Chính khi gắn Cloudflare Worker hoặc tên miền bọc riêng.
+                    <h2 class="card-title"><span>🟠</span><span>Kết Nối Shopee Affiliate Chính Chủ &amp; Bọc Link Riêng</span></h2>
+                    <p class="card-desc">
+                        Ưu tiên link Shopee chính chủ qua Open API hoặc <code>s.shopee.vn/an_redir</code>. Khi gắn <code>Tên Miền Bọc Link Riêng</code> (qua Tunnel/Worker), mọi đường dẫn đầu ra tự động được bọc gọn 8 ký tự.
                     </p>
                 </div>
                 <div>{}</div>
             </div>
-            <form method="POST" action="/admin/settings/shopee" class="space-y-4">
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <form method="POST" action="/admin/settings/shopee" class="form-stack">
+                <div class="grid-3">
                     <div>
-                        <label class="block text-xs font-semibold text-gray-400 mb-1">Shopee Affiliate ID (Dùng ngay qua an_redir)</label>
-                        <input type="text" name="shopee_affiliate_id" value="{}" placeholder="Ví dụ: 17375520550 (5-20 chữ số)" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <label class="field-label">Shopee Affiliate ID (Dùng ngay qua an_redir)</label>
+                        <input type="text" name="shopee_affiliate_id" value="{}" placeholder="Ví dụ: 17375520550 (5-20 chữ số)" class="field-input font-mono">
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-gray-400 mb-1">Shopee Open API AppID (Tùy chọn)</label>
-                        <input type="text" name="shopee_app_id" value="{}" placeholder="Nhập AppID từ affiliate.shopee.vn..." class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <label class="field-label">Shopee Open API AppID (Tùy chọn)</label>
+                        <input type="text" name="shopee_app_id" value="{}" placeholder="Nhập AppID từ affiliate.shopee.vn..." class="field-input font-mono">
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-gray-400 mb-1">Shopee Open API Secret Key (Tùy chọn)</label>
-                        <input type="password" name="shopee_app_secret" placeholder="{}" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <label class="field-label">Shopee Open API Secret Key (Tùy chọn)</label>
+                        <input type="password" name="shopee_app_secret" placeholder="{}" class="field-input font-mono">
                     </div>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-gray-800/80">
+                <div class="grid-2 divider-top">
                     <div>
-                        <label class="block text-xs font-semibold text-gray-400 mb-1">Bộ Tham Số Phiên IG/FB Reels Passthrough (<span class="text-orange-300">{}</span>)</label>
-                        <input type="password" name="shopee_social_params" placeholder="{}" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
-                        <label class="inline-flex items-center space-x-2 text-xs text-gray-400 mt-1.5">
-                            <input type="checkbox" name="clear_social_params" value="1" class="rounded bg-gray-800 border-gray-600">
+                        <label class="field-label">Bộ Tham Số Phiên IG/FB Reels Passthrough (<span style="color:#fdba74;">{}</span>)</label>
+                        <input type="password" name="shopee_social_params" placeholder="{}" class="field-input font-mono">
+                        <label class="check-row">
+                            <input type="checkbox" name="clear_social_params" value="1">
                             <span>Xóa bộ tham số phiên IG/FB đang lưu</span>
                         </label>
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-gray-400 mb-1">Tên Miền Bọc Link Riêng / Tunnel (Tùy chọn)</label>
-                        <input type="text" name="shortlink_base_url" value="{}" placeholder="Để trống để trả link Affiliate trực tiếp (hoặc nhập https://...)" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">
-                        <label class="inline-flex items-center space-x-2 text-xs text-gray-300 mt-1.5">
-                            <input type="checkbox" name="shortlink_mobile_only" value="1" {} class="rounded bg-gray-800 border-gray-600">
+                        <label class="field-label">Tên Miền Bọc Link Riêng / Tunnel (Tùy chọn)</label>
+                        <input type="text" name="shortlink_base_url" value="{}" placeholder="Để trống để trả link Affiliate trực tiếp (hoặc nhập https://...)" class="field-input font-mono">
+                        <label class="check-row">
+                            <input type="checkbox" name="shortlink_mobile_only" value="1" {}>
                             <span>🛡️ Chặn máy tính soi link bọc (Chỉ cho điện thoại mở giống godeal.online)</span>
                         </label>
-                        <label class="inline-flex items-center space-x-2 text-xs text-gray-300 mt-1.5 block">
-                            <input type="checkbox" name="public_home_cloak" value="1" {} class="rounded bg-gray-800 border-gray-600">
+                        <label class="check-row">
+                            <input type="checkbox" name="public_home_cloak" value="1" {}>
                             <span>🙈 Ẩn luôn Trang chủ <code>/</code> thành <code>404 Not Found</code> (Chỉ bật nếu không chờ duyệt web Shopee/AT)</span>
                         </label>
                     </div>
                 </div>
-                <button type="submit" class="px-5 py-2.5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-gray-950 font-bold rounded-xl text-xs shadow-lg transition">
-                    💾 Lưu Cấu Hình Shopee &amp; Bọc Link
-                </button>
+                <div>
+                    <button type="submit" class="btn btn--primary">
+                        💾 Lưu Cấu Hình Shopee &amp; Bọc Link
+                    </button>
+                </div>
             </form>
-            <details class="bg-gray-950/70 border border-gray-800 rounded-xl p-4">
-                <summary class="cursor-pointer text-xs font-bold text-orange-300 select-none">
+            <details class="cf-details">
+                <summary class="cf-summary">
                     ☁️ Hướng dẫn tạo link bọc riêng 100% miễn phí bằng Cloudflare Worker (Nếu chạy Tunnel công khai)
                 </summary>
-                <div class="mt-3 space-y-3 text-xs text-gray-300">
-                    <ol class="list-decimal list-inside space-y-1 text-gray-400">
-                        <li>Vào <span class="text-white font-semibold">dash.cloudflare.com</span> (tài khoản miễn phí) → chọn <span class="text-white font-semibold">Workers &amp; Pages</span> → <span class="text-white font-semibold">Create Worker</span> → <span class="text-white font-semibold">Deploy</span> → <span class="text-white font-semibold">Edit code</span>.</li>
-                        <li>Xóa hết code mẫu, dán toàn bộ đoạn code bên dưới vào rồi bấm <span class="text-white font-semibold">Deploy</span>.</li>
-                        <li>Copy địa chỉ Worker (dạng <code class="text-orange-300">https://ten-worker.ten-ban.workers.dev</code>) dán vào ô <span class="text-white font-semibold">Tên Miền Bọc Link Riêng</span> ở trên và bấm Lưu.</li>
+                <div class="cf-body">
+                    <ol class="cf-steps">
+                        <li>Vào <b>dash.cloudflare.com</b> (tài khoản miễn phí) → chọn <b>Workers &amp; Pages</b> → <b>Create Worker</b> → <b>Deploy</b> → <b>Edit code</b>.</li>
+                        <li>Xóa hết code mẫu, dán toàn bộ đoạn code bên dưới vào rồi bấm <b>Deploy</b>.</li>
+                        <li>Copy địa chỉ Worker (dạng <code>https://ten-worker.ten-ban.workers.dev</code>) dán vào ô <b>Tên Miền Bọc Link Riêng</b> ở trên và bấm Lưu.</li>
                         <li>Từ đó link bot Telegram trả ra hoàn toàn dùng domain mới; trang chủ <code>/</code> hiển thị Trang Đích Bot Telegram riêng và mọi đường dẫn nội bộ (<code>/admin</code>, <code>/convert</code>, <code>/health</code>...) đều trả <code>404 Not Found</code>!</li>
                     </ol>
-                    <textarea id="cf-worker-code" readonly rows="10" class="w-full bg-gray-900 border border-gray-800 rounded-xl p-3 text-green-300 font-mono text-xs focus:outline-none">{}</textarea>
-                    <button type="button" class="js-copy-link px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white font-semibold rounded-xl text-xs transition" data-copy-target="cf-worker-code">
-                        📋 Sao chép Code Cloudflare Worker
-                    </button>
+                    <textarea id="cf-worker-code" readonly rows="10" class="field-input font-mono code-textarea">{}</textarea>
+                    <div>
+                        <button type="button" class="btn btn--secondary js-copy-link" data-copy-target="cf-worker-code">
+                            📋 Sao chép Code Cloudflare Worker
+                        </button>
+                    </div>
                 </div>
             </details>
         </section>"##,
@@ -3369,10 +3948,10 @@ async fn handle_sync_accesstrade(headers: HeaderMap, State(state): State<AppStat
 
 fn render_order_alerts_card(admin_telegram_id: &str, orders: &[TrackedOrder]) -> String {
     let status_badge = if admin_telegram_id.trim().is_empty() {
-        r#"<span class="px-2.5 py-1 bg-yellow-500/20 text-yellow-300 rounded-lg text-xs font-semibold">🟡 Chưa gắn Telegram ID nhận báo đơn</span>"#.to_string()
+        r#"<span class="badge badge--warn">🟡 Chưa gắn Telegram ID nhận báo đơn</span>"#.to_string()
     } else {
         format!(
-            r#"<span class="px-2.5 py-1 bg-green-500/20 text-green-400 rounded-lg text-xs font-semibold">🟢 Đang báo đơn tới ID: {}</span>"#,
+            r#"<span class="badge badge--ok">🟢 Đang báo đơn tới ID: {}</span>"#,
             escape_html(admin_telegram_id.trim())
         )
     };
@@ -3380,18 +3959,18 @@ fn render_order_alerts_card(admin_telegram_id: &str, orders: &[TrackedOrder]) ->
     let mut order_rows = String::new();
     for ord in orders {
         let status_cls = match ord.status.as_str() {
-            "APPROVED" => "text-green-400",
-            "REJECTED" => "text-red-400",
-            _ => "text-yellow-300",
+            "APPROVED" => "badge badge--ok",
+            "REJECTED" => "badge badge--err",
+            _ => "badge badge--warn",
         };
         order_rows.push_str(&format!(
-            r#"<tr class="border-b border-gray-800/80 hover:bg-gray-800/40">
-                <td class="py-2.5 px-3 text-xs font-semibold text-white">{}</td>
-                <td class="py-2.5 px-3 text-xs font-mono text-gray-200">{}</td>
-                <td class="py-2.5 px-3 text-xs font-bold {}">{}</td>
-                <td class="py-2.5 px-3 text-xs text-gray-200">{}</td>
-                <td class="py-2.5 px-3 text-xs font-bold text-green-400">{}</td>
-                <td class="py-2.5 px-3 text-xs font-mono text-gray-400">{}</td>
+            r#"<tr>
+                <td class="cell-strong">{}</td>
+                <td class="font-mono cell-muted">{}</td>
+                <td><span class="{}">{}</span></td>
+                <td class="cell-strong">{}</td>
+                <td class="font-mono" style="color:#4ade80;font-weight:700;">{}</td>
+                <td class="font-mono cell-muted">{}</td>
             </tr>"#,
             escape_html(&ord.platform),
             escape_html(&ord.order_id),
@@ -3403,49 +3982,46 @@ fn render_order_alerts_card(admin_telegram_id: &str, orders: &[TrackedOrder]) ->
         ));
     }
     if order_rows.is_empty() {
-        order_rows = r#"<tr><td colspan="6" class="py-6 text-center text-xs text-gray-500">Chưa có đơn hàng phát sinh được ghi nhận trong 7 ngày gần nhất. Khi có đơn thật từ Shopee / TikTok Shop / ACCESSTRADE, hệ thống sẽ tự lưu và báo ngay về Telegram!</td></tr>"#.to_string();
+        order_rows = r#"<tr><td colspan="6" class="empty-cell">Chưa có đơn hàng phát sinh được ghi nhận trong 7 ngày gần nhất. Khi có đơn thật từ Shopee / TikTok Shop / ACCESSTRADE, hệ thống sẽ tự lưu và báo ngay về Telegram!</td></tr>"#.to_string();
     }
 
     format!(
-        r#"<section class="card-surface border-green-500/30 rounded-2xl p-6 shadow-xl space-y-5">
-            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800/80 pb-4">
+        r#"<section class="card card--green">
+            <div class="card-head">
                 <div>
-                    <h2 class="text-lg font-bold text-white flex items-center space-x-2">
-                        <span>🔔</span>
-                        <span>Báo Đơn Tự Động Về Telegram &amp; Đối Soát Hoa Hồng (Mỗi 10 Phút)</span>
-                    </h2>
-                    <p class="text-xs text-gray-400 mt-1">
+                    <h2 class="card-title"><span>🔔</span><span>Báo Đơn Tự Động Về Telegram &amp; Đối Soát Hoa Hồng (Mỗi 10 Phút)</span></h2>
+                    <p class="card-desc">
                         Gõ lệnh <code>/stats</code> trong bot Telegram để lấy ID số của bạn rồi dán vào ô bên dưới. Mỗi khi có đơn mới trên ACCESSTRADE / Shopee Open API, bot sẽ nhắn tin báo ngay!
                     </p>
                 </div>
                 <div>{}</div>
             </div>
-            <div class="flex flex-wrap items-end gap-3">
-                <form method="POST" action="/admin/settings/notifications" class="flex flex-wrap items-end gap-3 flex-1">
-                    <div class="flex-1 min-w-52">
-                        <label class="block text-xs font-semibold text-gray-400 mb-1">Telegram ID Admin Nhận Thông Báo Đơn</label>
-                        <input type="text" name="admin_telegram_id" value="{}" placeholder="Ví dụ: 5123456789 (hoặc để trống để tắt)" class="w-full bg-gray-800/90 border border-gray-700/80 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-green-500">
+            <div class="filter-bar">
+                <form method="POST" action="/admin/settings/notifications" class="inline-form-grow">
+                    <div class="grow-field">
+                        <label class="field-label">Telegram ID Admin Nhận Thông Báo Đơn</label>
+                        <input type="text" name="admin_telegram_id" value="{}" placeholder="Ví dụ: 5123456789 (hoặc để trống để tắt)" class="field-input font-mono">
                     </div>
-                    <button type="submit" class="px-5 py-2.5 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-bold rounded-xl text-xs shadow-lg transition">
+                    <button type="submit" class="btn btn--success">
                         💾 Lưu Telegram ID Báo Đơn
                     </button>
                 </form>
                 <form method="POST" action="/admin/orders/sync">
-                    <button type="submit" class="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-green-300 font-semibold rounded-xl text-xs transition">
+                    <button type="submit" class="btn btn--secondary">
                         🔄 Quét Đơn Mới Ngay
                     </button>
                 </form>
             </div>
-            <div class="overflow-x-auto rounded-xl border border-gray-800/80">
-                <table class="w-full text-left">
-                    <thead class="bg-gray-950/70 text-xs uppercase text-gray-400 border-b border-gray-800/80">
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
                         <tr>
-                            <th class="py-2.5 px-3">Sàn</th>
-                            <th class="py-2.5 px-3">Mã Đơn Hàng</th>
-                            <th class="py-2.5 px-3">Trạng Thái</th>
-                            <th class="py-2.5 px-3">Giá Trị Đơn</th>
-                            <th class="py-2.5 px-3">Hoa Hồng</th>
-                            <th class="py-2.5 px-3">Thời Gian Đặt</th>
+                            <th>Sàn</th>
+                            <th>Mã Đơn Hàng</th>
+                            <th>Trạng Thái</th>
+                            <th>Giá Trị Đơn</th>
+                            <th>Hoa Hồng</th>
+                            <th>Thời Gian Đặt</th>
                         </tr>
                     </thead>
                     <tbody>
