@@ -11,6 +11,7 @@ if not exist ".env" (
 )
 
 echo [1/3] Dang don tien trinh bot ^& tunnel cu (neu co^)...
+taskkill /F /IM TheGioiSieuSale.exe >nul 2>&1
 taskkill /F /IM salehunter_bot.exe >nul 2>&1
 if exist "target\cf_tunnel.pid" (
     for /f "usebackq delims=" %%P in ("target\cf_tunnel.pid") do taskkill /F /PID %%P >nul 2>&1
@@ -25,9 +26,15 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+copy /Y ".\target\release\salehunter_bot.exe" ".\TheGioiSieuSale.exe" >nul
+if errorlevel 1 (
+    echo [LOI] Khong the cap nhat file TheGioiSieuSale.exe! Hay tat app dang chay o khay he thong truoc.
+    pause
+    exit /b 1
+)
 
 echo [3/3] Dang khoi chay The Gioi Sieu Sale Desktop App (Auto Bot + Tunnel)...
 echo       Cua so giao dien Desktop + khay he thong (System Tray) se tu mo.
-start "" ".\target\release\salehunter_bot.exe"
+start "" ".\TheGioiSieuSale.exe"
 exit /b 0
 
