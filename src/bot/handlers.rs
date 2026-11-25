@@ -535,7 +535,13 @@ pub async fn handle_message(
                         if ex_list.is_empty() {
                             String::new()
                         } else {
-                            let mut s = String::from("\n\n👑 <b>MÃ ĐỘC QUYỀN ÁP DỤNG CHO SẢN PHẨM NÀY:</b>");
+                            let has_exclusive = ex_list.iter().any(|d| d.is_exclusive);
+                            let block_title = if has_exclusive {
+                                "\n\n👑 <b>MÃ ĐỘC QUYỀN ÁP DỤNG CHO SẢN PHẨM NÀY:</b>"
+                            } else {
+                                "\n\n🎁 <b>MÃ ƯU ĐÃI ĐÃ LƯU ÁP DỤNG CHO SẢN PHẨM NÀY:</b>"
+                            };
+                            let mut s = String::from(block_title);
                             for d in ex_list {
                                 let wrapped_deal_url = Repository::wrap_url_if_public(
                                     &conn,
@@ -559,9 +565,10 @@ pub async fn handle_message(
                                     escape_html(&wrapped_deal_url)
                                 ));
                                 if voucher_buttons.len() < 2 && !wrapped_deal_url.trim().is_empty() {
+                                    let prefix = if d.is_exclusive { "👑 Lấy Mã Độc Quyền" } else { "🎁 Mở Mã Ưu Đãi" };
                                     let btn_label = match d.coupon_code.as_deref().filter(|c| !c.trim().is_empty()) {
-                                        Some(c) => format!("👑 Lấy Mã Độc Quyền · {}", c),
-                                        None => format!("👑 {}", d.title),
+                                        Some(c) => format!("{} · {}", prefix, c),
+                                        None => format!("{} · {}", prefix, d.title),
                                     };
                                     voucher_buttons.push((btn_label, wrapped_deal_url));
                                 }

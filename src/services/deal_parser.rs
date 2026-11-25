@@ -441,12 +441,15 @@ impl DealParser {
                 )
             };
 
+            let is_numeric_only = |s: &str| {
+                !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit() || b == b'.' || b == b'-')
+            };
+
             let candidate = segments
                 .iter()
                 .copied()
-                .filter(|s| !is_container_seg(s))
-                .max_by_key(|s| s.len())
-                .or_else(|| segments.first().copied());
+                .filter(|s| !is_container_seg(s) && !is_numeric_only(s))
+                .max_by_key(|s| s.len());
 
             if let Some(seg) = candidate {
                 let slug = seg.split("-i.").next().unwrap_or(seg);
@@ -478,8 +481,20 @@ impl DealParser {
                 };
                 let title = slug.replace(['-', '_'], " ");
                 let title = title.trim();
-                if title.len() > 3 && !title.starts_with("product") && !title.starts_with("s.") {
+                let has_letters = title.chars().any(|c| c.is_alphabetic());
+                if has_letters && title.len() > 3 && !title.starts_with("product") && !title.starts_with("s.") {
                     return capitalize_words(title);
+                }
+            }
+            if let Some(host) = parsed.host_str().map(|h| h.to_lowercase()) {
+                if host.contains("shopee") || host.contains("shp.ee") {
+                    return "Sản Phẩm Shopee".to_string();
+                } else if host.contains("lazada") || host.contains("lzd.co") {
+                    return "Sản Phẩm Lazada".to_string();
+                } else if host.contains("tiki") || host.contains("ti.ki") {
+                    return "Sản Phẩm Tiki".to_string();
+                } else if host.contains("tiktok") {
+                    return "Sản Phẩm TikTok Shop".to_string();
                 }
             }
         }
@@ -1053,6 +1068,10 @@ mod tests {
         assert_eq!(
             parser.extract_first_url(wrapped).unwrap(),
             "https://shopee.vn/product/123/456"
+        );
+        assert_eq!(
+            parser.extract_title_from_slug("https://shopee.vn/product/1469098303/46017065230"),
+            "Sản Phẩm Shopee"
         );
     }
 

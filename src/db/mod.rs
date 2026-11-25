@@ -216,6 +216,18 @@ impl AppDb {
             )
             .await;
 
+        // Dọn dẹp triệt để các bản ghi seed giả mẫu cũ (AUTO_*, SHOPEE50K...) nếu tồn tại từ DB phiên bản cũ
+        let _ = conn
+            .execute(
+                "DELETE FROM deals WHERE is_exclusive = 0 AND (
+                    coupon_code LIKE 'AUTO_%'
+                    OR coupon_code IN ('SHOPEE50K', 'FREESHIP30', 'LAZADA100', 'TIKINOW20', 'TTSALE30')
+                    OR (platform = 'Lazada' AND coupon_code IS NULL AND title = 'Hoàn Tiền Max 12%')
+                );",
+                (),
+            )
+            .await;
+
         info!("LibSQL schema migration thành công.");
         Ok(())
     }
