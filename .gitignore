@@ -5,6 +5,9 @@
 *.db-journal
 *.db-wal
 *.db-shm
+*.bak
 .env
 .DS_Store
 Thumbs.db
+salehunter_bot
+salehunter_bot_linux

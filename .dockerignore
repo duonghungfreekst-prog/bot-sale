@@ -1,4 +1,13 @@
+# Bỏ qua Rust desktop build/source khi build Docker image cho bản Go Web Hosting
+src/
 target/
+Cargo.toml
+Cargo.lock
+build.rs
+avatar_bot.jpg
+run_salehunter_bot.bat
+
+# VCS, IDE, secrets, local DB & build artifacts
 .git/
 .github/
 .antigravity/
@@ -10,5 +19,6 @@ target/
 *.exe
 *.WebView2/
 *.log
+*.bak
 temp/
 tmp/

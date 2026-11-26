@@ -1,59 +1,33 @@
-# 🚀 Thế Giới Siêu Sale - Bot Săn Mã Giảm Giá & Web Quản Trị Đa Sàn (Rust + LibSQL)
+# 🚀 Thế Giới Siêu Sale - Bot Săn Mã Giảm Giá & Web Quản Trị Đa Sàn
 
-Hệ thống Bot Telegram săn sale đa sàn (**Thế Giới Siêu Sale**) tích hợp **Web Admin Dashboard Quản Trị Tối Mật**, phân tích link sản phẩm đa sàn (Shopee, Lazada, Tiki, TikTok Shop) và tự động gắn mã giảm giá sâu 20% - 50%, voucher Video, Freeship, được phát triển 100% bằng **ngôn ngữ Rust** kết hợp cơ sở dữ liệu **LibSQL** (Turso) và framework web **Axum**.
+Hệ thống **Thế Giới Siêu Sale** tích hợp **Telegram Bot săn sale đa sàn** (Shopee, Lazada, Tiki, TikTok Shop, Alibaba & chiến dịch mở rộng ACCESSTRADE), **Web Public Portal (`/`, `POST /convert`)**, **Shortlink Redirect + XOR Mobile Bridge (`/{code}`, `/go/{code}`)** và **Web Admin Dashboard**.
 
----
-
-## 🌟 Tính Năng Nổi Bật
-
-### 1. Web Portal & Admin Dashboard Quản Trị (Bảo Mật Tối Cao)
-- **Trang chủ công khai `/` + Đổi link trực tiếp (`POST /convert`):** Khách hoặc Admin có thể dán link Shopee, Lazada, Tiki, TikTok Shop, Alibaba ngay trên web để nhận link Affiliate kèm mã khớp (có Rate Limit chống spam, ẩn liên kết `/admin` khỏi giao diện công khai).
-- **Trả link Affiliate trực tiếp & Tùy chọn cầu nối Mobile (`/{code}`, `/go/{code}`, `/assets/bridge.js`):** Khi chạy thuần PC (không đặt `SHORTLINK_BASE_URL`), bot gửi thẳng link Affiliate chính chủ (`s.shopee.vn`, `go.isclix.com`, `tiktok.com/t/...`) để khách bấm mở ngay lập tức. Khi gắn domain/Tunnel riêng ở `SHORTLINK_BASE_URL`, hệ thống tự kích hoạt cơ chế bọc 8 ký tự và `cloudflare_worker.js`.
-- **Chỉ DUY NHẤT 1 tài khoản Admin:** Không cho phép đăng ký mới; khóa Brute-force `POST /admin/login` (tối đa 5 lần sai/15 phút -> `HTTP 429`), lưu phiên băm SHA-256 vào `admin_sessions`, Cookie `HttpOnly; SameSite=Lax`, chống Timing Attack với `subtle::ConstantTimeEq`.
-- **Đối soát đơn hàng & Báo Telegram Admin tự động:** Quét định kỳ mỗi 10 phút từ ACCESSTRADE (`/v1/orders`) và Shopee Open API (`conversionReport`), chống trùng lặp (`tracked_orders`) và nhắn báo ngay về Telegram ID Admin.
-- **Quản lý kho Mã Độc Quyền & Đồng Bộ Kho Mã:** Nhập lẻ hoặc dán hàng loạt mã độc quyền hợp tác từ AM/MCN/Shop (hỗ trợ cả dấu `|` hoặc copy từ Excel/Google Sheets), tự động đồng bộ mã từ ACCESSTRADE API mỗi 60 giây.
-- **Xem nhật ký dán link:** Theo dõi 50 link khách hàng vừa gửi gần nhất kèm link affiliate tương ứng.
-
-### 2. Phân Tích & Đổi Nhiều Link Sản Phẩm (Bao Gồm Caption Ảnh/Video)
-- **Đa sàn TMĐT & Tự động nhận diện chiến dịch mở rộng:** Hỗ trợ sẵn Shopee (`shopee.vn`, `shope.ee`, `s.shopee.vn`), Lazada (`lazada.vn`, `s.lazada.vn`), Tiki (`tiki.vn` — ưu tiên **TIKI CREATOR** gateway `v2/3744`), TikTok Shop (`tiktok.com`), Alibaba (`alibaba.com`), **và tự động nhận diện mọi tên miền chiến dịch bán lẻ/du lịch khác ngay khi được duyệt trên ACCESSTRADE** (Shein, CellphoneS, FPT Shop, Con Cưng, Fado, Klook...).
-- **Đọc `caption` Ảnh/Video & Batch Convert (tối đa 5 link/tin):** Hỗ trợ bài gom sale có ảnh kèm caption nhiều link sản phẩm, tự động bọc từng link và xuất sẵn bài mẫu đã thay sạch sang link bọc để copy đăng kênh/nhóm.
-- **Giải mã shortlink & Xóa tracking rác (Clean URL):** Tự động resolve `shope.ee`, `s.lazada.vn`, `vt.tiktok.com`... về link chuẩn sản phẩm trước khi gắn Affiliate.
-
-### 2. Cơ Chế Hoàn Tiền Tương Tự Shopback (Cashback & Referral Tracking)
-- **Tạo Link Tiếp Thị Động (Dynamic Affiliate Deeplink):** Tự động gắn SubID định danh người dùng:
-  - `sub_id1`: ID Telegram của người mua (dùng để hoàn tiền về ví cá nhân).
-  - `sub_id2`: ID Telegram của người giới thiệu F0 (dùng để trích hoa hồng thụ động trọn đời).
-  - `sub_id3`: Mã phiên click UUID duy nhất để đối soát theo thời gian thực.
-- **Hệ Thống Ví Đa Số Dư:**
-  - 🟢 **Số dư khả dụng:** Tiền hoàn đã được sàn đối soát thành công, có thể rút về tài khoản ngân hàng ngay.
-  - 🟡 **Số dư chờ duyệt:** Đơn hàng vừa mua, đang chờ sàn TMĐT giao hàng và hết hạn đổi trả.
-  - ⚪ **Tổng tiền đã rút:** Lịch sử rút tiền minh bạch.
-
-### 3. Chương Trình Giới Thiệu Bạn Bè (F0 - F1 Referral Program)
-- Mỗi thành viên sở hữu một mã giới thiệu (`REF...`) và đường link riêng biệt (`https://t.me/BotUsername?start=REF...`).
-- Khi bạn bè (F1) đăng ký qua link và mua hàng nhận hoàn tiền, người giới thiệu (F0) nhận thêm **10% hoa hồng thụ động trọn đời**.
-
-### 4. Rút Tiền Về Ngân Hàng Linh Hoạt
-- Thành viên yêu cầu rút tiền trực tiếp qua lệnh `/withdraw` với số tài khoản và ngân hàng tại Việt Nam (Vietcombank, MBBank, Techcombank, VPBank, MoMo,...).
-- Hệ thống tự động kiểm tra số dư, mức rút tối thiểu và trừ số dư an toàn trong transaction.
-
-### 5. Kho Mã Giảm Giá & Deals Hot
-- Lọc voucher khuyến mãi theo từng sàn hoặc xem toàn bộ qua lệnh `/deals`.
-- Tích hợp sẵn nút bấm lấy mã, tự động áp mã khi mở ứng dụng.
+Dự án được tối ưu kiến trúc kép theo từng môi trường:
+- **Bản Web Hosting 24/7 (`Go + Turso LibSQL`):** Viết bằng **Go 1.26 (`CGO_ENABLED=0`)**, image Docker Alpine siêu nhẹ (~35 MB), khởi động tức thì, RAM tiêu thụ thấp, chạy thuần Cloud với **Turso LibSQL**.
+- **Bản PC Windows Desktop App (`Rust + WebView2`):** Giữ nguyên tại `src/` và `Cargo.toml` cho người dùng chạy trực tiếp trên máy tính Windows (`TheGioiSieuSale.exe` / `run_salehunter_bot.bat`).
 
 ---
 
-## 🛠️ Kiến Trúc Kỹ Thuật (Rust + LibSQL)
+## 🌟 Tính Năng Cốt Lõi (Đầy Đủ Trên Cả Go Hosting & Rust Desktop)
 
-- **Ngôn ngữ:** Rust 2024 / Rust 1.97+ (an toàn bộ nhớ tuyệt đối, tốc độ xử lý sub-millisecond, không garbage collection).
-- **Asynchronous Runtime:** Tokio (multi-threaded async execution).
-- **Cơ sở dữ liệu:** **LibSQL v0.10** (Engine SQLite nhúng siêu tốc, hỗ trợ cả lưu trữ file cục bộ hoặc đồng bộ Turso Cloud distributed database).
-- **Telegram Framework:** Teloxide v0.17 với hệ thống dispatch cây quyết định `dptree` và giao diện Inline Keyboard trực quan.
-- **Bảo mật:**
-  - Chống SQL Injection tuyệt đối với prepared statements `params![]`.
-  - Chống Log Injection / CRLF Sanitization.
-  - Che giấu số tài khoản ngân hàng (Account Masking).
-  - Quản lý Secret qua `.env`, không lộ token trong mã nguồn.
+### 1. Web Public, Shortlink Bảo Vệ & Admin Dashboard
+- **Trang chủ công khai `/` + Đổi link trực tiếp (`POST /convert`):** Hỗ trợ lọc theo sàn, tìm kiếm mã/gian hàng, dán link sản phẩm đổi trực tiếp trên Web (Rate Limit 20 lượt/60s theo IP), Dark/Light theme, 3D Hero Stage.
+- **Shortlink Redirect & Cầu nối Mobile 2 lớp (`/{code}`, `/go/{code}`, `/assets/bridge.js`):**
+  - Trả thẻ Meta `og:title` gọn cho preview bots (Telegram/Facebook/Zalo).
+  - Chế độ chặn trình duyệt Desktop (`403 Forbidden`), mã hóa XOR payload đích ngẫu nhiên trên Mobile để tránh soi link thô, hỗ trợ thoát kẹt WebView Zalo/Messenger.
+  - Middleware `ShortlinkCloakMiddleware` tự động ẩn `/`, `/admin`, `/health` thành `404` khi truy cập qua domain bọc link riêng hoặc `cloudflare_worker.js` (`X-Dealx-Cloak: 1`).
+- **Bảo mật Web Admin Dashboard (`/admin`, `/admin/login`):**
+  - Chỉ **1 tài khoản Admin duy nhất**; khóa Brute-force 5 lần/15 phút (`429`), so sánh `subtle.ConstantTimeCompare` chống Timing Attack, session lưu DB + L1 RAM cache, Cookie `HttpOnly; SameSite=Lax`, Double-Submit CSRF + Same-Origin (`AdminCSRFMiddleware`), Security Headers (`CSP`, `nosniff`, `DENY`, `HSTS`).
+  - Biểu đồ SVG phân bổ click & kho mã, quản lý ACCESSTRADE / Shopee Chính Chủ / Cloudflare Worker template, nhập hàng loạt Mã Độc Quyền Hợp Tác, đối soát & báo đơn tự động về Telegram.
+
+### 2. Telegram Bot Thông Minh (Webhook 24/7 & Long Polling Fallback)
+- Tự động kích hoạt **Webhook 24/7** (`/telegram/webhook` xác thực `X-Telegram-Bot-Api-Secret-Token` hằng thời gian) khi có `PUBLIC_BASE_URL` / `WEBHOOK_BASE_URL` / `RENDER_EXTERNAL_URL` / `RAILWAY_PUBLIC_DOMAIN`, thử lại 3 lần và tự fallback sang **Long Polling** nếu cần.
+- Hỗ trợ `/start`, `/help`, `/share`, `/stats`, tin nhắn văn bản hoặc **caption ảnh/video**, đổi hàng loạt **tối đa 5 link/tin nhắn**, khớp thông minh **Mã Độc Quyền Hợp Tác** + **Kho mã ACCESSTRADE**, tự thu thập mã FB/IG KOL & chữ ký `sm_sig_id` nền mỗi 5 phút (`Social Harvester`).
+
+### 3. Tối Ưu Cho Hosting & Turso Cloud Database
+- **Không fallback về SQLite tạm trên Cloud:** Khi phát hiện môi trường Hosting (`WEBHOOK_BASE_URL`, `RENDER`, `RAILWAY`, `FLY_APP_NAME`, ...), hệ thống **bắt buộc phải có `TURSO_DATABASE_URL` & `TURSO_AUTH_TOKEN`**; nếu thiếu sẽ báo lỗi và thoát ngay để tránh mất dữ liệu khi container restart.
+- **L1 RAM Cache + Batch SQL:** Cache `settings` & `active_deals` TTL 20s, bounded shortlink cache 4096 mục, hash FNV-1a chống ghi đè blob cache trùng lên Turso, gom `AddDealsBatch` trong 1 transaction.
+- **Keep-Alive & Graceful Shutdown:** Tự ping `/health` mỗi 9 phút trên Cloud (tắt bằng `DISABLE_KEEPALIVE=1` trên VPS/Railway luôn bật) và đóng HTTP Server/Bot gọn gàng khi nhận `SIGTERM` / `SIGINT`.
 
 ---
 
@@ -61,100 +35,55 @@ Hệ thống Bot Telegram săn sale đa sàn (**Thế Giới Siêu Sale**) tích
 
 ```
 f:/bot sale/
-├── Cargo.toml                  # Khai báo thư viện phụ thuộc (Rust 2024)
-├── cloudflare_worker.js        # Cloudflare Worker mẫu (tùy chọn khi tự mở Tunnel/Domain riêng)
-├── Makefile                    # Lệnh build, test, run, clean nhanh
-├── run_salehunter_bot.bat      # Script khởi động 1-click trên Windows PC
-├── .env.example                # File mẫu cấu hình bot và database trên PC
-├── .gitignore                  # Bỏ qua build artifact và database file
-└── src/
-    ├── main.rs                 # Điểm khởi chạy ứng dụng & kiểm thử tích hợp
-    ├── config.rs               # Quản lý nạp cấu hình hệ thống từ môi trường
-    ├── utils.rs                # Tiện ích tiền tệ VND, mã hóa, sinh mã giới thiệu
-    ├── bot/
-    │   ├── mod.rs              # Khởi tạo Dispatcher và vòng lặp Bot
-    │   ├── handlers.rs         # Bộ xử lý Commands, Message và Callback Query
-    │   └── keyboards.rs        # Giao diện bàn phím Inline Menu trực quan
-    ├── db/
-    │   ├── mod.rs              # Khởi tạo LibSQL client và schema migration
-    │   ├── models.rs           # Khai báo Struct User, Click, Order, Withdrawal
-    │   └── repository.rs       # Tầng truy vấn dữ liệu chuẩn bị (Prepared Queries)
-    ├── web/
-    │   └── mod.rs              # Web Portal `/`, đổi link `/convert`, cầu nối Mobile & Admin Dashboard
-    └── services/
-        ├── mod.rs
-        ├── accesstrade.rs      # Kết nối ACCESSTRADE API (chiến dịch, kho mã, đơn hàng)
-        ├── shopee_affiliate.rs # Ký Open API Shopee & xây dựng link an_redir / social params
-        ├── order_tracker.rs    # Đối soát đơn tự động mỗi 10 phút & báo Telegram Admin
-        ├── deal_parser.rs      # Bóc tách nhiều link, giải mã shortlink & tạo affiliate URL
-        └── cashback_engine.rs  # Bộ máy phân chia hoa hồng & xử lý hoàn tiền
+├── go.mod / go.sum                 # Go 1.26 (libsql-client-go, modernc.org/sqlite, uuid)
+├── embed_assets.go                 # Nhúng assets WebP & cloudflare_worker.js
+├── Dockerfile                      # Multi-stage golang:1.26-alpine -> alpine:3.21 (non-root)
+├── .dockerignore                   # Loại bỏ Rust src/target khỏi build context Docker
+├── render.yaml                     # Render Blueprint deploy Docker
+├── Makefile                        # Lệnh Go Hosting & Rust Desktop
+├── cmd/server/main.go              # Entrypoint Go Web Hosting (Warmup, Keep-Alive, Graceful Shutdown)
+├── internal/
+│   ├── config/                     # Cấu hình ENV & chuẩn hóa Shortlink URL
+│   ├── utils/                      # Format VND, EscapeHTML, SanitizeCRLF, Masking
+│   ├── db/                         # Turso/SQLite init, L1 Cache, Repository batch SQL
+│   ├── services/
+│   │   ├── shopee/                 # SHA-256 Open API, an_redir, Social Passthrough
+│   │   ├── social/                 # Social Harvester FB/IG Reels nền mỗi 5 phút
+│   │   ├── accesstrade/            # ACCESSTRADE API v1/v2, TIKI CREATOR, cache voucher
+│   │   ├── parser/                 # Bóc tách URL đa sàn, resolve shortlink, gắn Affiliate
+│   │   └── orders/                 # Đối soát đơn tự động mỗi 10 phút & báo Telegram
+│   ├── bot/                        # Telegram Client (Webhook + Long Polling), Commands, Handlers
+│   └── web/                        # Web Public, Shortlink XOR Bridge, Web Admin, Security Middlewares
+└── src/ & Cargo.toml               # Mã nguồn Rust cho bản PC Windows Desktop GUI
 ```
 
 ---
 
-## 🚀 Hướng Dẫn Cài Đặt & Chạy Bot
+## 🚀 Hướng Dẫn Chạy & Deploy
 
-### Bước 1: Chuẩn Bị Token Telegram
-1. Mở Telegram, tìm bot `@BotFather`.
-2. Gõ `/newbot` và làm theo hướng dẫn để đặt tên và lấy `API Token`.
-3. Lấy username của bot bạn vừa tạo (ví dụ: `MySaleHunterBot`).
-
-### Bước 2: Thiết Lập Cấu Hình Môi Trường
-Sao chép file `.env.example` thành file `.env`:
+### 1. Chạy Kiểm Thử & Build Go Hosting
 ```bash
-copy .env.example .env
-```
-Mở file `.env` và điền các thông tin:
-```ini
-TELEGRAM_BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRstuVWXyz
-BOT_USERNAME=MySaleHunterBot
-DATABASE_PATH=salehunter.db
-CASHBACK_RATE=70.0
-REFERRAL_BONUS_RATE=10.0
-MIN_WITHDRAWAL_VND=50000
-ACCESSTRADE_DEEPLINK_TEMPLATE=https://fast.accesstrade.com.vn/deep_link/630000000000?url={CLEAN_URL}&sub_id1={USER_ID}&sub_id2={REF_ID}&sub_id3={CLICK_ID}
+# Chạy toàn bộ unit tests (pure Go, CGO_ENABLED=0)
+CGO_ENABLED=0 go test -v ./...
+
+# Kiểm tra static analysis
+CGO_ENABLED=0 go vet ./...
+
+# Build binary Linux (tĩnh hoàn toàn) để test / deploy VPS
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o target/salehunter_bot_linux ./cmd/server
 ```
 
-### Bước 3: Chạy Bot Trực Tiếp Trên PC (Long Polling)
-- **Cách 1 (Khuyên dùng):** Nhấp đúp vào file `run_salehunter_bot.bat` trên Windows (tự động build bản Release và mở Web Admin tại `http://127.0.0.1:10000/admin`).
-- **Cách 2:** Chạy lệnh `cargo run --release` hoặc `make run`.
-- *(Lưu ý: Trước khi chạy trên PC, hãy tắt/xóa Web Service trên `dashboard.render.com` để tránh 2 nơi cùng tranh chấp phiên Telegram Bot).*
+### 2. Deploy Lên Render / Railway / Fly.io / Docker VPS
+Gắn các biến môi trường bắt buộc trên Hosting:
+- `TURSO_DATABASE_URL` & `TURSO_AUTH_TOKEN`
+- `ADMIN_PASSWORD` *(mật khẩu mạnh, khác mặc định)*
+- `TELEGRAM_BOT_TOKEN` & `ACCESSTRADE_API_TOKEN`
+- `WEBHOOK_BASE_URL=https://ten-mien-cua-ban` *(hoặc để Render/Railway tự điền)*
+- `SHORTLINK_BASE_URL=https://thegioisieusale.click` *(tùy chọn, hoặc nhập `off` để tắt)*
+- `DISABLE_KEEPALIVE=1` *(nếu chạy trên VPS/Railway luôn sống 24/7)*
 
-### Bước 4: Deploy Lên Hosting / Cloud (Render, Railway, Fly.io, Docker VPS)
-- Dự án đã có sẵn `Dockerfile` đa tầng (`rust:1-slim-bookworm` -> `debian:bookworm-slim`), `.dockerignore` và Blueprint `render.yaml` hỗ trợ **Graceful Shutdown (`SIGTERM`)**, `/health` check, cùng **L1 RAM Cache** & **Batch SQL** tối ưu riêng cho **Turso Cloud**.
-- Trên môi trường Hosting/Cloud, hệ thống **từ chối fallback về file SQLite cục bộ** để tránh mất dữ liệu khi container restart — bắt buộc gắn:
-  - `TURSO_DATABASE_URL` & `TURSO_AUTH_TOKEN`
-  - `ADMIN_PASSWORD` (mạnh, khác mặc định)
-  - `TELEGRAM_BOT_TOKEN` & `ACCESSTRADE_API_TOKEN`
-  - `WEBHOOK_BASE_URL=https://ten-mien-cua-ban` *(hoặc dùng `RENDER_EXTERNAL_URL` / `RAILWAY_PUBLIC_DOMAIN` tự động)*
-  - `DISABLE_KEEPALIVE=1` *(khuyên đặt nếu chạy trên VPS/Railway/Fly luôn sống 24/7)*
-
----
-
-## 📱 Danh Sách Các Lệnh Telegram Hiện Tại
-
-| Lệnh | Ý nghĩa |
-| :--- | :--- |
-| `/start` | Bắt đầu sử dụng bot, bật menu nhanh và hướng dẫn dán link |
-| `/help` | Xem hướng dẫn 3 bước nhận link ưu đãi & mẹo áp mã |
-| `/share` | Lấy link chia sẻ bot cho bạn bè cùng săn sale |
-| `/stats` | Xem thống kê người dùng, lượt dán link, đơn đối soát và lấy **Telegram ID** |
-
-*(Ngoài ra người dùng chỉ cần **dán trực tiếp 1 hoặc tối đa 5 link sản phẩm — kể cả bài có ảnh/video kèm caption —** từ Shopee/Lazada/Tiki/TikTok Shop/Alibaba vào khung chat, Bot sẽ tự động phân tích, bọc link 8 ký tự và gắn mã khớp nếu có).*
-
----
-
-## 🧪 Kiểm Thử (Unit Tests)
-
-Chạy bộ kiểm thử tự động của Rust:
+### 3. Chạy Bản Windows Desktop (PC Local)
+Nhấp đúp `run_salehunter_bot.bat` hoặc chạy:
 ```bash
-cargo test
+cargo run --release
 ```
-Kiểm tra toàn bộ luồng nghiệp vụ: phân tích URL, bóc tách link sàn, làm sạch tracking, tính toán hoa hồng, cấu hình fallback, xác thực Telegram Webhook và xây dựng Web Admin Router.
-
----
-
-## 🔒 Quy Ước Bảo Mật
-- Không lưu bất kỳ thông tin đăng nhập hoặc dữ liệu nhạy cảm vào mã nguồn.
-- CSDL LibSQL lưu trữ an toàn trong thư mục dự án trên ổ đĩa dữ liệu (ổ `F:`).
-- Lọc sạch toàn bộ ký tự điều khiển (CRLF) trước khi đưa vào hệ thống ghi log.
