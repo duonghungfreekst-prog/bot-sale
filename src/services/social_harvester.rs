@@ -130,14 +130,25 @@ fn upgrade_shopee_short_url(raw: &str) -> String {
     trimmed
 }
 
-fn is_guide_noise_deal_text(text: &str) -> bool {
+/// Kiểm tra đoạn mô tả có phải bài hướng dẫn chung (không phải ưu đãi áp trực tiếp).
+pub fn is_guide_noise_deal_text(text: &str) -> bool {
     let lower = text.to_lowercase();
     lower.contains("hướng dẫn lấy mã")
         || lower.contains("hướng dẫn săn mã")
+        || lower.contains("hướng dẫn áp mã")
         || lower.contains("khi ấn link lấy mã")
         || lower.contains("nhớ vào live")
         || lower.contains("sếp nên lựa")
         || lower.contains("cách lấy mã")
+}
+
+/// Kiểm tra chuỗi `coupon_code` có phải mã định danh nội bộ (`KOL_*`, `SHP_AUTO_*`, `AUTO_*`) dùng để lưu link chứ không phải mã gõ tay.
+pub fn is_synthetic_tracking_code(code: &str) -> bool {
+    let upper = code.trim().to_ascii_uppercase();
+    upper.is_empty()
+        || upper.starts_with("KOL_")
+        || upper.starts_with("SHP_AUTO_")
+        || upper.starts_with("AUTO_")
 }
 
 /// Lần tối đa N chặng redirect / HTML JS-bridge để lấy URL đích thực sự chứa chữ ký Shopee FB/IG.
@@ -335,11 +346,17 @@ pub fn parse_magiamgiashopee_deals(raw_html: &str) -> Vec<NewDealInput> {
             .unwrap_or(0);
 
         // Bỏ qua các đoạn văn bản hướng dẫn chung chung (không phải deal săn mã cụ thể)
-        let is_guide_only = is_guide_noise_deal_text(&text)
-            && !inline_clean_url
-                .as_deref()
-                .map(|u| u.contains("shopee.vn/search?") || u.contains("evcode=") || u.contains("promotionId="))
-                .unwrap_or(false);
+        let is_explicit_guide = lower.contains("hướng dẫn lấy mã")
+            || lower.contains("hướng dẫn săn mã")
+            || lower.contains("hướng dẫn áp mã")
+            || lower.contains("khi ấn link lấy mã")
+            || lower.contains("cách lấy mã");
+        let is_guide_only = is_explicit_guide
+            || (is_guide_noise_deal_text(&text)
+                && !inline_clean_url
+                    .as_deref()
+                    .map(|u| u.contains("shopee.vn/search?") || u.contains("evcode=") || u.contains("promotionId="))
+                    .unwrap_or(false));
         if is_guide_only {
             continue;
         }
@@ -815,11 +832,17 @@ mod tests {
             Some(weak_sig)
         );
 
-        let nuxt_escaped = r#"\u003cp\u003e\u003cstrong\u003eMã lưu từ banner: \u003c/strong\u003e\u003ca href="https://s.shopee.vn/an_redir?origin_link=https%3A%2F%2Fshopee.vn%2Fm%2Fkol-affiliate%23123\u0026amp;affiliate_id=17309660489"\u003elink\u003c/a\u003e\u003c/p\u003e\u003cp\u003e► 0H: Lưu banner mã Shopee X Facebook giảm 30% tối đa 50K đơn từ 50K: https://nghien.co/abc123\u003c/p\u003e"#;
+        let nuxt_escaped = r#"\u003cp\u003e\u003cstrong\u003eMã lưu từ banner: \u003c/strong\u003e\u003ca href="https://s.shopee.vn/an_redir?origin_link=https%3A%2F%2Fshopee.vn%2Fm%2Fkol-affiliate%23123\u0026amp;affiliate_id=17309660489"\u003elink\u003c/a\u003e\u003c/p\u003e\u003cp\u003e► 0H: Lưu banner mã Shopee X Facebook giảm 30% tối đa 50K đơn từ 50K: https://nghien.co/abc123\u003c/p\u003e\u003cp\u003e📌 Hướng dẫn lấy mã độc quyền Shopee x Facebook 22%: \u003ca href="https://s.shopee.vn/an_redir?origin_link=https%3A%2F%2Fshopee.vn%2Fm%2Fkol-affiliate\u0026amp;affiliate_id=17309660489"\u003elink\u003c/a\u003e\u003c/p\u003e"#;
         let deals = parse_magiamgiashopee_deals(nuxt_escaped);
         assert_eq!(deals.len(), 1);
         assert_eq!(deals[0].coupon_code.as_deref(), Some("KOL_FB_30"));
         assert_eq!(deals[0].deal_url, "https://shopee.vn/m/kol-affiliate");
         assert!(!deals[0].discount_desc.contains("nghien.co"));
+
+        assert!(is_synthetic_tracking_code("KOL_FB_22"));
+        assert!(is_synthetic_tracking_code("KOL_IG_50"));
+        assert!(is_synthetic_tracking_code("SHP_AUTO_1981279232"));
+        assert!(!is_synthetic_tracking_code("ATVIP30"));
+        assert!(!is_synthetic_tracking_code("LANGXDKKP"));
     }
 }

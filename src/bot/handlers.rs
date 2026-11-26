@@ -1082,16 +1082,15 @@ pub fn is_exclusive_deal_relevant(deal: &crate::db::models::DealItem, parsed: &P
         return false;
     }
 
-    // Loại các bài viết hướng dẫn chung không có link săn mã trực tiếp
-    let desc_lower = deal.discount_desc.to_lowercase();
+    // Loại các bài viết hướng dẫn chung không có link săn mã trực tiếp hoặc text chỉ là hướng dẫn
     let url_lower = deal.deal_url.to_lowercase();
     let has_direct_voucher_target = url_lower.contains("evcode=")
         || url_lower.contains("promotionid=")
         || url_lower.contains("shopee.vn/search?");
-    if !has_direct_voucher_target
-        && (desc_lower.contains("hướng dẫn lấy mã")
-            || desc_lower.contains("khi ấn link lấy mã")
-            || desc_lower.contains("cách lấy mã"))
+    if crate::services::social_harvester::is_guide_noise_deal_text(&deal.discount_desc)
+        && (!has_direct_voucher_target
+            || deal.discount_desc.to_lowercase().contains("hướng dẫn lấy mã")
+            || deal.discount_desc.to_lowercase().contains("khi ấn link lấy mã"))
     {
         return false;
     }

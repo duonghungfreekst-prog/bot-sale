@@ -578,7 +578,8 @@ async fn handle_public_convert(
                     let code_label = d
                         .coupon_code
                         .as_deref()
-                        .filter(|c| !c.trim().is_empty())
+                        .map(str::trim)
+                        .filter(|c| !crate::services::social_harvester::is_synthetic_tracking_code(c))
                         .map(|c| format!(" · {}", c))
                         .unwrap_or_default();
                     matched_btns.push_str(&format!(
@@ -851,15 +852,24 @@ fn render_public_deal_card(
     cta_label: &str,
 ) -> String {
     let dot_color = platform_brand_color(platform);
-    let can_copy = !code_txt.trim().is_empty() && code_txt != "Tự động áp dụng";
-    let copy_btn = if can_copy {
+    let trimmed_code = code_txt.trim();
+    let has_manual_code = !crate::services::social_harvester::is_synthetic_tracking_code(trimmed_code)
+        && !trimmed_code.eq_ignore_ascii_case("Tự động áp dụng");
+    let coupon_row_html = if has_manual_code {
         format!(
-            r##"<button type="button" class="copy-code-btn js-copy-link" data-copy-url="{}" aria-label="Sao chép mã {}"><svg class="ico" style="width:13px;height:13px;" aria-hidden="true"><use href="#ico-copy"/></svg><span class="copy-lbl">Chép mã</span></button>"##,
-            escape_html(code_txt),
-            escape_html(code_txt)
+            r##"<span class="coupon-pill">Mã: <code>{}</code></span>
+                <button type="button" class="copy-code-btn js-copy-link" data-copy-url="{}" aria-label="Sao chép mã {}"><svg class="ico" style="width:13px;height:13px;" aria-hidden="true"><use href="#ico-copy"/></svg><span class="copy-lbl">Chép mã</span></button>"##,
+            escape_html(trimmed_code),
+            escape_html(trimmed_code),
+            escape_html(trimmed_code)
         )
     } else {
-        String::new()
+        r##"<span class="coupon-pill coupon-pill--link"><svg class="ico" style="width:13px;height:13px;" aria-hidden="true"><use href="#ico-zap"/></svg><span>Áp tự động qua link (Không cần gõ mã)</span></span>"##.to_string()
+    };
+    let final_cta_label = if has_manual_code {
+        cta_label.to_string()
+    } else {
+        format!("Lưu & Áp ưu đãi {}", platform)
     };
     format!(
         r##"<article class="deal-card" style="--plat-accent:{};">
@@ -871,7 +881,6 @@ fn render_public_deal_card(
             <p class="deal-card__desc">{}</p>
             <div class="deal-card__meta">
                 <div class="coupon-row">
-                    <span class="coupon-pill">Mã: <code>{}</code></span>
                     {}
                 </div>
                 <span class="deal-card__note">{}</span>
@@ -887,11 +896,10 @@ fn render_public_deal_card(
         escape_html(badge),
         escape_html(title),
         escape_html(desc),
-        escape_html(code_txt),
-        copy_btn,
+        coupon_row_html,
         escape_html(note_txt),
         escape_html(wrapped_url),
-        escape_html(cta_label)
+        escape_html(&final_cta_label)
     )
 }
 
@@ -915,13 +923,23 @@ async fn render_public_home(
         Some(conn) => Repository::get_active_deals(conn, None).await.unwrap_or_default(),
         None => Vec::new(),
     };
-    let shortlink_db = match conn_opt.as_ref() {
-        Some(conn) => Repository::get_setting(conn, "shortlink_base_url")
-            .await
-            .ok()
-            .flatten(),
-        None => None,
+    let read_setting = |key: &'static str| async {
+        match conn_opt.as_ref() {
+            Some(conn) => Repository::get_setting(conn, key)
+                .await
+                .ok()
+                .flatten()
+                .filter(|s| !s.trim().is_empty()),
+            None => None,
+        }
     };
+    let shortlink_db = read_setting("shortlink_base_url").await;
+    let shopee_aff_id = read_setting("shopee_affiliate_id")
+        .await
+        .or_else(|| state.config.shopee_affiliate_id.clone());
+    let shopee_social_params = read_setting("shopee_social_params")
+        .await
+        .or_else(|| state.config.shopee_social_params.clone());
     let tunnel_snap = crate::services::tunnel::snapshot_tunnel_state();
     let shortlink_base = crate::config::resolve_pc_runtime_shortlink_base_url(
         shortlink_db.as_deref(),
@@ -934,10 +952,19 @@ async fn render_public_home(
     let approved = state.accesstrade.peek_approved_campaigns().await;
     let sync_meta = state.accesstrade.get_voucher_sync_meta().await;
 
+    let clean_db_deals: Vec<&crate::db::models::DealItem> = db_deals
+        .iter()
+        .filter(|d| {
+            !crate::services::social_harvester::is_guide_noise_deal_text(&d.discount_desc)
+                && !crate::services::social_harvester::is_guide_noise_deal_text(&d.title)
+        })
+        .collect();
+
     let q_lower = search_q.to_lowercase();
     let mut cards: Vec<PublicDealCard<'_>> = Vec::new();
+    let mut seen_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    for d in &db_deals {
+    for &d in &clean_db_deals {
         let plat_ok = filter_plat == "all" || d.platform.eq_ignore_ascii_case(&filter_plat);
         let q_ok = q_lower.is_empty()
             || d.title.to_lowercase().contains(&q_lower)
@@ -945,7 +972,10 @@ async fn render_public_home(
             || d.coupon_code.as_deref().unwrap_or("").to_lowercase().contains(&q_lower)
             || d.platform.to_lowercase().contains(&q_lower);
         if plat_ok && q_ok {
-            cards.push(PublicDealCard::Db(d));
+            let norm = d.deal_url.trim().trim_end_matches('/').to_ascii_lowercase();
+            if norm.is_empty() || seen_urls.insert(norm) {
+                cards.push(PublicDealCard::Db(d));
+            }
         }
     }
 
@@ -958,11 +988,18 @@ async fn render_public_home(
             || v.discount_desc.to_lowercase().contains(&q_lower)
             || v.platform.to_lowercase().contains(&q_lower);
         if plat_ok && q_ok {
-            cards.push(PublicDealCard::Api(v));
+            let norm = v
+                .best_target_url(approved.as_ref())
+                .trim()
+                .trim_end_matches('/')
+                .to_ascii_lowercase();
+            if norm.is_empty() || seen_urls.insert(norm) {
+                cards.push(PublicDealCard::Api(v));
+            }
         }
     }
 
-    let total_available = db_deals.len() + market_vouchers.len();
+    let total_available = clean_db_deals.len() + market_vouchers.len();
     let matched_count = cards.len();
     let last_sync_text = if sync_meta.last_sync_vn.is_empty() {
         "Đang đồng bộ thời gian thực".to_string()
@@ -989,18 +1026,25 @@ async fn render_public_home(
                 } else {
                     "Không giới hạn đơn tối thiểu".to_string()
                 };
+                let enriched_url = crate::bot::handlers::enrich_deal_url_for_platform(
+                    &d.deal_url,
+                    &d.platform,
+                    shopee_aff_id.as_deref(),
+                    shopee_social_params.as_deref(),
+                    "web_public_deal",
+                );
                 let wrapped_url = match conn_opt.as_ref() {
                     Some(conn) => {
                         Repository::wrap_url_if_public(
                             conn,
                             shortlink_base.as_deref(),
-                            &d.deal_url,
+                            &enriched_url,
                             &d.title,
                             &d.platform,
                         )
                         .await
                     }
-                    None => d.deal_url.clone(),
+                    None => enriched_url,
                 };
                 cards_html.push_str(&render_public_deal_card(
                     &d.platform,
@@ -1015,18 +1059,25 @@ async fn render_public_home(
             }
             PublicDealCard::Api(v) => {
                 let target_url = v.best_target_url(approved.as_ref());
+                let enriched_url = crate::bot::handlers::enrich_deal_url_for_platform(
+                    &target_url,
+                    &v.platform,
+                    shopee_aff_id.as_deref(),
+                    shopee_social_params.as_deref(),
+                    "web_public_voucher",
+                );
                 let wrapped_url = match conn_opt.as_ref() {
                     Some(conn) => {
                         Repository::wrap_url_if_public(
                             conn,
                             shortlink_base.as_deref(),
-                            &target_url,
+                            &enriched_url,
                             &v.shop_name,
                             &v.platform,
                         )
                         .await
                     }
-                    None => target_url,
+                    None => enriched_url,
                 };
                 let badge = v.discount_badge();
                 let expiry = if v.end_time.trim().is_empty() {
@@ -1450,6 +1501,12 @@ async fn render_public_home(
             background: var(--color-inset); border: 1px dashed var(--color-primary);
             padding: 2px 8px; border-radius: 6px; color: var(--color-primary);
             font-family: var(--font-mono); font-weight: 700;
+        }}
+        .coupon-pill--link {{
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 4px 10px; border-radius: 8px;
+            background: var(--color-success-bg); border: 1px solid var(--color-success-border);
+            color: var(--color-success); font-size: 0.78rem; font-weight: 700;
         }}
         .deal-card__note {{ color: var(--color-text-muted); font-size: 0.84rem; }}
         .deal-card__cta {{ width: 100%; }}
@@ -3336,7 +3393,14 @@ async fn handle_dashboard(
         } else {
             r#"<span class="badge badge--muted">⚫ Đang tắt</span>"#
         };
-        let code_display = d.coupon_code.as_deref().unwrap_or("-");
+        let code_cell_html = match d.coupon_code.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+            Some(c) if crate::services::social_harvester::is_synthetic_tracking_code(c) => format!(
+                r#"<span class="badge badge--info" title="Ưu đãi áp trực tiếp khi mở link sàn, không phải mã gõ tay">Áp qua link · {}</span>"#,
+                escape_html(c)
+            ),
+            Some(c) => format!(r#"<code class="code-pill">{}</code>"#, escape_html(c)),
+            None => r#"<span class="badge badge--muted">Theo link</span>"#.to_string(),
+        };
         let min_note = if d.min_spend > 0.0 {
             format!(" · Đơn từ {}", escape_html(&format_vnd(d.min_spend)))
         } else {
@@ -3347,7 +3411,7 @@ async fn handle_dashboard(
                 <td>{}</td>
                 <td class="cell-strong">{}</td>
                 <td><div class="cell-strong">{}</div><div class="cell-sub">{}{}</div></td>
-                <td><code class="code-pill">{}</code></td>
+                <td>{}</td>
                 <td>{}</td>
                 <td>
                     <div class="row-actions">
@@ -3367,7 +3431,7 @@ async fn handle_dashboard(
             escape_html(&d.title),
             escape_html(&d.discount_desc),
             min_note,
-            escape_html(code_display),
+            code_cell_html,
             status_badge,
             d.id,
             d.id
@@ -6814,5 +6878,97 @@ DongLoiThieuCot | 123
 
         login_srv.abort();
         let _ = std::fs::remove_file(&login_db);
+    }
+
+    #[tokio::test]
+    async fn test_public_home_hides_synthetic_codes_filters_guides_and_enriches_links() {
+        let test_db_path = format!("target/test_pub_honest_{}.db", uuid::Uuid::new_v4().simple());
+        let state = make_test_state(&test_db_path, None).await;
+        {
+            let conn = state.db.conn().unwrap();
+            Repository::set_setting(&conn, "shopee_affiliate_id", "17375520550")
+                .await
+                .unwrap();
+            Repository::set_setting(
+                &conn,
+                "shopee_social_params",
+                "channel_type=fb&sm_sig_id=SIGWEB1",
+            )
+            .await
+            .unwrap();
+            Repository::set_setting(&conn, "shortlink_base_url", "off")
+                .await
+                .unwrap();
+
+            Repository::add_deal(
+                &conn,
+                &NewDealInput {
+                    platform: "Shopee".to_string(),
+                    title: "[Toàn sàn] Mã Facebook KOL".to_string(),
+                    coupon_code: Some("KOL_FB_22".to_string()),
+                    discount_desc: "📌 Hướng dẫn lấy mã độc quyền Shopee x Facebook 22%".to_string(),
+                    min_spend: 0.0,
+                    deal_url: "https://shopee.vn/m/kol".to_string(),
+                    expire_at: None,
+                    is_exclusive: true,
+                },
+            )
+            .await
+            .unwrap();
+
+            Repository::add_deal(
+                &conn,
+                &NewDealInput {
+                    platform: "Shopee".to_string(),
+                    title: "[Toàn sàn] Voucher Shopee 23%".to_string(),
+                    coupon_code: Some("SHP_AUTO_1981279232".to_string()),
+                    discount_desc: "Mã 23% tối đa 500k đơn từ 150K".to_string(),
+                    min_spend: 150000.0,
+                    deal_url: "https://shopee.vn/search?evcode=V23&promotionId=1981279232".to_string(),
+                    expire_at: None,
+                    is_exclusive: true,
+                },
+            )
+            .await
+            .unwrap();
+
+            Repository::add_deal(
+                &conn,
+                &NewDealInput {
+                    platform: "Shopee".to_string(),
+                    title: "[MCN] Deal Độc Quyền 30%".to_string(),
+                    coupon_code: Some("ATVIP30".to_string()),
+                    discount_desc: "Giảm 30% tối đa 100k".to_string(),
+                    min_spend: 100000.0,
+                    deal_url: "https://shopee.vn/product/111/222".to_string(),
+                    expire_at: None,
+                    is_exclusive: true,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let resp = handle_root(Query(PublicHomeQuery::default()), State(state)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let html = String::from_utf8(
+            axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+
+        assert!(!html.contains("KOL_FB_22"));
+        assert!(!html.contains("Hướng dẫn lấy mã độc quyền"));
+        assert!(!html.contains("SHP_AUTO_1981279232"));
+        assert!(html.contains("Áp tự động qua link (Không cần gõ mã)"));
+        assert!(html.contains("Lưu &amp; Áp ưu đãi Shopee"));
+        assert!(html.contains("<code>ATVIP30</code>"));
+        assert!(html.contains(r#"data-copy-url="ATVIP30""#));
+        assert!(html.contains("affiliate_id=17375520550"));
+        assert!(html.contains("sm_sig_id=SIGWEB1"));
+
+        let _ = std::fs::remove_file(&test_db_path);
     }
 }

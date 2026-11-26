@@ -216,14 +216,25 @@ impl AppDb {
             )
             .await;
 
-        // Dọn dẹp triệt để các bản ghi seed giả mẫu cũ (AUTO_*, SHOPEE50K...) nếu tồn tại từ DB phiên bản cũ
+        // Dọn dẹp triệt để các bản ghi seed giả mẫu cũ (AUTO_*, SHOPEE50K...) và các bài hướng dẫn rác quét nhầm từ trước
         let _ = conn
             .execute(
-                "DELETE FROM deals WHERE is_exclusive = 0 AND (
-                    coupon_code LIKE 'AUTO_%'
-                    OR coupon_code IN ('SHOPEE50K', 'FREESHIP30', 'LAZADA100', 'TIKINOW20', 'TTSALE30')
-                    OR (platform = 'Lazada' AND coupon_code IS NULL AND title = 'Hoàn Tiền Max 12%')
-                );",
+                "DELETE FROM deals WHERE
+                    (is_exclusive = 0 AND (
+                        coupon_code LIKE 'AUTO_%'
+                        OR coupon_code IN ('SHOPEE50K', 'FREESHIP30', 'LAZADA100', 'TIKINOW20', 'TTSALE30')
+                        OR (platform = 'Lazada' AND coupon_code IS NULL AND title = 'Hoàn Tiền Max 12%')
+                    ))
+                    OR (
+                        (coupon_code LIKE 'KOL_%' OR coupon_code LIKE 'SHP_AUTO_%')
+                        AND (
+                            LOWER(discount_desc) LIKE '%hướng dẫn lấy mã%'
+                            OR LOWER(discount_desc) LIKE '%hướng dẫn săn mã%'
+                            OR LOWER(discount_desc) LIKE '%hướng dẫn áp mã%'
+                            OR LOWER(discount_desc) LIKE '%khi ấn link lấy mã%'
+                            OR LOWER(discount_desc) LIKE '%cách lấy mã%'
+                        )
+                    );",
                 (),
             )
             .await;
