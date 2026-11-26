@@ -374,13 +374,21 @@ pub(super) async fn handle_dashboard(
     let clicks = Repository::get_recent_clicks_for_admin(&conn, 50).await.unwrap_or_default();
     let saved_deals = Repository::get_all_deals_for_admin(&conn).await.unwrap_or_default();
 
-    let affiliate_template = Repository::get_setting(&conn, "affiliate_template")
-        .await
-        .ok()
-        .flatten()
+    let settings_map = state.db.get_settings_map_cached().await.unwrap_or_default();
+    let get_setting_val = |key: &str| -> Option<String> {
+        settings_map
+            .get(key)
+            .cloned()
+            .filter(|s| !s.trim().is_empty())
+    };
+
+    let affiliate_template = settings_map
+        .get("affiliate_template")
+        .cloned()
         .unwrap_or_default();
 
-    let db_at_token = resolve_accesstrade_token(&conn, &state.config).await;
+    let db_at_token = get_setting_val("accesstrade_api_token")
+        .or_else(|| state.config.accesstrade_api_token.clone());
 
     let has_turso = state.config.turso_url.is_some() && state.config.turso_auth_token.is_some();
     let has_env_token = state.config.accesstrade_api_token.is_some();
@@ -433,37 +441,21 @@ pub(super) async fn handle_dashboard(
         _ => default_pwd_warning.to_string(),
     };
 
-    let camp_shopee = Repository::get_setting(&conn, "campaign_shopee").await.ok().flatten().unwrap_or_default();
-    let camp_lazada = Repository::get_setting(&conn, "campaign_lazada").await.ok().flatten().unwrap_or_default();
-    let camp_tiki = Repository::get_setting(&conn, "campaign_tiki").await.ok().flatten().unwrap_or_default();
-    let camp_tiktok = Repository::get_setting(&conn, "campaign_tiktok").await.ok().flatten().unwrap_or_default();
+    let camp_shopee = settings_map.get("campaign_shopee").cloned().unwrap_or_default();
+    let camp_lazada = settings_map.get("campaign_lazada").cloned().unwrap_or_default();
+    let camp_tiki = settings_map.get("campaign_tiki").cloned().unwrap_or_default();
+    let camp_tiktok = settings_map.get("campaign_tiktok").cloned().unwrap_or_default();
 
-    let shopee_affiliate_id = Repository::get_setting(&conn, "shopee_affiliate_id")
-        .await
-        .ok()
-        .flatten()
-        .filter(|s| !s.trim().is_empty())
+    let shopee_affiliate_id = get_setting_val("shopee_affiliate_id")
         .or_else(|| state.config.shopee_affiliate_id.clone())
         .unwrap_or_default();
-    let shopee_app_id = Repository::get_setting(&conn, "shopee_app_id")
-        .await
-        .ok()
-        .flatten()
-        .filter(|s| !s.trim().is_empty())
+    let shopee_app_id = get_setting_val("shopee_app_id")
         .or_else(|| state.config.shopee_app_id.clone())
         .unwrap_or_default();
-    let shopee_app_secret = Repository::get_setting(&conn, "shopee_app_secret")
-        .await
-        .ok()
-        .flatten()
-        .filter(|s| !s.trim().is_empty())
+    let shopee_app_secret = get_setting_val("shopee_app_secret")
         .or_else(|| state.config.shopee_app_secret.clone())
         .unwrap_or_default();
-    let shopee_social_params = Repository::get_setting(&conn, "shopee_social_params")
-        .await
-        .ok()
-        .flatten()
-        .filter(|s| !s.trim().is_empty())
+    let shopee_social_params = get_setting_val("shopee_social_params")
         .or_else(|| state.config.shopee_social_params.clone())
         .unwrap_or_default();
     let social_deals_count = saved_deals
@@ -516,15 +508,8 @@ pub(super) async fn handle_dashboard(
         signal_meter_html,
         escape_html(&social_last_display)
     );
-    let shortlink_db_raw = Repository::get_setting(&conn, "shortlink_base_url")
-        .await
-        .ok()
-        .flatten();
-    let db_cf_token = Repository::get_setting(&conn, "cloudflare_tunnel_token")
-        .await
-        .ok()
-        .flatten()
-        .filter(|s| !s.trim().is_empty());
+    let shortlink_db_raw = settings_map.get("shortlink_base_url").cloned();
+    let db_cf_token = get_setting_val("cloudflare_tunnel_token");
     let env_cf_token = std::env::var("CLOUDFLARE_TUNNEL_TOKEN")
         .ok()
         .filter(|s| !s.trim().is_empty());
@@ -538,16 +523,12 @@ pub(super) async fn handle_dashboard(
         tunnel_snap.has_named_token,
     )
     .unwrap_or_default();
-    let shortlink_mobile_only = Repository::get_setting(&conn, "shortlink_mobile_only")
-        .await
-        .ok()
-        .flatten()
+    let shortlink_mobile_only = settings_map
+        .get("shortlink_mobile_only")
         .map(|s| s.trim() == "1")
         .unwrap_or(false);
-    let public_home_cloak = Repository::get_setting(&conn, "public_home_cloak")
-        .await
-        .ok()
-        .flatten()
+    let public_home_cloak = settings_map
+        .get("public_home_cloak")
         .map(|s| s.trim() == "1")
         .unwrap_or(false);
     let derived_tunnel_origin = extract_host_only(&shortlink_base_url)
@@ -561,11 +542,7 @@ pub(super) async fn handle_dashboard(
         .filter(|s| !s.is_empty())
         .unwrap_or(&derived_tunnel_origin);
 
-    let admin_telegram_id_val = Repository::get_setting(&conn, "admin_telegram_id")
-        .await
-        .ok()
-        .flatten()
-        .filter(|s| !s.trim().is_empty())
+    let admin_telegram_id_val = get_setting_val("admin_telegram_id")
         .or_else(|| state.config.admin_telegram_id.map(|id| id.to_string()))
         .unwrap_or_default();
     let tracked_orders = Repository::get_recent_tracked_orders(&conn, 20)
@@ -2748,6 +2725,7 @@ pub(super) async fn handle_update_accesstrade(
         let _ = Repository::set_setting(&conn, "campaign_tiktok", form.campaign_tiktok.trim()).await;
     }
 
+    state.db.invalidate_settings_cache().await;
     state.accesstrade.invalidate_cache().await;
     Redirect::to("/admin").into_response()
 }
@@ -3058,6 +3036,7 @@ pub(super) async fn handle_update_shopee_settings(
     };
     let _ = Repository::set_setting(&conn, "public_home_cloak", home_cloak_flag).await;
 
+    state.db.invalidate_settings_cache().await;
     crate::services::tunnel::ensure_tunnel_running(&state.db, &state.config).await;
 
     info!("✅ Quản trị viên đã cập nhật cấu hình Shopee Chính Chủ & Bọc Link trên Web Admin.");
@@ -3191,6 +3170,7 @@ pub(super) async fn handle_update_notifications(
     };
 
     let _ = Repository::set_setting(&conn, "admin_telegram_id", trimmed).await;
+    state.db.invalidate_settings_cache().await;
     if trimmed.is_empty() {
         redirect_with_notice("Đã tắt thông báo đơn hàng qua Telegram.")
     } else {
@@ -3297,6 +3277,7 @@ pub(super) async fn handle_add_deal(
 
     match Repository::add_deal(&conn, &item).await {
         Ok(inserted) => {
+            state.db.invalidate_deals_cache().await;
             info!(
                 "👑 Admin đã {} mã '{}' ({})",
                 if inserted { "thêm mới" } else { "cập nhật" },
@@ -3340,6 +3321,7 @@ pub(super) async fn handle_import_deals(
 
     match Repository::add_deals_batch(&conn, &items).await {
         Ok((inserted, updated)) => {
+            state.db.invalidate_deals_cache().await;
             info!(
                 "📥 Admin nhập hàng loạt mã độc quyền: +{} mới, ~{} cập nhật, bỏ qua {} dòng sai định dạng.",
                 inserted, updated, skipped
@@ -3369,6 +3351,7 @@ pub(super) async fn handle_toggle_deal(
 
     if let Ok(conn) = state.db.conn() {
         let _ = Repository::toggle_deal(&conn, form.deal_id).await;
+        state.db.invalidate_deals_cache().await;
     }
 
     Redirect::to("/admin").into_response()
@@ -3385,6 +3368,7 @@ pub(super) async fn handle_delete_deal(
 
     if let Ok(conn) = state.db.conn() {
         let _ = Repository::delete_deal(&conn, form.deal_id).await;
+        state.db.invalidate_deals_cache().await;
     }
 
     Redirect::to("/admin").into_response()
@@ -3460,6 +3444,7 @@ pub(super) async fn handle_update_affiliate_settings(
 
     if let Ok(conn) = state.db.conn() {
         let _ = Repository::set_setting(&conn, "affiliate_template", form.template.trim()).await;
+        state.db.invalidate_settings_cache().await;
         info!("✅ Đã cập nhật mẫu link Affiliate dự phòng trên Web Admin.");
     }
 

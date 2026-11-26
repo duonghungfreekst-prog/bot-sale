@@ -28,3 +28,10 @@ image = { version = "0.25.10", default-features = false, features = ["webp"] }
 tao = "0.37"
 tray-icon = { version = "0.26.1", default-features = false }
 wry = "0.57.4"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

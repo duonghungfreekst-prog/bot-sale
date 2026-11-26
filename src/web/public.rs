@@ -71,7 +71,7 @@ pub(super) async fn handle_public_convert(
     // Đảm bảo tài khoản khách Web (user_id = 0) tồn tại để thỏa khóa ngoại bảng clicks
     let _ = Repository::get_or_create_user(&conn, 0, Some("web_guest"), "Khách Web Thế Giới Siêu Sale", None)
         .await;
-    let owned_aff = load_owned_aff_settings(&conn, &state.config).await;
+    let owned_aff = load_owned_aff_settings_cached(&state.db, &state.config).await;
     let _ = state
         .accesstrade
         .get_or_load_approved_campaigns(owned_aff.accesstrade_token.as_deref())
@@ -95,14 +95,15 @@ pub(super) async fn handle_public_convert(
             };
             let _ = Repository::record_click(&conn, &click_record).await;
 
-            let wrapped_main = Repository::wrap_url_if_public(
-                &conn,
-                owned_aff.shortlink_base.as_deref(),
-                &parsed.affiliate_url,
-                &parsed.product_title,
-                parsed.platform.as_str(),
-            )
-            .await;
+            let wrapped_main = state
+                .db
+                .wrap_url_cached(
+                    owned_aff.shortlink_base.as_deref(),
+                    &parsed.affiliate_url,
+                    &parsed.product_title,
+                    parsed.platform.as_str(),
+                )
+                .await;
 
             let mut meta_parts = Vec::new();
             if let Some(ref shop) = parsed.product_shop {
@@ -119,7 +120,11 @@ pub(super) async fn handle_public_convert(
 
             let mut matched_btns = String::new();
             let mut seen_btn_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
-            if let Ok(deals) = Repository::get_active_deals(&conn, Some(parsed.platform.as_str())).await {
+            if let Ok(deals) = state
+                .db
+                .get_active_deals_cached(Some(parsed.platform.as_str()))
+                .await
+            {
                 for d in crate::bot::handlers::select_top_relevant_deals(&deals, &parsed, 2) {
                     let enriched_deal_url = crate::bot::handlers::enrich_deal_url_for_platform(
                         &d.deal_url,
@@ -131,14 +136,15 @@ pub(super) async fn handle_public_convert(
                     if !seen_btn_urls.insert(enriched_deal_url.clone()) {
                         continue;
                     }
-                    let wrapped_ex = Repository::wrap_url_if_public(
-                        &conn,
-                        owned_aff.shortlink_base.as_deref(),
-                        &enriched_deal_url,
-                        &d.title,
-                        &d.platform,
-                    )
-                    .await;
+                    let wrapped_ex = state
+                        .db
+                        .wrap_url_cached(
+                            owned_aff.shortlink_base.as_deref(),
+                            &enriched_deal_url,
+                            &d.title,
+                            &d.platform,
+                        )
+                        .await;
                     let short_label: String = if d.discount_desc.chars().count() > 38 {
                         format!("{}...", d.discount_desc.chars().take(36).collect::<String>())
                     } else {
@@ -185,14 +191,15 @@ pub(super) async fn handle_public_convert(
                     owned_aff.shopee_social_params.as_deref(),
                     &parsed.sub_id,
                 );
-                let wrapped_v = Repository::wrap_url_if_public(
-                    &conn,
-                    owned_aff.shortlink_base.as_deref(),
-                    &enriched_v_url,
-                    &mv.shop_name,
-                    &mv.platform,
-                )
-                .await;
+                let wrapped_v = state
+                    .db
+                    .wrap_url_cached(
+                        owned_aff.shortlink_base.as_deref(),
+                        &enriched_v_url,
+                        &mv.shop_name,
+                        &mv.platform,
+                    )
+                    .await;
                 matched_btns.push_str(&format!(
                     r##"<a class="btn btn--secondary" href="{}" target="_blank" rel="noopener noreferrer"><svg class="ico" aria-hidden="true"><use href="#ico-ticket"/></svg><span>Mã {} ({})</span><svg class="ico" aria-hidden="true"><use href="#ico-external"/></svg></a>"##,
                     escape_html(&wrapped_v),
@@ -488,27 +495,18 @@ pub(super) async fn render_public_home(
         .unwrap_or("all")
         .to_string();
 
-    let conn_opt = state.db.conn().ok();
-    let db_deals = match conn_opt.as_ref() {
-        Some(conn) => Repository::get_active_deals(conn, None).await.unwrap_or_default(),
-        None => Vec::new(),
+    let db_deals = state.db.get_active_deals_cached(None).await.unwrap_or_default();
+    let settings_map = state.db.get_settings_map_cached().await.unwrap_or_default();
+    let read_setting = |key: &str| {
+        settings_map
+            .get(key)
+            .cloned()
+            .filter(|s| !s.trim().is_empty())
     };
-    let read_setting = |key: &'static str| async {
-        match conn_opt.as_ref() {
-            Some(conn) => Repository::get_setting(conn, key)
-                .await
-                .ok()
-                .flatten()
-                .filter(|s| !s.trim().is_empty()),
-            None => None,
-        }
-    };
-    let shortlink_db = read_setting("shortlink_base_url").await;
+    let shortlink_db = read_setting("shortlink_base_url");
     let shopee_aff_id = read_setting("shopee_affiliate_id")
-        .await
         .or_else(|| state.config.shopee_affiliate_id.clone());
     let shopee_social_params = read_setting("shopee_social_params")
-        .await
         .or_else(|| state.config.shopee_social_params.clone());
     let tunnel_snap = crate::services::tunnel::snapshot_tunnel_state();
     let shortlink_base = crate::config::resolve_pc_runtime_shortlink_base_url(
@@ -577,21 +575,35 @@ pub(super) async fn render_public_home(
         sync_meta.last_sync_vn
     };
 
-    let mut cards_html = String::new();
-    for card in cards.into_iter().take(24) {
-        match card {
+    struct PreparedPublicCard {
+        platform: String,
+        badge: String,
+        title: String,
+        desc: String,
+        code_txt: String,
+        note_txt: String,
+        enriched_url: String,
+        cta_label: &'static str,
+    }
+
+    let prepared_cards: Vec<PreparedPublicCard> = cards
+        .into_iter()
+        .take(24)
+        .map(|card| match card {
             PublicDealCard::Db(d) => {
                 let code_txt = d
                     .coupon_code
                     .as_deref()
                     .filter(|c| !c.trim().is_empty())
-                    .unwrap_or("Tự động áp dụng");
+                    .unwrap_or("Tự động áp dụng")
+                    .to_string();
                 let badge = if d.is_exclusive {
                     "Ưu đãi nổi bật"
                 } else {
                     "Mã giảm giá"
-                };
-                let min_txt = if d.min_spend > 0.0 {
+                }
+                .to_string();
+                let note_txt = if d.min_spend > 0.0 {
                     format!("Đơn từ {}", format_vnd(d.min_spend))
                 } else {
                     "Không giới hạn đơn tối thiểu".to_string()
@@ -603,29 +615,16 @@ pub(super) async fn render_public_home(
                     shopee_social_params.as_deref(),
                     "web_public_deal",
                 );
-                let wrapped_url = match conn_opt.as_ref() {
-                    Some(conn) => {
-                        Repository::wrap_url_if_public(
-                            conn,
-                            shortlink_base.as_deref(),
-                            &enriched_url,
-                            &d.title,
-                            &d.platform,
-                        )
-                        .await
-                    }
-                    None => enriched_url,
-                };
-                cards_html.push_str(&render_public_deal_card(PublicDealCardData {
-                    platform: &d.platform,
+                PreparedPublicCard {
+                    platform: d.platform.clone(),
                     badge,
-                    title: &d.title,
-                    desc: &d.discount_desc,
+                    title: d.title.clone(),
+                    desc: d.discount_desc.clone(),
                     code_txt,
-                    note_txt: &min_txt,
-                    wrapped_url: &wrapped_url,
+                    note_txt,
+                    enriched_url,
                     cta_label: "Lấy mã & Xem ưu đãi",
-                }));
+                }
             }
             PublicDealCard::Api(v) => {
                 let target_url = v.best_target_url(approved.as_ref());
@@ -636,37 +635,46 @@ pub(super) async fn render_public_home(
                     shopee_social_params.as_deref(),
                     "web_public_voucher",
                 );
-                let wrapped_url = match conn_opt.as_ref() {
-                    Some(conn) => {
-                        Repository::wrap_url_if_public(
-                            conn,
-                            shortlink_base.as_deref(),
-                            &enriched_url,
-                            &v.shop_name,
-                            &v.platform,
-                        )
-                        .await
-                    }
-                    None => enriched_url,
-                };
-                let badge = v.discount_badge();
-                let expiry = if v.end_time.trim().is_empty() {
+                let note_txt = if v.end_time.trim().is_empty() {
                     "Đang hiệu lực".to_string()
                 } else {
                     format!("HSD: {}", v.end_time.trim())
                 };
-                cards_html.push_str(&render_public_deal_card(PublicDealCardData {
-                    platform: &v.platform,
-                    badge: &badge,
-                    title: &v.shop_name,
-                    desc: &v.discount_desc,
-                    code_txt: &v.coupon_code,
-                    note_txt: &expiry,
-                    wrapped_url: &wrapped_url,
+                PreparedPublicCard {
+                    platform: v.platform.clone(),
+                    badge: v.discount_badge(),
+                    title: v.shop_name.clone(),
+                    desc: v.discount_desc.clone(),
+                    code_txt: v.coupon_code.clone(),
+                    note_txt,
+                    enriched_url,
                     cta_label: "Lấy mã & Mở gian hàng",
-                }));
+                }
             }
-        }
+        })
+        .collect();
+
+    let batch_targets: Vec<(&str, &str, &str)> = prepared_cards
+        .iter()
+        .map(|c| (c.enriched_url.as_str(), c.title.as_str(), c.platform.as_str()))
+        .collect();
+    let wrapped_urls = state
+        .db
+        .wrap_urls_batch_cached(shortlink_base.as_deref(), &batch_targets)
+        .await;
+
+    let mut cards_html = String::new();
+    for (c, wrapped_url) in prepared_cards.iter().zip(wrapped_urls.iter()) {
+        cards_html.push_str(&render_public_deal_card(PublicDealCardData {
+            platform: &c.platform,
+            badge: &c.badge,
+            title: &c.title,
+            desc: &c.desc,
+            code_txt: &c.code_txt,
+            note_txt: &c.note_txt,
+            wrapped_url,
+            cta_label: c.cta_label,
+        }));
     }
 
     if cards_html.is_empty() {

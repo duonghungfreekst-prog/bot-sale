@@ -120,6 +120,15 @@ ACCESSTRADE_DEEPLINK_TEMPLATE=https://fast.accesstrade.com.vn/deep_link/63000000
 - **Cách 2:** Chạy lệnh `cargo run --release` hoặc `make run`.
 - *(Lưu ý: Trước khi chạy trên PC, hãy tắt/xóa Web Service trên `dashboard.render.com` để tránh 2 nơi cùng tranh chấp phiên Telegram Bot).*
 
+### Bước 4: Deploy Lên Hosting / Cloud (Render, Railway, Fly.io, Docker VPS)
+- Dự án đã có sẵn `Dockerfile` đa tầng (`rust:1-slim-bookworm` -> `debian:bookworm-slim`), `.dockerignore` và Blueprint `render.yaml` hỗ trợ **Graceful Shutdown (`SIGTERM`)**, `/health` check, cùng **L1 RAM Cache** & **Batch SQL** tối ưu riêng cho **Turso Cloud**.
+- Trên môi trường Hosting/Cloud, hệ thống **từ chối fallback về file SQLite cục bộ** để tránh mất dữ liệu khi container restart — bắt buộc gắn:
+  - `TURSO_DATABASE_URL` & `TURSO_AUTH_TOKEN`
+  - `ADMIN_PASSWORD` (mạnh, khác mặc định)
+  - `TELEGRAM_BOT_TOKEN` & `ACCESSTRADE_API_TOKEN`
+  - `WEBHOOK_BASE_URL=https://ten-mien-cua-ban` *(hoặc dùng `RENDER_EXTERNAL_URL` / `RAILWAY_PUBLIC_DOMAIN` tự động)*
+  - `DISABLE_KEEPALIVE=1` *(khuyên đặt nếu chạy trên VPS/Railway/Fly luôn sống 24/7)*
+
 ---
 
 ## 📱 Danh Sách Các Lệnh Telegram Hiện Tại

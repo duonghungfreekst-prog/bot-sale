@@ -183,16 +183,14 @@ async fn run_backend(
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
             let mut cycle: u64 = 0;
+            let mut last_json_hash: Option<u64> = None;
             loop {
                 ticker.tick().await;
-                let db_token = match warmup_db.conn() {
-                    Ok(conn) => Repository::get_setting(&conn, "accesstrade_api_token")
-                        .await
-                        .ok()
-                        .flatten()
-                        .filter(|s| !s.trim().is_empty()),
-                    Err(_) => None,
-                };
+                let settings_map = warmup_db.get_settings_map_cached().await.unwrap_or_default();
+                let db_token = settings_map
+                    .get("accesstrade_api_token")
+                    .cloned()
+                    .filter(|s| !s.trim().is_empty());
                 if let Some(ref tok) = db_token.or_else(|| env_token.clone()) {
                     let is_full = cycle.is_multiple_of(5);
                     if is_full
@@ -202,11 +200,17 @@ async fn run_backend(
                     }
                     match warmup_at.sync_market_vouchers_tick(tok, is_full).await {
                         Ok(_) => {
-                            if (is_full || cycle == 0)
+                            // Chỉ ghi cache blob xuống Turso khi chu kỳ đầu hoặc mỗi 30 phút và nội dung thực sự đổi (tiết kiệm quota Row Writes)
+                            if (cycle == 0 || cycle.is_multiple_of(30))
                                 && let Some(json_str) = warmup_at.export_voucher_cache_json().await
-                                && let Ok(conn) = warmup_db.conn()
                             {
-                                let _ = Repository::set_setting(&conn, "market_vouchers_cache_json", &json_str).await;
+                                let next_hash = fnv1a_hash64(json_str.as_bytes());
+                                if last_json_hash != Some(next_hash)
+                                    && let Ok(conn) = warmup_db.conn()
+                                    && Repository::set_setting(&conn, "market_vouchers_cache_json", &json_str).await.is_ok()
+                                {
+                                    last_json_hash = Some(next_hash);
+                                }
                             }
                         }
                         Err(err) => {
@@ -215,6 +219,9 @@ async fn run_backend(
                     }
                 } else {
                     warn!("⚠️ Chưa tìm thấy ACCESSTRADE_API_TOKEN trong Environment hoặc DB.");
+                }
+                if cycle.is_multiple_of(360) {
+                    let _ = warmup_db.cleanup_expired_sessions().await;
                 }
                 cycle = cycle.wrapping_add(1);
             }
@@ -229,12 +236,13 @@ async fn run_backend(
         (None, None)
     };
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let (web_stop_tx, web_stop_rx) = tokio::sync::watch::channel(false);
 
     let web_db = db.clone();
     let web_config = config.clone();
     let web_at = accesstrade.clone();
     let web_port = web_config.port;
-    let web_handle = tokio::spawn(async move {
+    let mut web_handle = tokio::spawn(async move {
         if let Err(err) = web::start_web_server(
             web_config.port,
             web_db,
@@ -242,6 +250,7 @@ async fn run_backend(
             web_at,
             webhook_tx,
             Some(ready_tx),
+            Some(web_stop_rx),
         )
         .await
         {
@@ -251,8 +260,13 @@ async fn run_backend(
 
     info!("🌐 Web Admin Dashboard & Health Check đang lắng nghe tại: http://127.0.0.1:{}/admin", web_port);
 
-    // 1.5 Nếu chạy trên Render/Cloud có public_base_url: bật self-ping giữ ấm mỗi 9 phút
-    if let Some(base_url) = config.public_base_url.clone() {
+    // 1.5 Nếu chạy trên Render/Cloud có public_base_url: bật self-ping giữ ấm mỗi 9 phút (trừ khi DISABLE_KEEPALIVE=1)
+    let disable_keepalive = std::env::var("DISABLE_KEEPALIVE")
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+    if !disable_keepalive
+        && let Some(base_url) = config.public_base_url.clone()
+    {
         spawn_keepalive_task(base_url);
     }
 
@@ -284,10 +298,15 @@ async fn run_backend(
     }
 
     let shutdown_fut = async move {
+        let os_sig = wait_os_shutdown_signal();
+        tokio::pin!(os_sig);
         if let Some(rx) = shutdown_rx {
-            let _ = rx.await;
+            tokio::select! {
+                _ = rx => {}
+                _ = &mut os_sig => {}
+            }
         } else {
-            std::future::pending::<()>().await;
+            os_sig.await;
         }
     };
 
@@ -300,9 +319,11 @@ async fn run_backend(
 
         tokio::select! {
             _ = shutdown_fut => {
-                info!("🛑 Đóng ứng dụng theo yêu cầu từ System Tray.");
+                info!("🛑 Đang đóng Web Server gọn gàng (Graceful Shutdown)...");
+                let _ = web_stop_tx.send(true);
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), &mut web_handle).await;
             }
-            _ = web_handle => {
+            _ = &mut web_handle => {
                 error!("Web Server đã dừng.");
             }
         }
@@ -313,20 +334,49 @@ async fn run_backend(
     // 3. Khởi chạy Telegram bot song song cùng Web Admin Server
     tokio::select! {
         _ = shutdown_fut => {
-            info!("🛑 Nhận tín hiệu thoát từ Desktop System Tray — đang dọn dẹp Bot & Tunnel...");
+            info!("🛑 Nhận tín hiệu thoát — đang thực hiện Graceful Shutdown Web Server, Bot & Tunnel...");
+            let _ = web_stop_tx.send(true);
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), &mut web_handle).await;
         }
-        _ = web_handle => {
+        _ = &mut web_handle => {
             error!("Web Server đã dừng.");
         }
         res = bot::run_bot(config, db, accesstrade, webhook_rx, bot_ready_rx) => {
             if let Err(err) = res {
                 error!("Lỗi khi chạy Telegram bot: {}", err);
             }
+            let _ = web_stop_tx.send(true);
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(3), &mut web_handle).await;
         }
     }
 
     services::tunnel::stop_active_tunnel().await;
     Ok(())
+}
+
+fn fnv1a_hash64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for &b in bytes {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+async fn wait_os_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate()).ok();
+        if let Some(ref mut term) = sigterm {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 /// Gửi HTTP GET định kỳ tới /health mỗi 9 phút để giữ container Cloud luôn sẵn sàng
@@ -341,11 +391,17 @@ fn spawn_keepalive_task(base_url: String) {
 
         tokio::time::sleep(std::time::Duration::from_secs(45)).await;
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(540));
+        let mut logged_first_ok = false;
         loop {
             ticker.tick().await;
             match client.get(&health_url).send().await {
                 Ok(resp) => {
-                    info!("[KEEPALIVE] Ping {} -> HTTP {}", health_url, resp.status());
+                    if !logged_first_ok {
+                        info!("[KEEPALIVE] Ping {} -> HTTP {}", health_url, resp.status());
+                        logged_first_ok = true;
+                    } else {
+                        tracing::debug!("[KEEPALIVE] Ping {} -> HTTP {}", health_url, resp.status());
+                    }
                 }
                 Err(err) => {
                     warn!("[KEEPALIVE] Không thể ping {}: {}", health_url, err);

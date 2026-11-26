@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use reqwest::Client;
 use teloxide::prelude::*;
@@ -12,6 +12,17 @@ use crate::db::AppDb;
 use crate::services::accesstrade::AccessTradeClient;
 use crate::services::shopee_affiliate::fetch_open_api_recent_orders;
 use crate::utils::{escape_html, format_vnd};
+
+static ORDER_HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
+
+fn order_http_client() -> &'static Client {
+    ORDER_HTTP_CLIENT.get_or_init(|| {
+        Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| Client::new())
+    })
+}
 
 #[derive(Debug, Default)]
 pub struct OrderSyncSummary {
@@ -32,31 +43,24 @@ pub async fn sync_orders_once(
         return summary;
     };
 
-    let at_token = Repository::get_setting(&conn, "accesstrade_api_token")
-        .await
-        .ok()
-        .flatten()
-        .filter(|s| !s.trim().is_empty())
+    let settings = db.get_settings_map_cached().await.unwrap_or_default();
+    let get_cfg = |key: &str| {
+        settings
+            .get(key)
+            .cloned()
+            .filter(|s| !s.trim().is_empty())
+    };
+
+    let at_token = get_cfg("accesstrade_api_token")
         .or_else(|| config.accesstrade_api_token.clone());
 
-    let shopee_app_id = Repository::get_setting(&conn, "shopee_app_id")
-        .await
-        .ok()
-        .flatten()
-        .filter(|s| !s.trim().is_empty())
+    let shopee_app_id = get_cfg("shopee_app_id")
         .or_else(|| config.shopee_app_id.clone());
 
-    let shopee_app_secret = Repository::get_setting(&conn, "shopee_app_secret")
-        .await
-        .ok()
-        .flatten()
-        .filter(|s| !s.trim().is_empty())
+    let shopee_app_secret = get_cfg("shopee_app_secret")
         .or_else(|| config.shopee_app_secret.clone());
 
-    let admin_telegram_id = Repository::get_setting(&conn, "admin_telegram_id")
-        .await
-        .ok()
-        .flatten()
+    let admin_telegram_id = get_cfg("admin_telegram_id")
         .and_then(|s| s.trim().parse::<i64>().ok())
         .filter(|&id| id != 0)
         .or(config.admin_telegram_id);
@@ -71,11 +75,7 @@ pub async fn sync_orders_once(
     }
 
     if let (Some(ref app_id), Some(ref app_secret)) = (shopee_app_id, shopee_app_secret) {
-        let http = Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .unwrap_or_else(|_| Client::new());
-        match fetch_open_api_recent_orders(&http, app_id, app_secret, 7).await {
+        match fetch_open_api_recent_orders(order_http_client(), app_id, app_secret, 7).await {
             Ok(mut list) => all_orders.append(&mut list),
             Err(err) => summary.errors.push(format!("Shopee Open API: {}", err)),
         }

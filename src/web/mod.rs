@@ -19,7 +19,7 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::bot::handlers::load_owned_aff_settings;
+use crate::bot::handlers::load_owned_aff_settings_cached;
 use crate::config::Config;
 use crate::db::models::{ClickRecord, TrackedOrder};
 use crate::db::repository::{NewDealInput, Repository};
@@ -91,7 +91,7 @@ pub struct AppState {
     pub webhook_tx: Option<WebhookUpdateSender>,
 }
 
-/// Khởi chạy Web Admin Dashboard Server & Telegram Webhook Endpoint
+/// Khởi chạy Web Admin Dashboard Server & Telegram Webhook Endpoint (hỗ trợ Graceful Shutdown cho Container Hosting)
 pub async fn start_web_server(
     port: u16,
     db: AppDb,
@@ -99,6 +99,7 @@ pub async fn start_web_server(
     accesstrade: Arc<AccessTradeClient>,
     webhook_tx: Option<WebhookUpdateSender>,
     ready_tx: Option<oneshot::Sender<()>>,
+    mut shutdown_rx: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> anyhow::Result<()> {
     let parser = Arc::new(DealParser::with_accesstrade(accesstrade.clone()));
     let state = AppState {
@@ -125,6 +126,17 @@ pub async fn start_web_server(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
+    .with_graceful_shutdown(async move {
+        if let Some(ref mut rx) = shutdown_rx {
+            while !*rx.borrow() {
+                if rx.changed().await.is_err() {
+                    break;
+                }
+            }
+        } else {
+            std::future::pending::<()>().await;
+        }
+    })
     .await?;
     Ok(())
 }

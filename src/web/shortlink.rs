@@ -219,11 +219,7 @@ pub(super) async fn handle_shortlink_redirect(
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    let Ok(conn) = state.db.conn() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
-
-    let Ok(Some(record)) = Repository::resolve_short_link(&conn, code_trimmed).await else {
+    let Ok(Some(record)) = state.db.resolve_short_link_cached(code_trimmed).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
@@ -257,10 +253,12 @@ pub(super) async fn handle_shortlink_redirect(
         return (StatusCode::OK, Html(preview_html)).into_response();
     }
 
-    let mobile_only = Repository::get_setting(&conn, "shortlink_mobile_only")
+    let mobile_only = state
+        .db
+        .get_settings_map_cached()
         .await
         .ok()
-        .flatten()
+        .and_then(|m| m.get("shortlink_mobile_only").cloned())
         .map(|v| v.trim() == "1")
         .unwrap_or(false);
 
@@ -306,7 +304,17 @@ pub(super) async fn handle_shortlink_redirect(
         return resp;
     }
 
-    let _ = Repository::increment_short_link_click(&conn, code_trimmed).await;
+    if !cfg!(test) {
+        let click_db = state.db.clone();
+        let click_code = code_trimmed.to_string();
+        tokio::spawn(async move {
+            if let Ok(conn) = click_db.conn() {
+                let _ = Repository::increment_short_link_click(&conn, &click_code).await;
+            }
+        });
+    } else if let Ok(conn) = state.db.conn() {
+        let _ = Repository::increment_short_link_click(&conn, code_trimmed).await;
+    }
 
     // Trên máy tính PC khi Admin tắt mobile_only, cho 302 trực tiếp để test nhanh; còn trên điện thoại luôn qua Cầu nối Mobile thông minh!
     if !mobile_only && !is_mobile_browser(&headers) {

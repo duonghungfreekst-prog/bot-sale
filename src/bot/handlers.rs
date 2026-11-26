@@ -31,6 +31,7 @@ pub enum Command {
 }
 
 /// Đọc Telegram ID của Quản trị viên từ DB (Web Admin) ưu tiên trước biến môi trường
+#[allow(dead_code)]
 pub(crate) async fn resolve_admin_telegram_id(conn: &libsql::Connection, config: &Config) -> Option<i64> {
     Repository::get_setting(conn, "admin_telegram_id")
         .await
@@ -128,41 +129,34 @@ impl OwnedAffSettings {
     }
 }
 
-pub(crate) async fn load_owned_aff_settings(
-    conn: &libsql::Connection,
+async fn build_owned_aff_settings_from_map(
+    settings_map: &std::collections::HashMap<String, String>,
     config: &Config,
 ) -> OwnedAffSettings {
-    let read_opt = |k: &'static str| async move {
-        Repository::get_setting(conn, k)
-            .await
-            .ok()
-            .flatten()
+    let read_opt = |k: &str| {
+        settings_map
+            .get(k)
+            .cloned()
             .filter(|s| !s.trim().is_empty())
     };
 
     let deeplink_template = read_opt("affiliate_template")
-        .await
         .unwrap_or_else(|| config.accesstrade_deeplink_template.clone());
     let accesstrade_token = read_opt("accesstrade_api_token")
-        .await
         .or_else(|| config.accesstrade_api_token.clone());
-    let campaign_shopee = read_opt("campaign_shopee").await;
-    let campaign_lazada = read_opt("campaign_lazada").await;
-    let campaign_tiki = read_opt("campaign_tiki").await;
-    let campaign_tiktok = read_opt("campaign_tiktok").await;
+    let campaign_shopee = read_opt("campaign_shopee");
+    let campaign_lazada = read_opt("campaign_lazada");
+    let campaign_tiki = read_opt("campaign_tiki");
+    let campaign_tiktok = read_opt("campaign_tiktok");
     let shopee_affiliate_id = read_opt("shopee_affiliate_id")
-        .await
         .or_else(|| config.shopee_affiliate_id.clone());
     let shopee_app_id = read_opt("shopee_app_id")
-        .await
         .or_else(|| config.shopee_app_id.clone());
     let shopee_app_secret = read_opt("shopee_app_secret")
-        .await
         .or_else(|| config.shopee_app_secret.clone());
     let shopee_social_params = read_opt("shopee_social_params")
-        .await
         .or_else(|| config.shopee_social_params.clone());
-    let shortlink_db = read_opt("shortlink_base_url").await;
+    let shortlink_db = read_opt("shortlink_base_url");
     let tunnel_snap = crate::services::tunnel::wait_for_tunnel_if_starting(
         config,
         std::time::Duration::from_secs(10),
@@ -189,6 +183,23 @@ pub(crate) async fn load_owned_aff_settings(
         shopee_social_params,
         shortlink_base,
     }
+}
+
+#[allow(dead_code)]
+pub(crate) async fn load_owned_aff_settings(
+    conn: &libsql::Connection,
+    config: &Config,
+) -> OwnedAffSettings {
+    let map = Repository::get_settings_map(conn).await.unwrap_or_default();
+    build_owned_aff_settings_from_map(&map, config).await
+}
+
+pub(crate) async fn load_owned_aff_settings_cached(
+    db: &AppDb,
+    config: &Config,
+) -> OwnedAffSettings {
+    let map = db.get_settings_map_cached().await.unwrap_or_default();
+    build_owned_aff_settings_from_map(&map, config).await
 }
 
 /// Xử lý tin nhắn văn bản hoặc bài đăng kèm Ảnh/Video có chứa link
@@ -277,7 +288,12 @@ pub async fn handle_message(
             }
         };
 
-        let admin_id_opt = resolve_admin_telegram_id(&conn, &config).await;
+        let cached_settings = db.get_settings_map_cached().await.unwrap_or_default();
+        let admin_id_opt = cached_settings
+            .get("admin_telegram_id")
+            .and_then(|s| s.trim().parse::<i64>().ok())
+            .filter(|&id| id != 0)
+            .or(config.admin_telegram_id);
         let is_admin = admin_id_opt.map(|id| id == user_id).unwrap_or(false);
         if is_admin && should_probe_admin_social_input(text) {
             let http_probe = reqwest::Client::builder()
@@ -289,6 +305,7 @@ pub async fn handle_message(
                 crate::services::social_harvester::resolve_social_params_from_input(&http_probe, text).await
                 && crate::services::shopee_affiliate::social_param_strength(&social_params) >= 3 {
                     let _ = Repository::set_setting(&conn, "shopee_social_params", &social_params).await;
+                    db.invalidate_settings_cache().await;
                     let _ = bot
                         .send_message(
                             msg.chat.id,
@@ -302,7 +319,7 @@ pub async fn handle_message(
                 }
         }
 
-        let owned_aff = load_owned_aff_settings(&conn, &config).await;
+        let owned_aff = load_owned_aff_settings_cached(&db, &config).await;
         let is_wrapped = owned_aff.shortlink_base.is_some();
         let approved_dynamic = parser
             .accesstrade()
@@ -322,7 +339,8 @@ pub async fn handle_message(
                 .parse_mode(ParseMode::Html)
                 .await?;
 
-            let active_deals = Repository::get_active_deals(&conn, None)
+            let active_deals = db
+                .get_active_deals_cached(None)
                 .await
                 .unwrap_or_default();
             let mut summary_blocks = Vec::new();
@@ -351,14 +369,14 @@ pub async fn handle_message(
                             warn!("Không thể ghi log click batch vào LibSQL: {}", err);
                         }
 
-                        let wrapped_url = Repository::wrap_url_if_public(
-                            &conn,
-                            owned_aff.shortlink_base.as_deref(),
-                            &parsed.affiliate_url,
-                            &parsed.product_title,
-                            parsed.platform.as_str(),
-                        )
-                        .await;
+                        let wrapped_url = db
+                            .wrap_url_cached(
+                                owned_aff.shortlink_base.as_deref(),
+                                &parsed.affiliate_url,
+                                &parsed.product_title,
+                                parsed.platform.as_str(),
+                            )
+                            .await;
                         rewritten_post = rewritten_post.replace(raw_url, &wrapped_url);
 
                         let price_tag = parsed
@@ -527,14 +545,14 @@ pub async fn handle_message(
                 }
 
                 // Bọc 100% link đầu ra qua shortlink hệ thống (giống godeal.online)
-                let wrapped_aff_url = Repository::wrap_url_if_public(
-                    &conn,
-                    shortlink_base.as_deref(),
-                    &parsed.affiliate_url,
-                    &parsed.product_title,
-                    parsed.platform.as_str(),
-                )
-                .await;
+                let wrapped_aff_url = db
+                    .wrap_url_cached(
+                        shortlink_base.as_deref(),
+                        &parsed.affiliate_url,
+                        &parsed.product_title,
+                        parsed.platform.as_str(),
+                    )
+                    .await;
 
                 let safe_aff_url = format_telegram_link_display(
                     &wrapped_aff_url,
@@ -595,7 +613,7 @@ pub async fn handle_message(
                 let mut voucher_buttons: Vec<(String, String)> = Vec::new();
 
                 // Chỉ hiển thị gọn tối đa 2 mã khớp thực tế (loại bài hướng dẫn rác & chống trùng URL)
-                let mut extra_vouchers_block = match Repository::get_active_deals(&conn, None).await {
+                let mut extra_vouchers_block = match db.get_active_deals_cached(None).await {
                     Ok(deals) => {
                         let ex_list = select_top_relevant_deals(&deals, &parsed, 2);
                         if ex_list.is_empty() {
@@ -610,14 +628,14 @@ pub async fn handle_message(
                                     owned_aff.shopee_social_params.as_deref(),
                                     &parsed.sub_id,
                                 );
-                                let wrapped_deal_url = Repository::wrap_url_if_public(
-                                    &conn,
-                                    shortlink_base.as_deref(),
-                                    &enriched_deal_url,
-                                    &d.title,
-                                    &d.platform,
-                                )
-                                .await;
+                                let wrapped_deal_url = db
+                                    .wrap_url_cached(
+                                        shortlink_base.as_deref(),
+                                        &enriched_deal_url,
+                                        &d.title,
+                                        &d.platform,
+                                    )
+                                    .await;
                                 let short_desc: String = d.discount_desc.chars().take(70).collect();
                                 s.push_str(&format!("\n• {}", escape_html(&short_desc)));
                                 if voucher_buttons.len() < 2 && !wrapped_deal_url.trim().is_empty() {
@@ -673,14 +691,14 @@ pub async fn handle_message(
                             owned_aff.shopee_social_params.as_deref(),
                             &parsed.sub_id,
                         );
-                        let wrapped_voucher_url = Repository::wrap_url_if_public(
-                            &conn,
-                            shortlink_base.as_deref(),
-                            &enriched_voucher_url,
-                            &format!("{} - {}", mv.shop_name, mv.discount_desc),
-                            &mv.platform,
-                        )
-                        .await;
+                        let wrapped_voucher_url = db
+                            .wrap_url_cached(
+                                shortlink_base.as_deref(),
+                                &enriched_voucher_url,
+                                &format!("{} - {}", mv.shop_name, mv.discount_desc),
+                                &mv.platform,
+                            )
+                            .await;
                         extra_vouchers_block.push_str(&format!(
                             "\n• <b>[{}]</b> <code>{}</code> — {}",
                             escape_html(&mv.discount_badge()),
@@ -707,40 +725,46 @@ pub async fn handle_message(
                     "alibaba" => vec![("🌐 Alibaba.com", "https://www.alibaba.com")],
                     _ => Vec::new(),
                 };
-                let mut portal_buttons = Vec::with_capacity(raw_portals.len());
                 let shopee_direct_aff = owned_aff
                     .shopee_affiliate_id
                     .as_deref()
                     .map(str::trim)
                     .filter(|id| crate::services::shopee_affiliate::is_valid_shopee_affiliate_id(id));
-                for (label, raw_portal_url) in raw_portals {
-                    let portal_target = if parsed.platform.as_str().eq_ignore_ascii_case("Shopee") {
-                        let base_portal = if let Some(aff_id) = shopee_direct_aff {
-                            crate::services::shopee_affiliate::build_direct_an_redir_link(
-                                raw_portal_url,
-                                aff_id,
-                                &parsed.sub_id,
+                let portal_targets: Vec<(&str, String)> = raw_portals
+                    .into_iter()
+                    .map(|(label, raw_portal_url)| {
+                        let portal_target = if parsed.platform.as_str().eq_ignore_ascii_case("Shopee") {
+                            let base_portal = if let Some(aff_id) = shopee_direct_aff {
+                                crate::services::shopee_affiliate::build_direct_an_redir_link(
+                                    raw_portal_url,
+                                    aff_id,
+                                    &parsed.sub_id,
+                                )
+                            } else {
+                                raw_portal_url.to_string()
+                            };
+                            crate::services::shopee_affiliate::append_social_params_to_shopee_link(
+                                &base_portal,
+                                owned_aff.shopee_social_params.as_deref(),
                             )
                         } else {
                             raw_portal_url.to_string()
                         };
-                        crate::services::shopee_affiliate::append_social_params_to_shopee_link(
-                            &base_portal,
-                            owned_aff.shopee_social_params.as_deref(),
-                        )
-                    } else {
-                        raw_portal_url.to_string()
-                    };
-                    let wrapped_portal = Repository::wrap_url_if_public(
-                        &conn,
-                        shortlink_base.as_deref(),
-                        &portal_target,
-                        label,
-                        parsed.platform.as_str(),
-                    )
+                        (label, portal_target)
+                    })
+                    .collect();
+                let batch_portal_inputs: Vec<(&str, &str, &str)> = portal_targets
+                    .iter()
+                    .map(|(label, target)| (target.as_str(), *label, parsed.platform.as_str()))
+                    .collect();
+                let wrapped_portals = db
+                    .wrap_urls_batch_cached(shortlink_base.as_deref(), &batch_portal_inputs)
                     .await;
-                    portal_buttons.push((label.to_string(), wrapped_portal));
-                }
+                let portal_buttons: Vec<(String, String)> = portal_targets
+                    .iter()
+                    .zip(wrapped_portals)
+                    .map(|((label, _), wrapped_portal)| ((*label).to_string(), wrapped_portal))
+                    .collect();
 
                 let back_line = if parsed.platform.as_str() == "TikTokShop" {
                     String::new()
@@ -930,7 +954,14 @@ pub async fn handle_command(
         }
 
         Command::Stats => {
-            let admin_id_opt = resolve_admin_telegram_id(&conn, &config).await;
+            let admin_id_opt = db
+                .get_settings_map_cached()
+                .await
+                .ok()
+                .and_then(|m| m.get("admin_telegram_id").cloned())
+                .and_then(|s| s.trim().parse::<i64>().ok())
+                .filter(|&id| id != 0)
+                .or(config.admin_telegram_id);
             let can_view_admin_stats = match admin_id_opt {
                 Some(admin_id) => admin_id == user_id,
                 None => true, // Chưa gắn Admin ID: cho phép xem lần đầu để lấy ID gắn vào Web Admin

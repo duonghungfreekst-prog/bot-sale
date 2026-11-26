@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
-use libsql::{params, Connection};
+use libsql::{params, params_from_iter, Connection};
 use rand::RngExt;
 use tracing::info;
 use uuid::Uuid;
@@ -646,16 +647,120 @@ impl Repository {
     }
 
     /// Nhập hàng loạt nhiều mã độc quyền / hợp tác từ Web Admin, trả về (thêm_mới, cập_nhật)
+    /// Tối ưu riêng cho Turso Remote: đọc trước 1 lần và chỉ ghi INSERT/UPDATE các bản ghi mới hoặc thực sự thay đổi bên trong transaction.
     pub async fn add_deals_batch(conn: &Connection, items: &[NewDealInput]) -> Result<(usize, usize)> {
-        let mut inserted = 0usize;
-        let mut updated = 0usize;
-        for item in items {
-            if Self::add_deal(conn, item).await? {
-                inserted += 1;
-            } else {
-                updated += 1;
+        if items.is_empty() {
+            return Ok((0, 0));
+        }
+
+        let mut existing_by_code: HashMap<(String, String), (i64, DealItem)> = HashMap::new();
+        {
+            let mut rows = conn
+                .query(
+                    "SELECT id, platform, title, coupon_code, discount_desc, min_spend, deal_url, expire_at, is_active, is_exclusive FROM deals",
+                    (),
+                )
+                .await?;
+            while let Some(row) = rows.next().await? {
+                if let Ok(d) = row_to_deal_item(&row)
+                    && let Some(ref c) = d.coupon_code
+                {
+                    let trimmed = c.trim();
+                    if !trimmed.is_empty() {
+                        existing_by_code.insert(
+                            (d.platform.to_ascii_lowercase(), trimmed.to_ascii_uppercase()),
+                            (d.id, d),
+                        );
+                    }
+                }
             }
         }
+
+        let now = Utc::now().to_rfc3339();
+        let mut inserted = 0usize;
+        let mut updated = 0usize;
+        let mut pending_updates: Vec<(i64, &NewDealInput, i64)> = Vec::new();
+        let mut pending_inserts: Vec<&NewDealInput> = Vec::new();
+
+        for item in items {
+            let exclusive_flag = if item.is_exclusive { 1i64 } else { 0i64 };
+            let trimmed_code = item
+                .coupon_code
+                .as_deref()
+                .map(str::trim)
+                .filter(|c| !c.is_empty());
+
+            if let Some(code) = trimmed_code {
+                let key = (item.platform.to_ascii_lowercase(), code.to_ascii_uppercase());
+                if let Some((deal_id, existing)) = existing_by_code.get_mut(&key) {
+                    let unchanged = existing.is_active
+                        && existing.is_exclusive == item.is_exclusive
+                        && existing.title == item.title
+                        && existing.discount_desc == item.discount_desc
+                        && existing.deal_url == item.deal_url
+                        && (existing.min_spend - item.min_spend).abs() < 0.01
+                        && existing.expire_at == item.expire_at;
+                    updated += 1;
+                    if !unchanged {
+                        existing.title = item.title.clone();
+                        existing.discount_desc = item.discount_desc.clone();
+                        existing.min_spend = item.min_spend;
+                        existing.deal_url = item.deal_url.clone();
+                        existing.expire_at = item.expire_at.clone();
+                        existing.is_active = true;
+                        existing.is_exclusive = item.is_exclusive;
+                        pending_updates.push((*deal_id, item, exclusive_flag));
+                    }
+                    continue;
+                }
+            }
+
+            inserted += 1;
+            pending_inserts.push(item);
+        }
+
+        if pending_updates.is_empty() && pending_inserts.is_empty() {
+            return Ok((inserted, updated));
+        }
+
+        let tx = conn.transaction().await?;
+        for (deal_id, item, exclusive_flag) in pending_updates {
+            tx.execute(
+                "UPDATE deals SET title = ?1, discount_desc = ?2, min_spend = ?3, deal_url = ?4, expire_at = ?5, is_active = 1, is_exclusive = ?6 WHERE id = ?7",
+                params![
+                    item.title.clone(),
+                    item.discount_desc.clone(),
+                    item.min_spend,
+                    item.deal_url.clone(),
+                    item.expire_at.clone(),
+                    exclusive_flag,
+                    deal_id
+                ],
+            )
+            .await?;
+        }
+
+        for item in pending_inserts {
+            let exclusive_flag = if item.is_exclusive { 1i64 } else { 0i64 };
+            tx.execute(
+                "INSERT INTO deals (platform, title, coupon_code, discount_desc, min_spend, deal_url, expire_at, is_active, is_exclusive, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9)",
+                params![
+                    item.platform.clone(),
+                    item.title.clone(),
+                    item.coupon_code.clone(),
+                    item.discount_desc.clone(),
+                    item.min_spend,
+                    item.deal_url.clone(),
+                    item.expire_at.clone(),
+                    exclusive_flag,
+                    now.clone()
+                ],
+            )
+            .await?;
+        }
+        tx.commit().await?;
+
         Ok((inserted, updated))
     }
 
@@ -712,6 +817,61 @@ impl Repository {
         } else {
             Ok(None)
         }
+    }
+
+    /// Đọc toàn bộ cấu hình nhẹ từ bảng settings trong 1 truy vấn duy nhất (loại trừ blob JSON cache lớn)
+    pub async fn get_settings_map(conn: &Connection) -> Result<HashMap<String, String>> {
+        let mut rows = conn
+            .query(
+                "SELECT key, value FROM settings WHERE key != 'market_vouchers_cache_json'",
+                (),
+            )
+            .await?;
+        let mut map = HashMap::new();
+        while let Some(row) = rows.next().await? {
+            let k: String = row.get(0)?;
+            let v: String = row.get(1)?;
+            map.insert(k, v);
+        }
+        Ok(map)
+    }
+
+    /// Dọn dẹp các phiên đăng nhập Admin đã hết hạn để tránh phình DB trên Hosting
+    pub async fn cleanup_expired_admin_sessions(conn: &Connection, now_ts: i64) -> Result<u64> {
+        let affected = conn
+            .execute(
+                "DELETE FROM admin_sessions WHERE expires_at <= ?1",
+                params![now_ts],
+            )
+            .await?;
+        Ok(affected)
+    }
+
+    /// Tra cứu hàng loạt mã shortlink theo danh sách target_url (giảm 24 round-trips xuống 1 query trên Turso)
+    pub async fn get_short_codes_by_targets(
+        conn: &Connection,
+        targets: &[String],
+    ) -> Result<HashMap<String, String>> {
+        let mut found = HashMap::new();
+        if targets.is_empty() {
+            return Ok(found);
+        }
+        for chunk in targets.chunks(40) {
+            let placeholders: Vec<String> = (1..=chunk.len()).map(|i| format!("?{}", i)).collect();
+            let sql = format!(
+                "SELECT target_url, code FROM short_links WHERE target_url IN ({})",
+                placeholders.join(",")
+            );
+            let mut rows = conn
+                .query(&sql, params_from_iter(chunk.iter().cloned()))
+                .await?;
+            while let Some(row) = rows.next().await? {
+                let target_url: String = row.get(0)?;
+                let code: String = row.get(1)?;
+                found.entry(target_url).or_insert(code);
+            }
+        }
+        Ok(found)
     }
 
     /// Cập nhật cấu hình hệ thống vào bảng settings
@@ -796,6 +956,7 @@ impl Repository {
     }
 
     /// Tự động bọc target_url thành link ngắn dạng `<base_url>/<code>` nếu có domain công khai
+    #[cfg(test)]
     pub async fn wrap_url_if_public(
         conn: &Connection,
         base_url_opt: Option<&str>,

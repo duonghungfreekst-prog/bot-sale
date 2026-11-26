@@ -60,6 +60,14 @@ pub(super) fn extract_client_ip(headers: &HeaderMap) -> String {
     {
         return xff.to_string();
     }
+    if let Some(real_ip) = headers
+        .get("x-real-ip")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return real_ip.to_string();
+    }
     "local".to_string()
 }
 

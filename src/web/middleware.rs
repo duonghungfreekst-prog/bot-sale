@@ -177,13 +177,12 @@ pub(super) fn is_allowed_shortlink_cloak_path(method: &axum::http::Method, path:
 
 /// Kiểm tra Admin có bật tùy chọn tạm ẩn Trang chủ `/` thành 404 Not Found hay không
 pub(super) async fn is_public_home_cloaked(state: &AppState) -> bool {
-    let Ok(conn) = state.db.conn() else {
-        return false;
-    };
-    Repository::get_setting(&conn, "public_home_cloak")
+    state
+        .db
+        .get_settings_map_cached()
         .await
         .ok()
-        .flatten()
+        .and_then(|m| m.get("public_home_cloak").cloned())
         .map(|s| s.trim() == "1")
         .unwrap_or(false)
 }
@@ -277,15 +276,13 @@ pub(super) async fn shortlink_cloak_middleware(
 
         match req_host {
             Some(rh) if public_host.as_deref() != Some(rh.as_str()) => {
-                let db_short_raw = if let Ok(conn) = state.db.conn() {
-                    Repository::get_setting(&conn, "shortlink_base_url")
-                        .await
-                        .ok()
-                        .flatten()
-                        .filter(|s| !s.trim().is_empty())
-                } else {
-                    None
-                };
+                let db_short_raw = state
+                    .db
+                    .get_settings_map_cached()
+                    .await
+                    .ok()
+                    .and_then(|m| m.get("shortlink_base_url").cloned())
+                    .filter(|s| !s.trim().is_empty());
                 let short_host = crate::config::resolve_effective_shortlink_base_url(
                     db_short_raw.as_deref(),
                     state.config.shortlink_base_url.as_deref(),

@@ -655,6 +655,7 @@ pub async fn sync_social_all_once(
     if let Some(ref params) = effective_params {
         if params != &current_saved {
             let _ = Repository::set_setting(&conn, "shopee_social_params", params).await;
+            db.invalidate_settings_cache().await;
             info!(
                 "🎉 [SOCIAL_HARVESTER] Đã tự động cập nhật chữ ký Shopee FB/IG (mức {}): {}",
                 social_param_strength(params),
@@ -669,6 +670,9 @@ pub async fn sync_social_all_once(
     if !harvested_deals.is_empty() {
         match Repository::add_deals_batch(&conn, &harvested_deals).await {
             Ok((ins, upd)) => {
+                if ins > 0 || upd > 0 {
+                    db.invalidate_deals_cache().await;
+                }
                 report.deals_inserted = ins;
                 report.deals_updated = upd;
                 info!(

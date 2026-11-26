@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: salehunter-bot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: RUST_LOG
+        value: "info,salehunter_bot=info"
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ACCESSTRADE_API_TOKEN
+        sync: false
+      - key: WEBHOOK_BASE_URL
+        sync: false
+      - key: SHORTLINK_BASE_URL
+        value: "https://thegioisieusale.click"
+      - key: ADMIN_TELEGRAM_ID
+        sync: false
+      - key: SHOPEE_AFFILIATE_ID
+        sync: false
+      - key: SHOPEE_APP_ID
+        sync: false
+      - key: SHOPEE_APP_SECRET
+        sync: false
