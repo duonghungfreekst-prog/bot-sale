@@ -60,41 +60,75 @@ fn splash_loading_html(port: u16) -> String {
   :root {{
     color-scheme: light;
   }}
+  * {{ box-sizing: border-box; }}
   body {{
     margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    background: #F4F6F9; color: #0F172A;
+    background: radial-gradient(circle at 50% 0%, rgba(234, 88, 12, 0.09), transparent 55%), #F4F6F9;
+    color: #0F172A;
     font-family: "Be Vietnam Pro", "Segoe UI", system-ui, -apple-system, sans-serif;
     padding: 20px;
   }}
   .box {{
-    text-align: center; padding: 36px 40px; border-radius: 18px;
+    text-align: center; padding: 34px 38px 30px; border-radius: 22px;
     background: #FFFFFF; border: 1px solid #E2E8F0;
-    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08); max-width: 440px; width: 100%;
+    box-shadow: 0 20px 44px -12px rgba(15, 23, 42, 0.12), 0 4px 12px rgba(15, 23, 42, 0.04);
+    max-width: 440px; width: 100%;
   }}
-  .spinner {{
-    width: 42px; height: 42px; margin: 0 auto 18px; border-radius: 999px;
-    border: 3px solid #FED7AA; border-top-color: #C2410C;
-    animation: spin 0.85s linear infinite;
+  .emblem {{
+    position: relative; width: 68px; height: 68px; margin: 0 auto 18px;
+    border-radius: 20px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #FFF7ED 0%, #FFEDD5 100%);
+    border: 1px solid #FED7AA; color: #C2410C;
+    box-shadow: 0 10px 24px -6px rgba(194, 65, 12, 0.25);
   }}
-  h1 {{ margin: 0 0 8px; font-size: 18px; font-weight: 800; letter-spacing: -0.02em; color: #0F172A; }}
+  .emblem svg {{ width: 32px; height: 32px; }}
+  .emblem__ring {{
+    position: absolute; inset: -5px; border-radius: 24px;
+    border: 2px solid transparent; border-top-color: #EA580C; border-right-color: rgba(234, 88, 12, 0.25);
+    animation: spin 1.1s linear infinite;
+  }}
+  h1 {{ margin: 0 0 8px; font-size: 19px; font-weight: 800; letter-spacing: -0.02em; color: #0F172A; }}
   p {{ margin: 0; font-size: 13.5px; color: #475569; line-height: 1.55; }}
+  .progress-track {{
+    width: 100%; height: 5px; border-radius: 999px; background: #F1F5F9;
+    margin: 18px 0 14px; overflow: hidden;
+  }}
+  .progress-bar {{
+    width: 42%; height: 100%; border-radius: 999px;
+    background: linear-gradient(90deg, #EA580C, #F59E0B);
+    animation: slide 1.35s ease-in-out infinite;
+  }}
   .port-tag {{
-    display: inline-block; margin-top: 14px; padding: 4px 10px; border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px;
     background: #FFF7ED; border: 1px solid #FED7AA; color: #C2410C;
     font-size: 12px; font-weight: 700;
   }}
+  .port-dot {{ width: 7px; height: 7px; border-radius: 999px; background: #16A34A; }}
   @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+  @keyframes slide {{
+    0% {{ transform: translateX(-110%); }}
+    100% {{ transform: translateX(260%); }}
+  }}
   @media (prefers-reduced-motion: reduce) {{
-    .spinner {{ animation: none; border-top-color: #C2410C; }}
+    .emblem__ring, .progress-bar {{ animation: none; }}
+    .progress-bar {{ width: 100%; transform: none; }}
   }}
 </style>
 </head>
 <body>
   <div class="box">
-    <div class="spinner" aria-hidden="true"></div>
+    <div class="emblem" aria-hidden="true">
+      <div class="emblem__ring"></div>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
+        <line x1="3" y1="6" x2="21" y2="6"/>
+        <path d="M16 10a4 4 0 0 1-8 0"/>
+      </svg>
+    </div>
     <h1>THẾ GIỚI SIÊU SALE</h1>
-    <p>Đang khởi động Bot Telegram, Web Quản Trị và tự động kết nối Cloudflare Tunnel...</p>
-    <div class="port-tag">Cổng cục bộ: {port}</div>
+    <p>Đang khởi động Bot Telegram, Bảng Điều Khiển Sáng và kết nối Cloudflare Tunnel...</p>
+    <div class="progress-track" aria-hidden="true"><div class="progress-bar"></div></div>
+    <div class="port-tag"><span class="port-dot" aria-hidden="true"></span>Cổng cục bộ: {port}</div>
   </div>
 </body>
 </html>"#,

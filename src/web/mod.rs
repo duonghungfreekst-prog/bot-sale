@@ -676,7 +676,28 @@ async fn handle_public_convert(
 
 /// JS ngoài cho Trang Chủ & nút sao chép trong Web Admin (tuân thủ nghiêm ngặt CSP `default-src 'self'`)
 async fn handle_home_js() -> Response {
-    let js = r#"document.addEventListener("click", function (e) {
+    let js = r##"function syncPublicThemeBtn() {
+    var themeBtn = document.getElementById("public-theme-btn");
+    if (!themeBtn) return;
+    var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    themeBtn.textContent = isDark ? "☀️ Giao diện Sáng" : "🌙 Giao diện Tối";
+    themeBtn.setAttribute("aria-pressed", isDark ? "true" : "false");
+}
+document.addEventListener("DOMContentLoaded", syncPublicThemeBtn);
+document.addEventListener("click", function (e) {
+    var tBtn = e.target.closest("#public-theme-btn");
+    if (tBtn) {
+        var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+        var next = isDark ? "light" : "dark";
+        if (next === "dark") {
+            document.documentElement.setAttribute("data-theme", "dark");
+        } else {
+            document.documentElement.removeAttribute("data-theme");
+        }
+        try { localStorage.setItem("dealx-theme", next); } catch (_) {}
+        syncPublicThemeBtn();
+        return;
+    }
     var btn = e.target.closest(".js-copy-link");
     if (!btn) return;
     var url = btn.getAttribute("data-copy-url");
@@ -699,7 +720,7 @@ async fn handle_home_js() -> Response {
             setTimeout(function () { btn.textContent = old; }, 2000);
         });
     }
-});"#;
+});"##;
     let mut resp = (StatusCode::OK, js).into_response();
     resp.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -994,159 +1015,320 @@ async fn render_public_home(
     <title>Thế Giới Siêu Sale — Tổng Hợp Mã Giảm Giá &amp; Gợi Ý Sản Phẩm Chính Hãng</title>
     <meta name="description" content="Cổng tổng hợp mã giảm giá công khai theo từng ngành hàng từ Shopee, Tiki, Lazada, TikTok Shop giúp người mua tiết kiệm mỗi ngày.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&amp;family=Lexend:wght@600;700;800&amp;display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&amp;family=Lexend:wght@600;700;800&amp;family=JetBrains+Mono:wght@500;600&amp;display=swap">
+    <script>
+        (function () {{
+            try {{
+                if (localStorage.getItem("dealx-theme") === "dark") {{
+                    document.documentElement.setAttribute("data-theme", "dark");
+                }}
+            }} catch (e) {{}}
+        }})();
+    </script>
     <style>
         :root {{
-            --color-bg: #0c0f17;
-            --color-surface: #141926;
-            --color-surface-elevated: #1c2333;
-            --color-text: #f8fafc;
-            --color-text-muted: #cbd5e1;
-            --color-primary: #f97316;
-            --color-primary-hover: #ea580c;
-            --color-primary-contrast: #0b0f19;
-            --color-border: #263044;
-            --color-success: #34d399;
+            color-scheme: light;
+            --color-bg: #F4F6F9;
+            --color-header: rgba(255, 255, 255, 0.92);
+            --color-surface: #FFFFFF;
+            --color-surface-elevated: #F8FAFC;
+            --color-inset: #F1F5F9;
+            --color-text: #0F172A;
+            --color-text-secondary: #334155;
+            --color-text-muted: #475569;
+            --color-primary: #C2410C;
+            --color-primary-hover: #9A3412;
+            --color-primary-bright: #EA580C;
+            --color-primary-contrast: #FFFFFF;
+            --color-primary-soft: #FFF7ED;
+            --color-primary-soft-border: #FED7AA;
+            --color-border: #E2E8F0;
+            --color-border-strong: #CBD5E1;
+            --color-success: #15803D;
+            --color-success-bg: #DCFCE7;
+            --color-success-border: #86EFAC;
+            --color-err: #B91C1C;
+            --color-err-bg: #FEE2E2;
+            --color-err-border: #FCA5A5;
             --radius-sm: 8px;
             --radius-md: 12px;
             --radius-lg: 18px;
-            --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.35);
+            --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+            --shadow-md: 0 10px 28px -8px rgba(15, 23, 42, 0.1), 0 2px 6px rgba(15, 23, 42, 0.04);
+            --shadow-hero: 0 24px 48px -14px rgba(194, 65, 12, 0.18), 0 8px 20px rgba(15, 23, 42, 0.06);
             --font-sans: "Be Vietnam Pro", system-ui, -apple-system, sans-serif;
             --font-display: "Lexend", "Be Vietnam Pro", system-ui, sans-serif;
+            --font-mono: "JetBrains Mono", monospace;
+        }}
+        html[data-theme="dark"] {{
+            color-scheme: dark;
+            --color-bg: #0B1120;
+            --color-header: rgba(15, 23, 42, 0.92);
+            --color-surface: #131C31;
+            --color-surface-elevated: #18233C;
+            --color-inset: #0D1526;
+            --color-text: #F8FAFC;
+            --color-text-secondary: #E2E8F0;
+            --color-text-muted: #94A3B8;
+            --color-primary: #F97316;
+            --color-primary-hover: #FB923C;
+            --color-primary-bright: #FB923C;
+            --color-primary-contrast: #090D16;
+            --color-primary-soft: rgba(249, 115, 22, 0.16);
+            --color-primary-soft-border: rgba(249, 115, 22, 0.38);
+            --color-border: rgba(148, 163, 184, 0.18);
+            --color-border-strong: rgba(148, 163, 184, 0.32);
+            --color-success: #86EFAC;
+            --color-success-bg: rgba(34, 197, 94, 0.16);
+            --color-success-border: rgba(34, 197, 94, 0.38);
+            --color-err: #FCA5A5;
+            --color-err-bg: rgba(239, 68, 68, 0.16);
+            --color-err-border: rgba(239, 68, 68, 0.38);
+            --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.35);
+            --shadow-md: 0 14px 32px -10px rgba(0, 0, 0, 0.5);
+            --shadow-hero: 0 24px 48px -12px rgba(0, 0, 0, 0.6);
         }}
         * {{ box-sizing: border-box; }}
         html {{ scroll-behavior: smooth; }}
         body {{
             margin: 0;
-            background: radial-gradient(circle at top right, rgba(249, 115, 22, 0.12), transparent 42%), var(--color-bg);
+            background:
+                radial-gradient(circle at 85% 0%, rgba(234, 88, 12, 0.08), transparent 44%),
+                radial-gradient(circle at 10% 35%, rgba(14, 165, 233, 0.06), transparent 42%),
+                var(--color-bg);
             color: var(--color-text);
             font-family: var(--font-sans);
             font-size: 16px;
             line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
         }}
         a, button, input {{ font: inherit; }}
         a:focus-visible, button:focus-visible, input:focus-visible {{
             outline: 2px solid var(--color-primary);
             outline-offset: 2px;
         }}
-        .container {{ max-width: 1180px; margin: 0 auto; padding: 0 16px; }}
+        .ico {{ width: 18px; height: 18px; display: inline-block; vertical-align: middle; flex-shrink: 0; }}
+        .container {{ max-width: 1200px; margin: 0 auto; padding: 0 18px; }}
+
+        /* Header */
         .site-header {{
-            position: sticky; top: 0; z-index: 20;
-            background: rgba(12, 15, 23, 0.92);
-            backdrop-filter: blur(10px);
+            position: sticky; top: 0; z-index: 30;
+            background: var(--color-header);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
             border-bottom: 1px solid var(--color-border);
         }}
         .site-header__inner {{
             display: flex; align-items: center; justify-content: space-between;
-            gap: 12px; min-height: 68px; flex-wrap: wrap; padding: 10px 0;
+            gap: 12px; min-height: 70px; flex-wrap: wrap; padding: 10px 0;
         }}
         .brand {{
-            display: inline-flex; align-items: center; gap: 10px;
+            display: inline-flex; align-items: center; gap: 11px;
             text-decoration: none; color: var(--color-text);
-            font-family: var(--font-display); font-weight: 800; font-size: 1.15rem;
+            font-family: var(--font-display); font-weight: 800; font-size: 1.12rem;
+            letter-spacing: -0.02em;
         }}
-        .brand__mark {{
-            width: 38px; height: 38px; border-radius: var(--radius-md);
-            display: inline-flex; align-items: center; justify-content: center;
-            background: var(--color-primary); color: var(--color-primary-contrast); font-weight: 800;
+        .brand__logo {{
+            width: 40px; height: 40px; border-radius: 9999px; object-fit: cover; display: block;
+            border: 2px solid var(--color-primary-bright);
+            box-shadow: 0 4px 12px rgba(234, 88, 12, 0.22);
         }}
-        .nav {{ display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }}
+        .nav {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }}
         .nav__link {{
-            color: var(--color-text-muted); text-decoration: none; font-size: 0.95rem; font-weight: 500;
-            padding: 8px 4px; min-height: 44px; display: inline-flex; align-items: center;
+            color: var(--color-text-muted); text-decoration: none; font-size: 0.92rem; font-weight: 600;
+            padding: 8px 10px; min-height: 44px; display: inline-flex; align-items: center;
+            border-radius: var(--radius-sm);
+            transition: color 160ms ease, background-color 160ms ease;
         }}
-        .nav__link:hover {{ color: var(--color-text); }}
+        .nav__link:hover {{ color: var(--color-text); background: var(--color-inset); }}
+        .theme-toggle {{
+            min-height: 42px; padding: 8px 14px; border-radius: 9999px;
+            background: var(--color-surface); border: 1px solid var(--color-border-strong);
+            color: var(--color-text); font-size: 0.84rem; font-weight: 700; cursor: pointer;
+            transition: border-color 160ms ease;
+        }}
+        .theme-toggle:hover {{ border-color: var(--color-primary); }}
         .btn {{
             display: inline-flex; align-items: center; justify-content: center; gap: 8px;
             min-height: 44px; padding: 10px 18px; border-radius: var(--radius-md);
-            border: 1px solid transparent; font-weight: 700; text-decoration: none; cursor: pointer;
-            transition: background-color 180ms ease, transform 180ms ease;
+            border: 1px solid transparent; font-weight: 700; font-size: 0.92rem;
+            text-decoration: none; cursor: pointer;
+            transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
         }}
         .btn--primary {{
             background: var(--color-primary); color: var(--color-primary-contrast);
+            border-color: var(--color-primary);
         }}
-        .btn--primary:hover {{ background: var(--color-primary-hover); transform: translateY(-1px); }}
+        .btn--primary:hover {{ background: var(--color-primary-hover); border-color: var(--color-primary-hover); }}
         .btn--secondary {{
-            background: var(--color-surface-elevated); color: var(--color-text);
-            border-color: var(--color-border);
+            background: var(--color-surface); color: var(--color-text);
+            border-color: var(--color-border-strong);
         }}
-        .btn--secondary:hover {{ border-color: var(--color-primary); }}
-        .hero {{ padding: 40px 0 28px; }}
+        .btn--secondary:hover {{ border-color: var(--color-primary); background: var(--color-inset); }}
+
+        /* Hero 2-Column 3D Stage */
+        .hero {{ padding: 34px 0 24px; }}
+        .hero-grid {{
+            display: grid;
+            grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.85fr);
+            gap: 28px;
+            align-items: center;
+            margin-bottom: 24px;
+        }}
         .hero__eyebrow {{
             display: inline-flex; align-items: center; gap: 8px;
-            padding: 6px 12px; border-radius: 999px;
-            background: var(--color-surface); border: 1px solid var(--color-border);
-            color: var(--color-success); font-size: 0.85rem; font-weight: 600;
+            padding: 6px 13px; border-radius: 999px;
+            background: var(--color-success-bg); border: 1px solid var(--color-success-border);
+            color: var(--color-success); font-size: 0.84rem; font-weight: 700;
         }}
         .hero__title {{
             font-family: var(--font-display);
-            font-size: clamp(1.75rem, 4vw, 2.75rem);
-            line-height: 1.2; margin: 16px 0 12px; max-width: 780px;
+            font-size: clamp(1.78rem, 3.6vw, 2.65rem);
+            line-height: 1.18; letter-spacing: -0.025em;
+            margin: 14px 0 12px; color: var(--color-text);
         }}
         .hero__subtitle {{
-            color: var(--color-text-muted); max-width: 68ch; margin: 0 0 24px;
+            color: var(--color-text-muted); max-width: 62ch; margin: 0 0 18px; font-size: 0.98rem;
         }}
         .stats-bar {{
-            display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 24px;
-            color: var(--color-text-muted); font-size: 0.9rem;
+            display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px;
         }}
-        .stats-bar strong {{ color: var(--color-text); }}
+        .stat-chip {{
+            display: inline-flex; align-items: center; gap: 7px;
+            padding: 6px 12px; border-radius: var(--radius-sm);
+            background: var(--color-surface); border: 1px solid var(--color-border);
+            color: var(--color-text-muted); font-size: 0.85rem; box-shadow: var(--shadow-sm);
+        }}
+        .stat-chip strong {{ color: var(--color-text); font-family: var(--font-mono); }}
+
+        .hero-visual {{
+            display: flex; align-items: center; justify-content: center;
+            perspective: 1100px;
+        }}
+        .stage3d {{
+            position: relative; width: 100%; max-width: 390px; aspect-ratio: 1 / 1;
+            border-radius: 26px; padding: 14px;
+            background: linear-gradient(145deg, var(--color-surface) 0%, var(--color-surface-elevated) 100%);
+            border: 1px solid var(--color-border);
+            box-shadow: var(--shadow-hero);
+            transform-style: preserve-3d;
+            transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+            transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+        }}
+        .stage3d::before {{
+            content: ""; position: absolute; inset: 0; border-radius: 26px; pointer-events: none;
+            background: radial-gradient(circle at var(--gx, 50%) var(--gy, 45%), rgba(234, 88, 12, 0.16), transparent 62%);
+        }}
+        .stage3d__img {{
+            width: 100%; height: 100%; object-fit: cover; border-radius: 18px; display: block;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
+        }}
+        .float-tag {{
+            position: absolute; display: inline-flex; align-items: center; gap: 7px;
+            padding: 8px 12px; border-radius: 999px; font-size: 0.78rem; font-weight: 700;
+            background: var(--color-surface); color: var(--color-text);
+            border: 1px solid var(--color-border); box-shadow: var(--shadow-md);
+            white-space: nowrap;
+        }}
+        .float-tag--top {{ top: -10px; right: 14px; color: var(--color-primary); border-color: var(--color-primary-soft-border); }}
+        .float-tag--bot {{ bottom: -10px; left: 14px; color: var(--color-success); border-color: var(--color-success-border); }}
+
+        /* Convert & Search Panels */
+        .convert-panel {{
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-top: 3px solid var(--color-primary-bright);
+            border-radius: var(--radius-lg); padding: 18px; box-shadow: var(--shadow-md);
+            margin-bottom: 16px;
+        }}
+        .convert-panel__title {{
+            font-family: var(--font-display); font-size: 1.02rem; font-weight: 700;
+            margin: 0 0 12px; color: var(--color-text);
+            display: flex; align-items: center; gap: 8px;
+        }}
         .search-panel {{
             background: var(--color-surface); border: 1px solid var(--color-border);
-            border-radius: var(--radius-lg); padding: 16px; box-shadow: var(--shadow-md);
+            border-radius: var(--radius-lg); padding: 16px; box-shadow: var(--shadow-sm);
         }}
-        .search-form {{ display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; }}
+        .search-form {{ display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; }}
         .sr-only {{
             position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
             overflow: hidden; clip: rect(0, 0, 0, 0); border: 0;
         }}
         .search-input {{
             flex: 1 1 240px; min-height: 44px; padding: 10px 14px;
-            border-radius: var(--radius-md); border: 1px solid var(--color-border);
-            background: var(--color-bg); color: var(--color-text);
+            border-radius: var(--radius-md); border: 1px solid var(--color-border-strong);
+            background: var(--color-surface-elevated); color: var(--color-text);
         }}
-        .search-input::placeholder {{ color: #94a3b8; }}
+        .search-input::placeholder {{ color: var(--color-text-muted); opacity: 0.78; }}
         .filter-row {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }}
         .filter-pill {{
             min-height: 40px; padding: 6px 14px; border-radius: 999px;
-            border: 1px solid var(--color-border); background: var(--color-bg);
-            color: var(--color-text-muted); text-decoration: none; font-size: 0.9rem; font-weight: 600;
+            border: 1px solid var(--color-border); background: var(--color-surface-elevated);
+            color: var(--color-text-muted); text-decoration: none; font-size: 0.88rem; font-weight: 600;
             display: inline-flex; align-items: center;
+            transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
         }}
+        .filter-pill:hover {{ border-color: var(--color-primary); color: var(--color-text); }}
         .filter-pill--active {{
             background: var(--color-primary); color: var(--color-primary-contrast); border-color: var(--color-primary);
         }}
-        .section {{ padding: 28px 0; }}
+
+        /* Convert Result Box */
+        .convert-result {{
+            margin-top: 14px; background: var(--color-surface-elevated); border: 1px solid var(--color-border);
+            border-radius: var(--radius-md); padding: 15px;
+        }}
+        .convert-result__head {{ display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }}
+        .convert-result__title {{ font-family: var(--font-display); font-size: 1rem; margin: 0 0 6px; color: var(--color-text); }}
+        .convert-result__meta {{ margin: 0 0 8px; color: var(--color-text-muted); font-size: 0.9rem; }}
+        .convert-result__url {{
+            background: var(--color-surface); border: 1px dashed var(--color-border-strong);
+            padding: 9px 12px; border-radius: var(--radius-sm); word-break: break-all;
+            font-size: 0.85rem; font-family: var(--font-mono); margin-bottom: 12px; color: var(--color-primary);
+        }}
+        .convert-actions {{ display: flex; flex-wrap: wrap; gap: 10px; }}
+        .convert-alert {{
+            margin-top: 12px; padding: 12px 14px; border-radius: var(--radius-md); font-size: 0.92rem;
+        }}
+        .convert-alert--error {{
+            background: var(--color-err-bg); border: 1px solid var(--color-err-border); color: var(--color-err); font-weight: 600;
+        }}
+
+        /* Deals Grid & Steps */
+        .section {{ padding: 26px 0; }}
         .section__head {{
             display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline;
             gap: 12px; margin-bottom: 18px;
         }}
-        .section__title {{ font-family: var(--font-display); font-size: 1.45rem; margin: 0; }}
+        .section__title {{ font-family: var(--font-display); font-size: 1.4rem; margin: 0; color: var(--color-text); }}
         .deals-grid {{
-            display: grid; gap: 16px;
-            grid-template-columns: 1fr;
+            display: grid; gap: 16px; grid-template-columns: 1fr;
         }}
         @media (min-width: 720px) {{ .deals-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} }}
         @media (min-width: 1060px) {{ .deals-grid {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }} }}
         .deal-card {{
             display: flex; flex-direction: column; justify-content: space-between; gap: 12px;
             background: var(--color-surface); border: 1px solid var(--color-border);
-            border-radius: var(--radius-lg); padding: 18px;
+            border-radius: var(--radius-lg); padding: 18px; box-shadow: var(--shadow-sm);
+            transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
         }}
+        .deal-card:hover {{ border-color: var(--color-primary-bright); box-shadow: var(--shadow-md); }}
         .deal-card__top {{ display: flex; justify-content: space-between; align-items: center; gap: 8px; }}
         .badge {{
             font-size: 0.78rem; font-weight: 700; padding: 4px 10px; border-radius: 999px;
         }}
-        .badge--platform {{ background: var(--color-surface-elevated); color: var(--color-text); border: 1px solid var(--color-border); }}
-        .badge--accent {{ background: rgba(249, 115, 22, 0.18); color: #fdba74; border: 1px solid rgba(249, 115, 22, 0.4); }}
-        .deal-card__title {{ font-family: var(--font-display); font-size: 1.05rem; margin: 0; color: var(--color-text); }}
+        .badge--platform {{ background: var(--color-inset); color: var(--color-text-secondary); border: 1px solid var(--color-border); }}
+        .badge--accent {{ background: var(--color-primary-soft); color: var(--color-primary); border: 1px solid var(--color-primary-soft-border); }}
+        .deal-card__title {{ font-family: var(--font-display); font-size: 1.04rem; margin: 0; color: var(--color-text); }}
         .deal-card__desc {{ margin: 0; color: var(--color-text-muted); font-size: 0.92rem; }}
         .deal-card__meta {{ display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; }}
         .coupon-pill code {{
-            background: var(--color-bg); border: 1px dashed var(--color-primary);
-            padding: 2px 8px; border-radius: 6px; color: #fdba74; font-weight: 700;
+            background: var(--color-inset); border: 1px dashed var(--color-primary);
+            padding: 2px 8px; border-radius: 6px; color: var(--color-primary);
+            font-family: var(--font-mono); font-weight: 700;
         }}
-        .deal-card__note {{ color: #94a3b8; }}
+        .deal-card__note {{ color: var(--color-text-muted); font-size: 0.84rem; }}
         .deal-card__cta {{ width: 100%; }}
         .steps-grid {{
             display: grid; gap: 16px; grid-template-columns: 1fr;
@@ -1154,9 +1336,16 @@ async fn render_public_home(
         @media (min-width: 768px) {{ .steps-grid {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }} }}
         .step-card {{
             background: var(--color-surface); border: 1px solid var(--color-border);
-            border-radius: var(--radius-lg); padding: 18px;
+            border-radius: var(--radius-lg); padding: 20px; box-shadow: var(--shadow-sm);
+            display: flex; flex-direction: column; gap: 10px;
         }}
-        .step-card h3 {{ margin: 0 0 8px; font-family: var(--font-display); font-size: 1.05rem; }}
+        .step-num {{
+            width: 36px; height: 36px; border-radius: 10px;
+            display: inline-flex; align-items: center; justify-content: center;
+            background: var(--color-primary-soft); border: 1px solid var(--color-primary-soft-border);
+            color: var(--color-primary); font-family: var(--font-mono); font-weight: 800; font-size: 0.92rem;
+        }}
+        .step-card h3 {{ margin: 0; font-family: var(--font-display); font-size: 1.04rem; color: var(--color-text); }}
         .step-card p {{ margin: 0; color: var(--color-text-muted); font-size: 0.92rem; }}
         .empty-state {{
             grid-column: 1 / -1; background: var(--color-surface); border: 1px solid var(--color-border);
@@ -1164,41 +1353,22 @@ async fn render_public_home(
         }}
         .site-footer {{
             border-top: 1px solid var(--color-border); margin-top: 32px; padding: 28px 0 40px;
-            color: var(--color-text-muted); font-size: 0.88rem;
+            background: var(--color-surface); color: var(--color-text-muted); font-size: 0.88rem;
         }}
         .site-footer__links {{ display: flex; flex-wrap: wrap; gap: 16px; margin-top: 10px; }}
-        .site-footer a {{ color: #fdba74; }}
-        .convert-panel {{
-            background: linear-gradient(135deg, rgba(249, 115, 22, 0.12), rgba(20, 25, 38, 0.96));
-            border: 1px solid rgba(249, 115, 22, 0.45);
-            border-radius: var(--radius-lg); padding: 18px; box-shadow: var(--shadow-md);
-            margin-bottom: 16px;
+        .site-footer a {{ color: var(--color-primary); font-weight: 700; text-decoration: none; }}
+        .site-footer a:hover {{ text-decoration: underline; }}
+
+        @media (max-width: 900px) {{
+            .hero-grid {{ grid-template-columns: minmax(0, 1fr); }}
+            .stage3d {{ max-width: 320px; }}
         }}
-        .convert-panel__title {{
-            font-family: var(--font-display); font-size: 1.05rem; font-weight: 700;
-            margin: 0 0 10px; color: var(--color-text);
-        }}
-        .convert-result {{
-            margin-top: 14px; background: var(--color-bg); border: 1px solid var(--color-border);
-            border-radius: var(--radius-md); padding: 14px;
-        }}
-        .convert-result__head {{ display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }}
-        .convert-result__title {{ font-family: var(--font-display); font-size: 1rem; margin: 0 0 6px; }}
-        .convert-result__meta {{ margin: 0 0 8px; color: var(--color-text-muted); font-size: 0.9rem; }}
-        .convert-result__url {{
-            background: var(--color-surface); border: 1px dashed var(--color-border);
-            padding: 8px 10px; border-radius: var(--radius-sm); word-break: break-all;
-            font-size: 0.85rem; margin-bottom: 12px; color: #fdba74;
-        }}
-        .convert-actions {{ display: flex; flex-wrap: wrap; gap: 10px; }}
-        .convert-alert {{
-            margin-top: 12px; padding: 12px 14px; border-radius: var(--radius-md); font-size: 0.92rem;
-        }}
-        .convert-alert--error {{
-            background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.45); color: #fecaca;
+        @media (prefers-reduced-motion: no-preference) {{
+            .deal-card:hover {{ transform: translateY(-2px); }}
+            .btn--primary:hover {{ transform: translateY(-1px); }}
         }}
         @media (prefers-reduced-motion: reduce) {{
-            *, *::before, *::after {{ transition: none !important; scroll-behavior: auto !important; }}
+            *, *::before, *::after {{ transition: none !important; scroll-behavior: auto !important; transform: none !important; }}
         }}
     </style>
 </head>
@@ -1206,13 +1376,14 @@ async fn render_public_home(
     <header class="site-header">
         <div class="container site-header__inner">
             <a class="brand" href="/">
-                <span class="brand__mark" aria-hidden="true">TG</span>
+                <img src="/assets/bot-logo.webp" alt="Logo Thế Giới Siêu Sale" class="brand__logo">
                 <span>Thế Giới Siêu Sale</span>
             </a>
             <nav class="nav" aria-label="Điều hướng chính">
                 <a class="nav__link" href="#uu-dai">Ưu đãi nổi bật</a>
                 <a class="nav__link" href="#huong-dan">Cách nhận mã</a>
                 <a class="nav__link" href="#chinh-sach">Minh bạch đối tác</a>
+                <button type="button" id="public-theme-btn" class="theme-toggle" aria-label="Chuyển đổi giao diện Sáng/Tối">🌙 Giao diện Tối</button>
                 <a class="btn btn--primary" href="https://t.me/{}" target="_blank" rel="noopener noreferrer">Mở Trợ Lý @{}</a>
             </nav>
         </div>
@@ -1220,22 +1391,55 @@ async fn render_public_home(
 
     <main class="container">
         <section class="hero">
-            <span class="hero__eyebrow">Cập nhật tự động từ đối tác chính hãng</span>
-            <h1 class="hero__title">Tổng hợp mã giảm giá &amp; gợi ý sản phẩm tiết kiệm mỗi ngày</h1>
-            <p class="hero__subtitle">
-                Thế Giới Siêu Sale tổng hợp các chương trình ưu đãi, mã giảm giá công khai theo từng gian hàng và ngành hàng từ Shopee, Tiki, Lazada, TikTok Shop và Alibaba giúp người mua dễ dàng so sánh và đặt hàng trực tiếp trên sàn.
-            </p>
-            <div class="stats-bar">
-                <span>Đang hiển thị: <strong>{}</strong> / <strong>{}</strong> ưu đãi hoạt động</span>
-                <span>Lần đồng bộ gần nhất: <strong>{}</strong></span>
+            <div class="hero-grid">
+                <div>
+                    <span class="hero__eyebrow">
+                        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+                        <span>Cập nhật tự động từ đối tác chính hãng</span>
+                    </span>
+                    <h1 class="hero__title">Tổng hợp mã giảm giá &amp; gợi ý sản phẩm tiết kiệm mỗi ngày</h1>
+                    <p class="hero__subtitle">
+                        Thế Giới Siêu Sale tổng hợp các chương trình ưu đãi, mã giảm giá công khai theo từng gian hàng và ngành hàng từ Shopee, Tiki, Lazada, TikTok Shop và Alibaba giúp người mua dễ dàng so sánh và đặt hàng trực tiếp trên sàn.
+                    </p>
+                    <div class="stats-bar">
+                        <span class="stat-chip">
+                            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg>
+                            <span>Đang hiển thị: <strong>{}</strong> / <strong>{}</strong> ưu đãi</span>
+                        </span>
+                        <span class="stat-chip">
+                            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>
+                            <span>Đồng bộ gần nhất: <strong>{}</strong></span>
+                        </span>
+                    </div>
+                </div>
+
+                <div class="hero-visual">
+                    <div id="stage3d" class="stage3d">
+                        <img src="/assets/bot-cart-3d.webp" alt="Trợ lý 3D Thế Giới Siêu Sale săn mã giảm giá" class="stage3d__img">
+                        <div class="float-tag float-tag--top" aria-hidden="true">
+                            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                            <span>Săn mã giảm đến 50%</span>
+                        </div>
+                        <div class="float-tag float-tag--bot" aria-hidden="true">
+                            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                            <span>Kiểm tra link sống 100%</span>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="convert-panel">
-                <p class="convert-panel__title">⚡ Dán link sản phẩm để lấy link ưu đãi &amp; mã khớp ngay (không cần cài App)</p>
+                <p class="convert-panel__title">
+                    <svg class="ico" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                    <span>Dán link sản phẩm để lấy link ưu đãi &amp; mã khớp ngay (không cần cài App)</span>
+                </p>
                 <form class="search-form" method="POST" action="/convert">
                     <label class="sr-only" for="web-convert-url">Dán đường link sản phẩm cần săn mã</label>
                     <input id="web-convert-url" class="search-input" type="url" name="url" required value="{}" placeholder="Dán link sản phẩm Shopee, Tiki, Lazada, TikTok Shop hoặc Alibaba vào đây...">
-                    <button class="btn btn--primary" type="submit">⚡ Lấy Link Ưu Đãi</button>
+                    <button class="btn btn--primary" type="submit">
+                        <svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                        <span>Lấy Link Ưu Đãi</span>
+                    </button>
                 </form>
                 {}
             </div>
@@ -1245,7 +1449,10 @@ async fn render_public_home(
                     <label class="sr-only" for="deal-search">Tìm mã giảm giá hoặc tên gian hàng</label>
                     <input id="deal-search" class="search-input" type="text" name="q" value="{}" placeholder="Tìm tên gian hàng, ngành hàng hoặc mã ưu đãi (VD: Tiki Trading, Gia dụng...)">
                     <input type="hidden" name="plat" value="{}">
-                    <button class="btn btn--primary" type="submit">Tìm ưu đãi</button>
+                    <button class="btn btn--primary" type="submit">
+                        <svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <span>Tìm ưu đãi</span>
+                    </button>
                 </form>
                 <div class="filter-row" aria-label="Lọc theo sàn thương mại điện tử">
                     {}
@@ -1269,15 +1476,18 @@ async fn render_public_home(
             </div>
             <div class="steps-grid">
                 <article class="step-card">
-                    <h3>1. Chọn ưu đãi hoặc gửi link sản phẩm</h3>
+                    <span class="step-num" aria-hidden="true">01</span>
+                    <h3>Chọn ưu đãi hoặc gửi link sản phẩm</h3>
                     <p>Tìm mã theo ngành hàng ngay trên website hoặc dán liên kết sản phẩm trực tiếp cho trợ lý Telegram @{}.</p>
                 </article>
                 <article class="step-card">
-                    <h3>2. Lưu mã tại trang gian hàng chính thức</h3>
+                    <span class="step-num" aria-hidden="true">02</span>
+                    <h3>Lưu mã tại trang gian hàng chính thức</h3>
                     <p>Bấm nút mở gian hàng để truy cập trang khuyến mãi hợp lệ trên Shopee, Tiki, Lazada hoặc TikTok Shop.</p>
                 </article>
                 <article class="step-card">
-                    <h3>3. Thanh toán trực tiếp trên sàn</h3>
+                    <span class="step-num" aria-hidden="true">03</span>
+                    <h3>Thanh toán trực tiếp trên sàn</h3>
                     <p>Người dùng chủ động chọn mã ở bước thanh toán trên ứng dụng thương mại điện tử để hưởng mức giá tốt nhất.</p>
                 </article>
             </div>
@@ -1294,6 +1504,7 @@ async fn render_public_home(
         </div>
     </footer>
     <script src="/assets/home.js" defer></script>
+    <script src="/assets/landing.js" defer></script>
 </body>
 </html>"##,
         escape_html(&state.config.bot_username),
@@ -1590,12 +1801,28 @@ async fn handle_shortlink_redirect(
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex, nofollow">
     <title>Chỉ hỗ trợ mở trên Điện Thoại</title>
+    <script>
+    (function(){try{var t=localStorage.getItem('dealx-theme')||'light';if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(_){}})();
+    </script>
+    <style>
+        :root { --bg:#F4F6F9; --card:#FFFFFF; --border:#E2E8F0; --text:#0F172A; --muted:#475569; --accent:#C2410C; --accent-soft:rgba(194,65,12,0.1); }
+        html[data-theme="dark"] { --bg:#0B1120; --card:#131C31; --border:#1E293B; --text:#F1F5F9; --muted:#94A3B8; --accent:#F97316; --accent-soft:rgba(249,115,22,0.14); }
+        * { box-sizing:border-box; }
+        body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,sans-serif; padding:24px; text-align:center; }
+        .card { max-width:420px; width:100%; background:var(--card); border:1px solid var(--border); border-radius:20px; padding:28px 24px; box-shadow:0 12px 28px rgba(15,23,42,0.08); }
+        .icon-badge { width:56px; height:56px; margin:0 auto 14px; border-radius:16px; display:flex; align-items:center; justify-content:center; background:var(--accent-soft); color:var(--accent); }
+        h1 { margin:0 0 10px; font-size:18px; line-height:1.35; }
+        p { margin:0; color:var(--muted); font-size:14px; line-height:1.6; }
+    </style>
 </head>
-<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0c0f17;color:#f8fafc;font-family:system-ui,sans-serif;padding:24px;text-align:center;">
-    <div style="max-width:420px;background:#141926;border:1px solid #263044;border-radius:16px;padding:24px;">
-        <h1 style="margin:0 0 12px;font-size:18px;">📱 Link ưu đãi chỉ mở được trên Điện Thoại</h1>
-        <p style="margin:0;color:#cbd5e1;font-size:14px;line-height:1.6;">Link ưu đãi này chỉ mở được trên Điện Thoại (iOS / Android) để tự động chuyển vào App sàn &amp; kích hoạt ưu đãi. Vui lòng bấm mở từ điện thoại của bạn!</p>
-    </div>
+<body>
+    <main class="card">
+        <div class="icon-badge" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+        </div>
+        <h1>Link ưu đãi chỉ mở được trên Điện Thoại</h1>
+        <p>Link ưu đãi này chỉ mở được trên Điện Thoại (iOS / Android) để tự động chuyển vào App sàn &amp; kích hoạt ưu đãi. Vui lòng bấm mở từ điện thoại của bạn!</p>
+    </main>
 </body>
 </html>"#;
         let mut resp = (StatusCode::FORBIDDEN, Html(blocked_html)).into_response();
@@ -1650,50 +1877,86 @@ async fn handle_shortlink_redirect(
     <meta name="robots" content="noindex, nofollow">
     <meta name="referrer" content="unsafe-url">
     <title>Đang chuyển sang {}...</title>
+    <script>
+    (function(){{try{{var t=localStorage.getItem('dealx-theme')||'light';if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}}catch(_){{}}}})();
+    </script>
     <style>
+        :root {{
+            --bg: #F4F6F9; --card: #FFFFFF; --inset: #F8FAFC; --border: #E2E8F0;
+            --text: #0F172A; --muted: #475569; --accent: #C2410C; --accent-hover: #9A3412;
+            --accent-contrast: #FFFFFF; --accent-soft: rgba(194, 65, 12, 0.10);
+            --tip-bg: rgba(234, 88, 12, 0.08); --tip-border: rgba(194, 65, 12, 0.28); --tip-text: #9A3412;
+            --shadow: 0 18px 36px -12px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.04);
+        }}
+        html[data-theme="dark"] {{
+            --bg: #0B1120; --card: #131C31; --inset: #0F172A; --border: #1E293B;
+            --text: #F8FAFC; --muted: #94A3B8; --accent: #F97316; --accent-hover: #FB923C;
+            --accent-contrast: #090D16; --accent-soft: rgba(249, 115, 22, 0.16);
+            --tip-bg: rgba(249, 115, 22, 0.12); --tip-border: rgba(249, 115, 22, 0.35); --tip-text: #FDBA74;
+            --shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.55);
+        }}
         * {{ box-sizing: border-box; }}
         body {{
             margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-            background: #0c0f17; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; padding: 20px;
+            background: radial-gradient(circle at 50% 0%, var(--accent-soft), transparent 55%), var(--bg);
+            color: var(--text); font-family: system-ui, -apple-system, sans-serif; padding: 20px;
         }}
         .card {{
-            width: 100%; max-width: 420px; background: #141926; border: 1px solid #263044;
-            border-radius: 18px; padding: 24px; text-align: center;
+            width: 100%; max-width: 420px; background: var(--card); border: 1px solid var(--border);
+            border-radius: 20px; padding: 28px 24px; text-align: center; box-shadow: var(--shadow);
+        }}
+        .spinner-ring {{
+            position: relative; width: 52px; height: 52px; margin: 0 auto 16px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 16px; background: var(--accent-soft); color: var(--accent);
         }}
         .spinner {{
-            width: 34px; height: 34px; margin: 0 auto 14px; border: 3px solid #263044;
-            border-top-color: #f97316; border-radius: 50%; animation: spin 0.8s linear infinite;
+            width: 32px; height: 32px; border: 3px solid var(--border);
+            border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite;
         }}
         @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-        h1 {{ margin: 0 0 10px; font-size: 18px; line-height: 1.35; }}
-        p {{ margin: 0; color: #cbd5e1; font-size: 14px; line-height: 1.6; }}
+        @media (prefers-reduced-motion: reduce) {{ .spinner {{ animation: none; border-color: var(--accent); opacity: 0.7; }} }}
+        h1 {{ margin: 0 0 10px; font-size: 18px; line-height: 1.35; font-weight: 800; }}
+        p {{ margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }}
         .hidden {{ display: none; }}
         .rescue {{ margin-top: 18px; display: flex; flex-direction: column; gap: 10px; }}
+        .btn-open, .btn-copy {{
+            display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+            border-radius: 12px; font-weight: 700; cursor: pointer; text-decoration: none;
+        }}
         .btn-open {{
-            display: flex; align-items: center; justify-content: center; min-height: 48px;
-            background: #f97316; color: #0b0f19; font-weight: 700; text-decoration: none;
-            border-radius: 12px; padding: 12px 16px;
+            min-height: 48px; background: var(--accent); color: var(--accent-contrast); padding: 12px 16px;
         }}
+        .btn-open:hover {{ background: var(--accent-hover); }}
         .btn-copy {{
-            min-height: 44px; background: #1c2333; color: #f8fafc; border: 1px solid #263044;
-            border-radius: 12px; font-weight: 600; padding: 10px 14px; cursor: pointer;
+            min-height: 44px; background: var(--inset); color: var(--text); border: 1px solid var(--border);
+            padding: 10px 14px; font-weight: 600;
         }}
+        .btn-open:focus-visible, .btn-copy:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
         .tip {{
-            display: none; font-size: 12px; color: #fdba74; background: rgba(249, 115, 22, 0.12);
-            border: 1px solid rgba(249, 115, 22, 0.35); border-radius: 10px; padding: 10px; text-align: left;
+            display: none; font-size: 12.5px; color: var(--tip-text); background: var(--tip-bg);
+            border: 1px solid var(--tip-border); border-radius: 10px; padding: 11px 12px; text-align: left; line-height: 1.5;
         }}
     </style>
 </head>
 <body data-p="{}" data-k="{}" data-mobile-only="{}">
     <main class="card">
-        <div id="bridge-spinner" class="spinner" aria-hidden="true"></div>
-        <h1 id="bridge-title">🚀 Đang mở {}...</h1>
+        <div class="spinner-ring" aria-hidden="true">
+            <div id="bridge-spinner" class="spinner"></div>
+        </div>
+        <h1 id="bridge-title">Đang mở {}...</h1>
         <p id="bridge-desc">Hệ thống đang chuyển bạn sang ứng dụng để kích hoạt mã giảm giá.</p>
         <div id="rescue-box" class="rescue hidden">
-            <a id="rescue-open-btn" class="btn-open" href="#" rel="noopener">🛍️ Bấm Để Mở Ứng Dụng Ngay</a>
-            <button id="rescue-copy-btn" class="btn-copy" type="button">📋 Sao chép link mở bằng Safari/Chrome</button>
+            <a id="rescue-open-btn" class="btn-open" href="#" rel="noopener">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+                <span>Bấm Để Mở Ứng Dụng Ngay</span>
+            </a>
+            <button id="rescue-copy-btn" class="btn-copy" type="button">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Sao chép link mở bằng Safari/Chrome</span>
+            </button>
             <div id="webview-tip" class="tip">
-                💡 <b>Mẹo nếu mở từ Zalo / Messenger:</b> Bấm dấu <b>⋮</b> (hoặc <b>⋯</b>) ở góc màn hình rồi chọn <b>“Mở bằng trình duyệt mặc định”</b> để tự động bật App sàn.
+                <strong>Mẹo nếu mở từ Zalo / Messenger:</strong> Bấm dấu <b>⋮</b> (hoặc <b>⋯</b>) ở góc màn hình rồi chọn <b>“Mở bằng trình duyệt mặc định”</b> để tự động bật App sàn.
             </div>
         </div>
     </main>
@@ -2233,6 +2496,271 @@ fn format_timestamp_vn(raw: &str) -> String {
     trimmed.to_string()
 }
 
+const ADMIN_SVG_SPRITE: &str = r#"<svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">
+    <defs>
+        <symbol id="ico-overview" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7" rx="1.8"/><rect x="14" y="3" width="7" height="7" rx="1.8"/>
+            <rect x="14" y="14" width="7" height="7" rx="1.8"/><rect x="3" y="14" width="7" height="7" rx="1.8"/>
+        </symbol>
+        <symbol id="ico-platforms" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+        </symbol>
+        <symbol id="ico-vouchers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/>
+            <path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/>
+        </symbol>
+        <symbol id="ico-orders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+        </symbol>
+        <symbol id="ico-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </symbol>
+        <symbol id="ico-clicks" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+        </symbol>
+        <symbol id="ico-flame" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>
+        </symbol>
+        <symbol id="ico-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>
+        </symbol>
+        <symbol id="ico-bot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/>
+            <path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>
+        </symbol>
+        <symbol id="ico-history" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>
+        </symbol>
+        <symbol id="ico-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
+        </symbol>
+        <symbol id="ico-pie" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>
+        </symbol>
+        <symbol id="ico-rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/>
+            <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/>
+            <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>
+        </symbol>
+        <symbol id="ico-crown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"/>
+        </symbol>
+        <symbol id="ico-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+        </symbol>
+        <symbol id="ico-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>
+        </symbol>
+        <symbol id="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+        </symbol>
+        <symbol id="ico-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/>
+            <path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>
+        </symbol>
+    </defs>
+</svg>"#;
+
+fn render_signal_meter_svg(strength: u8) -> String {
+    let lvl = strength.min(3);
+    let color = if lvl >= 3 {
+        "var(--ok-text)"
+    } else if lvl >= 1 {
+        "var(--brand-bright)"
+    } else {
+        "var(--border-strong)"
+    };
+    let bar = |idx: u8, h: u8, y: u8| -> String {
+        let fill = if lvl >= idx { color } else { "var(--border-strong)" };
+        format!(
+            r#"<rect x="{}" y="{}" width="4" height="{}" rx="1.5" fill="{}"/>"#,
+            (idx - 1) * 6 + 1,
+            y,
+            h,
+            fill
+        )
+    };
+    format!(
+        r#"<span class="signal-meter" title="Độ mạnh chữ ký FB/IG: {}/3">
+            <svg width="20" height="16" viewBox="0 0 20 16" aria-hidden="true">{}{}{}</svg>
+            <span>Mức {}/3</span>
+        </span>"#,
+        lvl,
+        bar(1, 6, 10),
+        bar(2, 10, 6),
+        bar(3, 14, 2),
+        lvl
+    )
+}
+
+fn render_dashboard_charts_html(
+    stats: &crate::db::models::AdminStats,
+    total_market_vouchers: usize,
+    high_pct_vouchers: usize,
+    shopee_vouchers: usize,
+    tiki_vouchers: usize,
+    exclusive_count: usize,
+) -> String {
+    let shopee_c = stats.shopee_clicks.max(0) as u64;
+    let lazada_c = stats.lazada_clicks.max(0) as u64;
+    let tiktok_c = stats.tiktok_clicks.max(0) as u64;
+    let tiki_c = stats.tiki_clicks.max(0) as u64;
+    let sum_clicks = (shopee_c + lazada_c + tiktok_c + tiki_c).max(stats.total_clicks.max(0) as u64);
+
+    let platforms = [
+        ("Shopee", shopee_c, "#EA580C"),
+        ("Lazada", lazada_c, "#2563EB"),
+        ("TikTok Shop", tiktok_c, "#DB2777"),
+        ("Tiki", tiki_c, "#0284C7"),
+    ];
+    let mut bars_html = String::new();
+    for (name, count, color) in platforms {
+        let pct = if sum_clicks > 0 {
+            ((count as f64 / sum_clicks as f64) * 100.0).round() as u64
+        } else {
+            0
+        };
+        let width_pct = if count > 0 { pct.max(4) } else { 0 };
+        bars_html.push_str(&format!(
+            r#"<div class="chart-bar-row">
+                <div class="chart-bar-label">
+                    <span class="plat-dot" style="background:{};"></span>
+                    <span>{}</span>
+                </div>
+                <div class="bar-track" role="img" aria-label="{}: {} lượt ({}%)">
+                    <div class="bar-fill" style="width:{}%;background:{};"></div>
+                </div>
+                <div class="chart-bar-val"><strong>{}</strong> <span>{}%</span></div>
+            </div>"#,
+            color,
+            name,
+            name,
+            count,
+            pct,
+            width_pct,
+            color,
+            count,
+            pct
+        ));
+    }
+
+    // Donut chart SVG (r = 44 => C = 2 * PI * 44 = 276.46)
+    let circumference = 276.46_f64;
+    let other_v = total_market_vouchers
+        .saturating_sub(shopee_vouchers)
+        .saturating_sub(tiki_vouchers)
+        + exclusive_count;
+    let pool_total = shopee_vouchers + tiki_vouchers + other_v;
+    let seg_calc = |val: usize| -> (f64, u64) {
+        if pool_total == 0 {
+            return (0.0, 0);
+        }
+        let ratio = val as f64 / pool_total as f64;
+        (ratio * circumference, (ratio * 100.0).round() as u64)
+    };
+    let (len_s, pct_s) = seg_calc(shopee_vouchers);
+    let (len_t, pct_t) = seg_calc(tiki_vouchers);
+    let (len_o, pct_o) = seg_calc(other_v);
+    let deep_pct = if total_market_vouchers > 0 {
+        ((high_pct_vouchers as f64 / total_market_vouchers as f64) * 100.0).round() as u64
+    } else {
+        0
+    };
+
+    let donut_segments = if pool_total == 0 {
+        String::new()
+    } else {
+        format!(
+            r##"<circle cx="60" cy="60" r="44" fill="none" stroke="#EA580C" stroke-width="12" stroke-dasharray="{:.2} {:.2}" stroke-dashoffset="0" stroke-linecap="butt"/>
+               <circle cx="60" cy="60" r="44" fill="none" stroke="#0284C7" stroke-width="12" stroke-dasharray="{:.2} {:.2}" stroke-dashoffset="{:.2}" stroke-linecap="butt"/>
+               <circle cx="60" cy="60" r="44" fill="none" stroke="#7C3AED" stroke-width="12" stroke-dasharray="{:.2} {:.2}" stroke-dashoffset="{:.2}" stroke-linecap="butt"/>"##,
+            len_s,
+            circumference,
+            len_t,
+            circumference,
+            -len_s,
+            len_o,
+            circumference,
+            -(len_s + len_t)
+        )
+    };
+
+    format!(
+        r##"<section class="charts-grid" aria-label="Biểu đồ trực quan hệ thống">
+            <article class="card chart-card">
+                <div class="chart-head">
+                    <div class="chart-head__title">
+                        <span class="chart-ico chart-ico--brand"><svg class="ico"><use href="#ico-chart"/></svg></span>
+                        <div>
+                            <h3>Lưu Lượng Dán Link Theo Sàn TMĐT</h3>
+                            <p>Tỷ trọng chuyển đổi thực tế trên toàn hệ thống</p>
+                        </div>
+                    </div>
+                    <span class="badge badge--muted font-mono">Tổng: {} lượt</span>
+                </div>
+                <div class="chart-bars">{}</div>
+            </article>
+
+            <article class="card chart-card">
+                <div class="chart-head">
+                    <div class="chart-head__title">
+                        <span class="chart-ico chart-ico--purple"><svg class="ico"><use href="#ico-pie"/></svg></span>
+                        <div>
+                            <h3>Cơ Cấu Kho Mã &amp; Sức Mạnh Săn Sale</h3>
+                            <p>Phân bổ kho ACCESSTRADE &amp; mã độc quyền FB/IG</p>
+                        </div>
+                    </div>
+                    <span class="badge badge--orange">Giảm ≥20%: {} mã ({}%)</span>
+                </div>
+                <div class="donut-layout">
+                    <div class="donut-wrap">
+                        <svg class="chart-donut" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="Biểu đồ tròn phân bổ kho mã">
+                            <circle cx="60" cy="60" r="44" fill="none" stroke="var(--bg-inset)" stroke-width="12"/>
+                            <g transform="rotate(-90 60 60)">{}</g>
+                        </svg>
+                        <div class="donut-center">
+                            <strong>{}</strong>
+                            <span>Tổng mã</span>
+                        </div>
+                    </div>
+                    <div class="donut-legend">
+                        <div class="legend-item">
+                            <span class="legend-dot" style="background:#EA580C;"></span>
+                            <span class="legend-name">Shopee Thị Trường</span>
+                            <strong>{}</strong><span class="legend-pct">({}%)</span>
+                        </div>
+                        <div class="legend-item">
+                            <span class="legend-dot" style="background:#0284C7;"></span>
+                            <span class="legend-name">Tiki Creator / Mall</span>
+                            <strong>{}</strong><span class="legend-pct">({}%)</span>
+                        </div>
+                        <div class="legend-item">
+                            <span class="legend-dot" style="background:#7C3AED;"></span>
+                            <span class="legend-name">Độc Quyền &amp; Sàn Khác</span>
+                            <strong>{}</strong><span class="legend-pct">({}%)</span>
+                        </div>
+                    </div>
+                </div>
+            </article>
+        </section>"##,
+        sum_clicks,
+        bars_html,
+        high_pct_vouchers,
+        deep_pct,
+        donut_segments,
+        pool_total,
+        shopee_vouchers,
+        pct_s,
+        tiki_vouchers,
+        pct_t,
+        other_v,
+        pct_o
+    )
+}
+
 /// Giao diện chính Dashboard Quản Trị
 async fn handle_dashboard(
     headers: HeaderMap,
@@ -2369,11 +2897,16 @@ async fn handle_dashboard(
     } else {
         "Đang chạy ngầm...".to_string()
     };
+    let signal_meter_html = render_signal_meter_svg(social_sig_strength);
     let social_auto_panel_html = format!(
-        r#"<div class="social-meta">
-            <span class="badge badge--ok">🤖 Đang Chạy Tự Động (Mỗi 5 Phút)</span>
+        r##"<div class="social-meta">
+            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;justify-content:flex-end;">
+                {}
+                <span class="badge badge--ok"><svg class="ico ico--xs"><use href="#ico-bot"/></svg> Tự Động Mỗi 5 Phút</span>
+            </div>
             <span class="muted-text">Lần cuối: <strong class="meta-time">{}</strong></span>
-        </div>"#,
+        </div>"##,
+        signal_meter_html,
         escape_html(&social_last_display)
     );
     let shortlink_db_raw = Repository::get_setting(&conn, "shortlink_base_url")
@@ -2703,8 +3236,17 @@ async fn handle_dashboard(
     let matched_vouchers_count = filtered_vouchers.len();
     let other_vouchers_count = total_market_vouchers.saturating_sub(high_pct_vouchers);
 
+    let charts_html = render_dashboard_charts_html(
+        &stats,
+        total_market_vouchers,
+        high_pct_vouchers,
+        shopee_vouchers,
+        tiki_vouchers,
+        saved_deals.len(),
+    );
+
     let dashboard_html = format!(
-        r#"<!DOCTYPE html>
+        r##"<!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
@@ -3762,6 +4304,96 @@ async fn handle_dashboard(
             gap: 0.35rem;
         }}
 
+        /* SVG Icons, Signal Meter & Charts */
+        .ico {{ width: 18px; height: 18px; display: inline-block; vertical-align: middle; flex-shrink: 0; }}
+        .ico--sm {{ width: 16px; height: 16px; }}
+        .ico--xs {{ width: 14px; height: 14px; }}
+        .kpi-card__icon--blue {{ background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }}
+        .kpi-card__icon--amber {{ background: var(--warn-bg); color: var(--warn-text); border-color: var(--warn-border); }}
+        .kpi-card__icon--orange {{ background: var(--brand-soft-bg); color: var(--brand-soft-text); border-color: var(--brand-soft-border); }}
+        .kpi-card__icon--green {{ background: var(--ok-bg); color: var(--ok-text); border-color: var(--ok-border); }}
+        .social-icon {{ color: var(--brand-primary); }}
+        .signal-meter {{
+            display: inline-flex; align-items: center; gap: 0.4rem;
+            padding: 0.28rem 0.65rem; border-radius: 9999px;
+            background: var(--bg-elevated); border: 1px solid var(--border-subtle);
+            font-size: 0.74rem; font-weight: 700; color: var(--text-secondary);
+        }}
+
+        .charts-grid {{
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 1.15rem;
+        }}
+        .chart-card {{ gap: 1rem; transition: border-color 0.16s ease, box-shadow 0.16s ease; }}
+        .chart-card:hover {{ border-color: var(--border-strong); }}
+        .chart-head {{
+            display: flex; align-items: flex-start; justify-content: space-between;
+            gap: 0.75rem; flex-wrap: wrap;
+            padding-bottom: 0.85rem; border-bottom: 1px solid var(--border-subtle);
+        }}
+        .chart-head__title {{ display: flex; align-items: center; gap: 0.72rem; }}
+        .chart-head__title h3 {{ margin: 0; font-size: 0.96rem; font-weight: 700; color: var(--text-primary); }}
+        .chart-head__title p {{ margin: 0.15rem 0 0; font-size: 0.76rem; color: var(--text-muted); }}
+        .chart-ico {{
+            width: 38px; height: 38px; border-radius: 0.68rem;
+            display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+            border: 1px solid var(--border-subtle);
+        }}
+        .chart-ico--brand {{ background: var(--brand-soft-bg); color: var(--brand-soft-text); border-color: var(--brand-soft-border); }}
+        .chart-ico--purple {{ background: var(--purple-bg); color: var(--purple-text); border-color: var(--purple-border); }}
+
+        .chart-bars {{ display: flex; flex-direction: column; gap: 0.85rem; }}
+        .chart-bar-row {{
+            display: grid; grid-template-columns: 108px minmax(0, 1fr) 82px;
+            align-items: center; gap: 0.75rem;
+        }}
+        .chart-bar-label {{
+            display: inline-flex; align-items: center; gap: 0.45rem;
+            font-size: 0.82rem; font-weight: 600; color: var(--text-secondary);
+            white-space: nowrap;
+        }}
+        .plat-dot, .legend-dot {{ width: 9px; height: 9px; border-radius: 9999px; flex-shrink: 0; }}
+        .bar-track {{
+            height: 10px; border-radius: 9999px; background: var(--bg-inset);
+            border: 1px solid var(--border-subtle); overflow: hidden;
+        }}
+        .bar-fill {{ height: 100%; border-radius: 9999px; transition: width 0.35s ease; }}
+        .chart-bar-val {{
+            text-align: right; font-size: 0.8rem; font-family: 'JetBrains Mono', monospace;
+            color: var(--text-primary); white-space: nowrap;
+        }}
+        .chart-bar-val span {{ color: var(--text-muted); font-size: 0.73rem; margin-left: 0.25rem; }}
+
+        .donut-layout {{
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 1.25rem; flex-wrap: wrap;
+        }}
+        .donut-wrap {{
+            position: relative; width: 124px; height: 124px; flex-shrink: 0;
+            display: inline-flex; align-items: center; justify-content: center;
+        }}
+        .chart-donut {{ display: block; }}
+        .donut-center {{
+            position: absolute; inset: 0; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; pointer-events: none;
+        }}
+        .donut-center strong {{
+            font-size: 1.35rem; font-weight: 800; line-height: 1.1;
+            font-variant-numeric: tabular-nums; color: var(--text-primary);
+        }}
+        .donut-center span {{ font-size: 0.7rem; font-weight: 600; color: var(--text-muted); }}
+        .donut-legend {{ flex: 1 1 200px; display: flex; flex-direction: column; gap: 0.68rem; }}
+        .legend-item {{
+            display: flex; align-items: center; gap: 0.5rem;
+            padding: 0.45rem 0.7rem; border-radius: var(--radius-sm);
+            background: var(--bg-elevated); border: 1px solid var(--border-subtle);
+            font-size: 0.8rem;
+        }}
+        .legend-name {{ flex: 1; color: var(--text-secondary); font-weight: 600; }}
+        .legend-item strong {{ font-family: 'JetBrains Mono', monospace; color: var(--text-primary); }}
+        .legend-pct {{ font-family: 'JetBrains Mono', monospace; font-size: 0.74rem; color: var(--text-muted); }}
+
         /* Scrollbar & Responsive Collapse */
         ::-webkit-scrollbar {{ width: 7px; height: 7px; }}
         ::-webkit-scrollbar-track {{ background: var(--bg-base); }}
@@ -3770,7 +4402,7 @@ async fn handle_dashboard(
 
         @media (max-width: 1180px) {{
             .kpi-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-            .split-at, .grid-2, .grid-3 {{ grid-template-columns: minmax(0, 1fr); }}
+            .charts-grid, .split-at, .grid-2, .grid-3 {{ grid-template-columns: minmax(0, 1fr); }}
         }}
         @media (max-width: 960px) {{
             .app-shell {{
@@ -3811,9 +4443,13 @@ async fn handle_dashboard(
         }}
         @media (max-width: 640px) {{
             .kpi-grid, .form-grid-2 {{ grid-template-columns: minmax(0, 1fr); }}
+            .chart-bar-row {{ grid-template-columns: 92px minmax(0, 1fr) 72px; gap: 0.5rem; }}
             .admin-main {{ padding: 1rem; }}
             .hide-sm {{ display: none !important; }}
             .social-meta {{ align-items: flex-start; text-align: left; min-width: 0; }}
+        }}
+        @media (prefers-reduced-motion: no-preference) {{
+            .kpi-card:hover, .chart-card:hover {{ transform: translateY(-2px); }}
         }}
         @media (prefers-reduced-motion: reduce) {{
             *, *::before, *::after {{ transition: none !important; animation: none !important; }}
@@ -3821,6 +4457,7 @@ async fn handle_dashboard(
     </style>
 </head>
 <body>
+    {}
     <div class="app-shell">
         <!-- Left Sidebar -->
         <aside class="sidebar">
@@ -3842,19 +4479,19 @@ async fn handle_dashboard(
                 <div class="sidebar__section-label">Điều Hướng Hệ Thống</div>
                 <nav class="tab-nav" aria-label="Danh mục quản trị">
                     <button type="button" onclick="switchTab('overview')" id="tab-btn-overview" class="tab-btn active" aria-current="page">
-                        <span class="tab-btn__icon" aria-hidden="true">📊</span>
+                        <span class="tab-btn__icon" aria-hidden="true"><svg class="ico"><use href="#ico-overview"/></svg></span>
                         <span>Tổng Quan</span>
                     </button>
                     <button type="button" onclick="switchTab('platforms')" id="tab-btn-platforms" class="tab-btn">
-                        <span class="tab-btn__icon" aria-hidden="true">🔗</span>
+                        <span class="tab-btn__icon" aria-hidden="true"><svg class="ico"><use href="#ico-platforms"/></svg></span>
                         <span>Kết Nối Sàn &amp; API</span>
                     </button>
                     <button type="button" onclick="switchTab('vouchers')" id="tab-btn-vouchers" class="tab-btn">
-                        <span class="tab-btn__icon" aria-hidden="true">🎟️</span>
+                        <span class="tab-btn__icon" aria-hidden="true"><svg class="ico"><use href="#ico-vouchers"/></svg></span>
                         <span>Kho Voucher Thị Trường</span>
                     </button>
                     <button type="button" onclick="switchTab('orders')" id="tab-btn-orders" class="tab-btn">
-                        <span class="tab-btn__icon" aria-hidden="true">🔔</span>
+                        <span class="tab-btn__icon" aria-hidden="true"><svg class="ico"><use href="#ico-orders"/></svg></span>
                         <span>Báo Đơn &amp; Doanh Thu</span>
                     </button>
                 </nav>
@@ -3875,7 +4512,8 @@ async fn handle_dashboard(
                     </div>
                 </div>
                 <a href="/" target="_blank" rel="noopener noreferrer" class="btn btn--secondary btn--sm btn--block">
-                    🌐 Xem Trang Đích Bot 3D ↗
+                    <svg class="ico ico--sm" aria-hidden="true"><use href="#ico-globe"/></svg>
+                    <span>Xem Trang Đích Bot 3D ↗</span>
                 </a>
             </div>
         </aside>
@@ -3892,7 +4530,10 @@ async fn handle_dashboard(
                         <span>Admin: <strong>{}</strong></span>
                     </div>
                     {}
-                    <button type="button" id="theme-toggle-btn" class="theme-btn" onclick="toggleTheme()" aria-label="Chuyển đổi giao diện Sáng/Tối">🌙 Tối</button>
+                    <button type="button" id="theme-toggle-btn" class="theme-btn" onclick="toggleTheme()" aria-label="Chuyển đổi giao diện Sáng/Tối">
+                        <svg class="ico ico--xs" aria-hidden="true"><use id="theme-ico-use" href="#ico-moon"/></svg>
+                        <span id="theme-btn-text">Tối</span>
+                    </button>
                 </div>
             </header>
 
@@ -3907,24 +4548,24 @@ async fn handle_dashboard(
                             <div>
                                 <div class="kpi-card__top">
                                     <span>Người Dùng Telegram</span>
-                                    <span class="kpi-card__icon" aria-hidden="true">👥</span>
+                                    <span class="kpi-card__icon kpi-card__icon--blue" aria-hidden="true"><svg class="ico ico--sm"><use href="#ico-users"/></svg></span>
                                 </div>
                                 <div class="kpi-card__val">{}</div>
                             </div>
-                            <div class="kpi-card__pill">✨ Khách thực tế đã tương tác bot</div>
+                            <div class="kpi-card__pill">Khách thực tế đã tương tác bot</div>
                         </div>
 
                         <div class="kpi-card">
                             <div>
                                 <div class="kpi-card__top">
                                     <span>Tổng Lượt Dán Link</span>
-                                    <span class="kpi-card__icon" aria-hidden="true">⚡</span>
+                                    <span class="kpi-card__icon kpi-card__icon--amber" aria-hidden="true"><svg class="ico ico--sm"><use href="#ico-clicks"/></svg></span>
                                 </div>
                                 <div class="kpi-card__val kpi-card__val--amber">{}</div>
                             </div>
                             <div class="kpi-card__meta">
-                                <div class="kpi-row"><span>🟠 Shopee: <strong>{}</strong></span><span>🔵 Lazada: <strong>{}</strong></span></div>
-                                <div class="kpi-row"><span>🎵 TikTok: <strong>{}</strong></span><span>🔹 Tiki: <strong>{}</strong></span></div>
+                                <div class="kpi-row"><span>Shopee: <strong>{}</strong></span><span>Lazada: <strong>{}</strong></span></div>
+                                <div class="kpi-row"><span>TikTok: <strong>{}</strong></span><span>Tiki: <strong>{}</strong></span></div>
                             </div>
                         </div>
 
@@ -3932,13 +4573,13 @@ async fn handle_dashboard(
                             <div>
                                 <div class="kpi-card__top">
                                     <span>Kho Mã Thị Trường</span>
-                                    <span class="kpi-card__icon" aria-hidden="true">🔥</span>
+                                    <span class="kpi-card__icon kpi-card__icon--orange" aria-hidden="true"><svg class="ico ico--sm"><use href="#ico-flame"/></svg></span>
                                 </div>
                                 <div class="kpi-card__val kpi-card__val--orange">{}</div>
                             </div>
                             <div class="kpi-card__meta">
-                                <div class="kpi-row"><span>🔥 Giảm ≥20%: <strong>{}</strong></span><span>💸 Tiền/Khác: <strong>{}</strong></span></div>
-                                <div class="kpi-row"><span>🟠 Shopee: <strong>{}</strong></span><span>🔹 Tiki: <strong>{}</strong></span><span>👑 Độc quyền: <strong>{}</strong></span></div>
+                                <div class="kpi-row"><span>Giảm ≥20%: <strong>{}</strong></span><span>Tiền/Khác: <strong>{}</strong></span></div>
+                                <div class="kpi-row"><span>Shopee: <strong>{}</strong></span><span>Tiki: <strong>{}</strong></span><span>Độc quyền: <strong>{}</strong></span></div>
                             </div>
                         </div>
 
@@ -3946,21 +4587,23 @@ async fn handle_dashboard(
                             <div>
                                 <div class="kpi-card__top">
                                     <span>Tự Động Quét Nền</span>
-                                    <span class="kpi-card__icon" aria-hidden="true">⏱️</span>
+                                    <span class="kpi-card__icon kpi-card__icon--green" aria-hidden="true"><svg class="ico ico--sm"><use href="#ico-clock"/></svg></span>
                                 </div>
                                 <div class="kpi-card__val--green">Chu kỳ 60 giây / lần</div>
                                 <div class="muted-text">Lần cuối: <strong class="meta-time">{}</strong></div>
                             </div>
                             <div class="refresh-chip">
-                                ⚡ Tự làm mới Dashboard mỗi 30 giây
+                                Tự làm mới Dashboard mỗi 30 giây
                             </div>
                         </div>
                     </section>
 
+                    {}
+
                     <!-- Widget Shopee Social Harvester -->
                     <section class="card card--social">
                         <div class="social-left">
-                            <div class="social-icon" aria-hidden="true">🤖</div>
+                            <div class="social-icon" aria-hidden="true"><svg class="ico" style="width:24px;height:24px;"><use href="#ico-bot"/></svg></div>
                             <div>
                                 <div class="card-title">
                                     <span>Shopee Social Harvester — Tự Động Nhặt Mã &amp; Chữ Ký FB / IG Reels</span>
@@ -3978,7 +4621,7 @@ async fn handle_dashboard(
                     <section class="card card--table">
                         <div class="card-head card-head--table">
                             <div>
-                                <h2 class="card-title"><span>📋</span><span>Lịch Sử Khách Dán Link Săn Sale Gần Đây (50 lượt mới nhất)</span></h2>
+                                <h2 class="card-title"><svg class="ico" aria-hidden="true"><use href="#ico-history"/></svg><span>Lịch Sử Khách Dán Link Săn Sale Gần Đây (50 lượt mới nhất)</span></h2>
                                 <p class="card-desc">Theo dõi thời gian thực các liên kết khách gửi vào bot Telegram</p>
                             </div>
                         </div>
@@ -4006,7 +4649,7 @@ async fn handle_dashboard(
                     <section class="card">
                         <div class="card-head">
                             <div>
-                                <h2 class="card-title"><span>🚀</span><span>Kết Nối ACCESSTRADE API (Tự Động Đa Sàn)</span></h2>
+                                <h2 class="card-title"><svg class="ico" aria-hidden="true"><use href="#ico-rocket"/></svg><span>Kết Nối ACCESSTRADE API (Tự Động Đa Sàn)</span></h2>
                                 <p class="card-desc">
                                     Bot tự động gọi API <code>v1/product_link/create</code> &amp; TikTok v2 Universal Deeplink, đồng thời kiểm tra HTTP 302/200 chống lỗi link 404/500.
                                 </p>
@@ -4070,7 +4713,7 @@ async fn handle_dashboard(
                     <!-- Cấu hình Link Tiếp Thị Dự Phòng (Deeplink Template) -->
                     <section class="card">
                         <div>
-                            <h2 class="card-title"><span>🔗</span><span>Cấu Hình Deeplink Dự Phòng (Nếu Chưa Dùng API Token)</span></h2>
+                            <h2 class="card-title"><svg class="ico" aria-hidden="true"><use href="#ico-platforms"/></svg><span>Cấu Hình Deeplink Dự Phòng (Nếu Chưa Dùng API Token)</span></h2>
                             <p class="card-desc">
                                 Nếu chiến dịch trên API chưa duyệt, hệ thống sẽ kiểm tra mẫu link dự phòng này. Nếu để trống, bot tự động trả về link sản phẩm sạch để khách mở App mua hàng không bị lỗi 404.
                             </p>
@@ -4093,7 +4736,7 @@ async fn handle_dashboard(
                         <div class="card-head">
                             <div>
                                 <h2 class="card-title">
-                                    <span>🔥</span>
+                                    <svg class="ico" aria-hidden="true"><use href="#ico-flame"/></svg>
                                     <span>Kho Mã Giảm Giá Toàn Thị Trường (Cập Nhật Mỗi 60 Giây)</span>
                                     <span class="badge badge--orange">{} mã đang sẵn ({} mã &gt;=20%)</span>
                                 </h2>
@@ -4102,7 +4745,7 @@ async fn handle_dashboard(
                                 </p>
                             </div>
                             <form method="POST" action="/admin/vouchers/sync" class="inline-form">
-                                <button type="submit" class="btn btn--orange-soft">🔄 Quét Sâu Toàn Bộ Ngay</button>
+                                <button type="submit" class="btn btn--orange-soft">Quét Sâu Toàn Bộ Ngay</button>
                             </form>
                         </div>
 
@@ -4115,7 +4758,7 @@ async fn handle_dashboard(
                                 <option value="Shopee" {}>🟠 Chỉ Shopee</option>
                                 <option value="Tiki" {}>🔹 Chỉ Tiki</option>
                             </select>
-                            <button type="submit" class="btn btn--secondary btn--sm">🔍 Lọc Mã</button>
+                            <button type="submit" class="btn btn--secondary btn--sm">Lọc Mã</button>
                             <span class="cell-muted">Hiển thị <strong class="primary-strong">{}</strong> / <strong>{}</strong> mã khớp</span>
                         </form>
 
@@ -4142,7 +4785,7 @@ async fn handle_dashboard(
                         <div class="card-head">
                             <div>
                                 <h2 class="card-title">
-                                    <span>👑</span>
+                                    <svg class="ico" aria-hidden="true"><use href="#ico-crown"/></svg>
                                     <span>Kho Mã Độc Quyền Hợp Tác (Cấp Riêng AM / MCN / Nhãn Hàng)</span>
                                     <span class="badge badge--purple">{} mã đã lưu</span>
                                 </h2>
@@ -4246,7 +4889,10 @@ async fn handle_dashboard(
             const btn = document.getElementById('theme-toggle-btn');
             if (!btn) return;
             const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-            btn.textContent = isDark ? '☀️ Sáng' : '🌙 Tối';
+            const useEl = document.getElementById('theme-ico-use');
+            const txtEl = document.getElementById('theme-btn-text');
+            if (useEl) useEl.setAttribute('href', isDark ? '#ico-sun' : '#ico-moon');
+            if (txtEl) txtEl.textContent = isDark ? 'Sáng' : 'Tối';
             btn.setAttribute('aria-pressed', isDark ? 'true' : 'false');
         }}
 
@@ -4315,7 +4961,7 @@ async fn handle_dashboard(
                 const html = await res.text();
                 const doc = new DOMParser().parseFromString(html, 'text/html');
                 const savedScrollY = window.scrollY;
-                ['.kpi-grid', '.card--social', '#clicks-tbody'].forEach((sel) => {{
+                ['.kpi-grid', '.charts-grid', '.card--social', '#clicks-tbody'].forEach((sel) => {{
                     const cur = document.querySelector(sel);
                     const next = doc.querySelector(sel);
                     if (cur && next && cur.innerHTML !== next.innerHTML) {{
@@ -4332,7 +4978,8 @@ async fn handle_dashboard(
     </script>
     <script src="/assets/home.js" defer></script>
 </body>
-</html>"#,
+</html>"##,
+        ADMIN_SVG_SPRITE,
         escape_html(&state.config.bot_username),
         escape_html(&state.config.bot_username),
         bot_mode_badge,
@@ -4353,6 +5000,7 @@ async fn handle_dashboard(
         tiki_vouchers,
         saved_deals.len(),
         escape_html(&last_sync_display),
+        charts_html,
         social_harvester_status_html,
         social_auto_panel_html,
         clicks_rows,
@@ -4502,7 +5150,7 @@ fn render_shopee_card(
         r##"<section class="card card--orange">
             <div class="card-head">
                 <div>
-                    <h2 class="card-title"><span>🟠</span><span>Kết Nối Shopee Affiliate Chính Chủ &amp; Bọc Link Riêng</span></h2>
+                    <h2 class="card-title"><span class="plat-dot" style="background:#EA580C;width:12px;height:12px;" aria-hidden="true"></span><span>Kết Nối Shopee Affiliate Chính Chủ &amp; Bọc Link Riêng</span></h2>
                     <p class="card-desc">
                         Ưu tiên link Shopee chính chủ qua Open API hoặc <code>s.shopee.vn/an_redir</code>. Khi chạy trên PC, hệ thống <b>tự động bật Cloudflare Tunnel</b> ngay khi mở server — không cần thao tác tay!
                     </p>
@@ -4769,10 +5417,10 @@ fn render_order_alerts_card(admin_telegram_id: &str, orders: &[TrackedOrder]) ->
     }
 
     format!(
-        r#"<section class="card card--green">
+        r##"<section class="card card--green">
             <div class="card-head">
                 <div>
-                    <h2 class="card-title"><span>🔔</span><span>Báo Đơn Tự Động Về Telegram &amp; Đối Soát Hoa Hồng (Mỗi 10 Phút)</span></h2>
+                    <h2 class="card-title"><svg class="ico" aria-hidden="true"><use href="#ico-orders"/></svg><span>Báo Đơn Tự Động Về Telegram &amp; Đối Soát Hoa Hồng (Mỗi 10 Phút)</span></h2>
                     <p class="card-desc">
                         Gõ lệnh <code>/stats</code> trong bot Telegram để lấy ID số của bạn rồi dán vào ô bên dưới. Mỗi khi có đơn mới trên ACCESSTRADE / Shopee Open API, bot sẽ nhắn tin báo ngay!
                     </p>
@@ -4812,7 +5460,7 @@ fn render_order_alerts_card(admin_telegram_id: &str, orders: &[TrackedOrder]) ->
                     </tbody>
                 </table>
             </div>
-        </section>"#,
+        </section>"##,
         status_badge,
         escape_html(admin_telegram_id.trim()),
         order_rows
@@ -5272,6 +5920,13 @@ DongLoiThieuCot | 123
         assert!(html.contains("<form"));
         assert!(html.contains("Affiliate Disclosure"));
         assert!(!html.contains("Đăng Nhập Quản Trị"));
+        assert!(html.contains("--color-bg: #F4F6F9;"));
+        assert!(html.contains("/assets/bot-logo.webp"));
+        assert!(html.contains("/assets/bot-cart-3d.webp"));
+        assert!(html.contains("/assets/landing.js"));
+        assert!(html.contains(r#"id="public-theme-btn""#));
+        assert!(html.contains("<svg"));
+        assert!(!html.contains("#0c0f17"));
 
         let _ = std::fs::remove_file(&test_db_path);
     }
@@ -5345,6 +6000,8 @@ DongLoiThieuCot | 123
         )
         .unwrap();
         assert!(!desktop_body.contains("SIGTEST123"));
+        assert!(desktop_body.contains("<svg"));
+        assert!(!desktop_body.contains("#0c0f17"));
 
         // 3. Mobile iPhone khi mobile_only bật -> 200 HTML bridge (mã hóa XOR + /assets/bridge.js, không lộ thô SIGTEST123)
         let mut mobile_hdrs = HeaderMap::new();
@@ -5374,6 +6031,9 @@ DongLoiThieuCot | 123
         .unwrap();
         assert!(mobile_body.contains("/assets/bridge.js"));
         assert!(!mobile_body.contains("SIGTEST123"));
+        assert!(mobile_body.contains("--bg: #F4F6F9;"));
+        assert!(mobile_body.contains("<svg"));
+        assert!(!mobile_body.contains("#0c0f17"));
 
         // Trích xuất payload/key và xác nhận decode_bridge_payload giải mã khớp 100%
         let p_hex = mobile_body.split("data-p=\"").nth(1).unwrap().split('"').next().unwrap();
@@ -5900,6 +6560,14 @@ DongLoiThieuCot | 123
         assert!(dash_html.contains("PC Local (Miễn đăng nhập)"));
         assert!(!dash_html.contains("#070b14"));
         assert!(!dash_html.contains("rgba(88, 28, 135"));
+        assert!(dash_html.contains("charts-grid"));
+        assert!(dash_html.contains("chart-donut"));
+        assert!(dash_html.contains("signal-meter"));
+        assert!(dash_html.contains(r##"<use href="#ico-flame"/>"##));
+        assert!(dash_html.contains(r##"<use href="#ico-crown"/>"##));
+        assert!(dash_html.contains(r##"<use href="#ico-platforms"/>"##));
+        assert!(dash_html.contains(r##"<use href="#ico-orders"/>"##));
+        assert!(!dash_html.contains("#0c0f17"));
 
         srv.abort();
         let _ = std::fs::remove_file(&test_db_path);
