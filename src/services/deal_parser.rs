@@ -287,8 +287,8 @@ impl DealParser {
 
     /// Chuẩn hóa các shortlink bị sai subdomain trước khi giải mã (ví dụ www.lazada.vn/s.XXX -> s.lazada.vn/s.XXX)
     fn normalize_short_url(&self, raw_url: &str) -> String {
-        if let Ok(parsed) = Url::parse(raw_url) {
-            if let Some(host) = parsed.host_str() {
+        if let Ok(parsed) = Url::parse(raw_url)
+            && let Some(host) = parsed.host_str() {
                 let host_lower = host.to_lowercase();
                 if host_lower.contains("lazada.vn")
                     && !host_lower.starts_with("s.lazada.vn")
@@ -298,7 +298,6 @@ impl DealParser {
                     return format!("https://s.lazada.vn{}", parsed.path());
                 }
             }
-        }
         raw_url.to_string()
     }
 
@@ -344,11 +343,10 @@ impl DealParser {
                             info!("Đã trích xuất link đích thực tế từ trang chuyển tiếp Lazada: {}", target);
                             final_url = target;
                         }
-                    } else if is_shopee_short {
-                        if let Some(cfg_url) = crate::services::social_harvester::extract_shopee_config_http_url(&body) {
+                    } else if is_shopee_short
+                        && let Some(cfg_url) = crate::services::social_harvester::extract_shopee_config_http_url(&body) {
                             final_url = cfg_url;
                         }
-                    }
                     html_title = self.extract_title_from_html(&body);
                     html_img = extract_image_from_html(&body);
                 }
@@ -389,8 +387,8 @@ impl DealParser {
     /// Trích xuất URL sản phẩm thực tế từ trang HTML bridge của Lazada
     pub fn extract_lazada_target_from_html(&self, html: &str) -> Option<String> {
         // 1. Thẻ <link rel="origin" href="...">
-        if let Some(caps) = self.lazada_origin_regex.captures(html) {
-            if let Some(href) = caps.get(1) {
+        if let Some(caps) = self.lazada_origin_regex.captures(html)
+            && let Some(href) = caps.get(1) {
                 let u = href.as_str();
                 if u.contains("lazada.vn/products/") {
                     if let Ok(p) = Url::parse(u) {
@@ -399,25 +397,22 @@ impl DealParser {
                     return Some(u.to_string());
                 }
             }
-        }
 
         // 2. window.location.href = 'https://www.lazada.vn/products/...'
-        if let Some(caps) = self.lazada_js_regex.captures(html) {
-            if let Some(loc) = caps.get(1) {
+        if let Some(caps) = self.lazada_js_regex.captures(html)
+            && let Some(loc) = caps.get(1) {
                 let u = loc.as_str();
                 if let Ok(p) = Url::parse(u) {
                     return Some(format!("https://www.lazada.vn{}", p.path()));
                 }
                 return Some(u.to_string());
             }
-        }
 
         // 3. App link itemId
-        if let Some(caps) = self.lazada_app_item_regex.captures(html) {
-            if let Some(id) = caps.get(1) {
+        if let Some(caps) = self.lazada_app_item_regex.captures(html)
+            && let Some(id) = caps.get(1) {
                 return Some(format!("https://www.lazada.vn/products/-i{}.html", id.as_str()));
             }
-        }
 
         None
     }
@@ -443,13 +438,10 @@ impl DealParser {
         // Ưu tiên bóc từ meta description của Shopee (`Mua <Tên Đầy Đủ> giá tốt...`) vì og:title thường bị cắt `...`
         if let Some(desc_raw) = extract_meta_content(html, "name", "description")
             .or_else(|| extract_meta_content(html, "property", "og:description"))
-        {
-            if let Some(cleaned) = clean_shopee_meta_description(&desc_raw) {
-                if !is_junk_title(&cleaned) {
+            && let Some(cleaned) = clean_shopee_meta_description(&desc_raw)
+                && !is_junk_title(&cleaned) {
                     return Some(cleaned);
                 }
-            }
-        }
 
         if let Some(og_raw) = extract_meta_content(html, "property", "og:title") {
             let decoded = clean_meta_title_suffix(&html_escape_decode(og_raw.trim()));
@@ -459,14 +451,13 @@ impl DealParser {
         }
 
         let title_regex = Regex::new(r#"(?is)<title[^>]*>([^<]+)</title>"#).ok()?;
-        if let Some(caps) = title_regex.captures(html) {
-            if let Some(m) = caps.get(1) {
+        if let Some(caps) = title_regex.captures(html)
+            && let Some(m) = caps.get(1) {
                 let decoded = clean_meta_title_suffix(&html_escape_decode(m.as_str().trim()));
                 if !is_junk_title(&decoded) {
                     return Some(decoded);
                 }
             }
-        }
 
         None
     }
@@ -585,11 +576,10 @@ impl DealParser {
                 format!("https://shopee.vn{}", parsed.path())
             }
             Platform::Lazada => {
-                if let Some(caps) = self.lazada_item_regex.captures(url_str) {
-                    if let Some(item_id) = caps.get(1) {
+                if let Some(caps) = self.lazada_item_regex.captures(url_str)
+                    && let Some(item_id) = caps.get(1) {
                         return format!("https://www.lazada.vn/products/-i{}.html", item_id.as_str());
                     }
-                }
                 // Nếu vẫn là shortlink Lazada (s.lazada.vn, c.lazada.vn, lzd.co), tuyệt đối giữ nguyên host và path, không đổi thành www.lazada.vn
                 if let Some(host) = parsed.host_str() {
                     let host_lower = host.to_lowercase();
@@ -600,11 +590,10 @@ impl DealParser {
                 format!("https://www.lazada.vn{}", parsed.path())
             }
             Platform::Tiki => {
-                if let Some(caps) = self.tiki_item_regex.captures(url_str) {
-                    if let Some(product_id) = caps.get(1) {
+                if let Some(caps) = self.tiki_item_regex.captures(url_str)
+                    && let Some(product_id) = caps.get(1) {
                         return format!("https://tiki.vn/product-p{}.html", product_id.as_str());
                     }
-                }
                 format!("https://tiki.vn{}", parsed.path())
             }
             Platform::TikTokShop | Platform::Alibaba | Platform::Unknown => {
@@ -817,8 +806,8 @@ impl DealParser {
                 .or_else(|| self.tiki_item_regex.captures(&resolved_url))
                 .and_then(|c| c.get(1).map(|m| m.as_str().to_string()));
 
-            if let Some(pid) = tiki_pid {
-                if let Some((api_title, api_price, api_shop, api_brand, api_thumb)) = self.fetch_tiki_product_info(&pid).await {
+            if let Some(pid) = tiki_pid
+                && let Some((api_title, api_price, api_shop, api_brand, api_thumb)) = self.fetch_tiki_product_info(&pid).await {
                     if user_text_title.is_none() && !api_title.is_empty() {
                         product_title = api_title;
                     }
@@ -831,7 +820,6 @@ impl DealParser {
                         product_image_url = api_thumb;
                     }
                 }
-            }
         }
 
         let override_campaign_id = match &platform {
@@ -875,8 +863,8 @@ impl DealParser {
                 }
             }
 
-            if direct_shopee_result.is_none() {
-                if let Some(aff_id) = settings
+            if direct_shopee_result.is_none()
+                && let Some(aff_id) = settings
                     .shopee_affiliate_id
                     .map(str::trim)
                     .filter(|id| is_valid_shopee_affiliate_id(id))
@@ -889,7 +877,6 @@ impl DealParser {
                     affiliate_note = None;
                     direct_shopee_result = Some((final_shopee, default_sub_id.clone(), true));
                 }
-            }
         }
 
         // 1. Ưu tiên dùng kết quả Shopee Chính Chủ nếu có; nếu không gọi ACCESSTRADE API thật
@@ -909,11 +896,10 @@ impl DealParser {
                 .await
             {
                 Ok(res) => {
-                    if user_text_title.is_none() {
-                        if let Some(api_name) = res.product_name {
+                    if user_text_title.is_none()
+                        && let Some(api_name) = res.product_name {
                             product_title = api_name;
                         }
-                    }
                     if res.product_price_vnd.is_some() {
                         product_price_vnd = res.product_price_vnd;
                     }
@@ -1022,14 +1008,13 @@ fn extract_meta_content(html: &str, attr_key: &str, attr_val: &str) -> Option<St
     );
     for pat in [p1, p2] {
         let Ok(re) = Regex::new(&pat) else { continue };
-        if let Some(caps) = re.captures(html) {
-            if let Some(m) = caps.get(1) {
+        if let Some(caps) = re.captures(html)
+            && let Some(m) = caps.get(1) {
                 let val = m.as_str().trim();
                 if !val.is_empty() {
                     return Some(val.to_string());
                 }
             }
-        }
     }
     None
 }
@@ -1090,10 +1075,13 @@ struct TikiNamedField {
     name: Option<String>,
 }
 
+/// Bộ dữ liệu (tên sản phẩm, giá VNĐ, tên shop, thương hiệu) trích xuất từ Tiki API
+pub type ParsedTikiProductTuple = (String, Option<f64>, Option<String>, Option<String>);
+
 /// Phân tích JSON phản hồi từ Tiki v2 product API thành (tên, giá VNĐ, tên shop, thương hiệu)
 pub fn parse_tiki_product_json(
     body: &str,
-) -> Option<(String, Option<f64>, Option<String>, Option<String>)> {
+) -> Option<ParsedTikiProductTuple> {
     let parsed: TikiProductApiResp = serde_json::from_str(body).ok()?;
     let title = parsed
         .name

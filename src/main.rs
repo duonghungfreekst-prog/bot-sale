@@ -25,11 +25,10 @@ fn init_logging(gui_mode: bool) {
         if let Some(parent) = log_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Ok(meta) = std::fs::metadata(log_path) {
-            if meta.len() > 2 * 1024 * 1024 {
+        if let Ok(meta) = std::fs::metadata(log_path)
+            && meta.len() > 2 * 1024 * 1024 {
                 let _ = std::fs::write(log_path, b"");
             }
-        }
         let log_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -87,7 +86,8 @@ fn main() -> anyhow::Result<()> {
         let port = config.port;
         let bg_config = config.clone();
         if let Err(err) = desktop::run_desktop_app(port, move |proxy, shutdown_rx| {
-            let handle = std::thread::spawn(move || {
+            
+            std::thread::spawn(move || {
                 let Ok(rt) = tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
                     .build()
@@ -108,8 +108,7 @@ fn main() -> anyhow::Result<()> {
                         error!("Lỗi nghiêm trọng trong Backend Desktop: {:?}", err);
                     }
                 });
-            });
-            handle
+            })
         }) {
             error!("❌ Lỗi khởi chạy Desktop UI: {:?}", err);
             return Err(err);
@@ -147,6 +146,9 @@ async fn run_backend(
     // Khởi tạo Client ACCESSTRADE API dùng chung cho cả Web Admin & Telegram Bot
     let accesstrade = Arc::new(AccessTradeClient::new());
 
+    if config.public_base_url.is_some() && config.admin_password == "DealX@Admin2026" {
+        warn!("⚠️ CẢNH BÁO BẢO MẬT: Đang chạy chế độ Cloud nhưng dùng ADMIN_PASSWORD mặc định — hãy đặt biến môi trường ADMIN_PASSWORD mạnh ngay!");
+    }
     if config.turso_url.is_none() || config.turso_auth_token.is_none() {
         if config.public_base_url.is_some() {
             warn!("⚠️ Đang dùng SQLite cục bộ ({}) trên môi trường Cloud: dữ liệu DB có thể bị reset khi container khởi động lại.", config.database_path);
@@ -194,20 +196,19 @@ async fn run_backend(
                     Err(_) => None,
                 };
                 if let Some(ref tok) = db_token.or_else(|| env_token.clone()) {
-                    let is_full = cycle % 5 == 0;
-                    if is_full {
-                        if let Err(err) = warmup_at.get_approved_campaigns(tok, true).await {
-                            warn!("Không thể đồng bộ sẵn ACCESSTRADE khi khởi động/định kỳ: {}", err);
-                        }
+                    let is_full = cycle.is_multiple_of(5);
+                    if is_full
+                        && let Err(err) = warmup_at.get_approved_campaigns(tok, true).await
+                    {
+                        warn!("Không thể đồng bộ sẵn ACCESSTRADE khi khởi động/định kỳ: {}", err);
                     }
                     match warmup_at.sync_market_vouchers_tick(tok, is_full).await {
                         Ok(_) => {
-                            if is_full || cycle == 0 {
-                                if let Some(json_str) = warmup_at.export_voucher_cache_json().await {
-                                    if let Ok(conn) = warmup_db.conn() {
-                                        let _ = Repository::set_setting(&conn, "market_vouchers_cache_json", &json_str).await;
-                                    }
-                                }
+                            if (is_full || cycle == 0)
+                                && let Some(json_str) = warmup_at.export_voucher_cache_json().await
+                                && let Ok(conn) = warmup_db.conn()
+                            {
+                                let _ = Repository::set_setting(&conn, "market_vouchers_cache_json", &json_str).await;
                             }
                         }
                         Err(err) => {

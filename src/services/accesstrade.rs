@@ -280,13 +280,26 @@ struct TikTokAmountInfo {
     minimum_amount: Option<serde_json::Value>,
 }
 
+type CachedVoucherPool = (String, i64, u32, Vec<VoucherOffer>);
+
+/// Truy vấn lọc mã giảm giá khớp đúng shop, thương hiệu, URL và khoảng giá sản phẩm.
+pub struct VoucherMatchQuery<'a> {
+    pub platform: &'a str,
+    pub product_title: &'a str,
+    pub clean_url: &'a str,
+    pub shop_name: Option<&'a str>,
+    pub brand_name: Option<&'a str>,
+    pub price_vnd: Option<f64>,
+    pub max_items: usize,
+}
+
 /// Client giao tiếp với ACCESSTRADE Publisher API v1/v2
 pub struct AccessTradeClient {
     http: Client,
     redirect_probe: Client,
     cache: Arc<RwLock<Option<(String, ApprovedCampaigns)>>>,
     campaigns_fetch_lock: Arc<tokio::sync::Mutex<()>>,
-    voucher_cache: Arc<RwLock<Option<(String, i64, u32, Vec<VoucherOffer>)>>>,
+    voucher_cache: Arc<RwLock<Option<CachedVoucherPool>>>,
     voucher_meta: Arc<RwLock<VoucherSyncMeta>>,
 }
 
@@ -399,22 +412,20 @@ impl AccessTradeClient {
         let now = Utc::now().timestamp();
         if !force_refresh {
             let guard = self.cache.read().await;
-            if let Some((cached_token, cached)) = guard.as_ref() {
-                if cached_token == token && (now - cached.fetched_at_epoch) < CACHE_TTL_SECS {
+            if let Some((cached_token, cached)) = guard.as_ref()
+                && cached_token == token && (now - cached.fetched_at_epoch) < CACHE_TTL_SECS {
                     return Ok(cached.clone());
                 }
-            }
         }
 
         let _fetch_guard = self.campaigns_fetch_lock.lock().await;
         let now_locked = Utc::now().timestamp();
         if !force_refresh {
             let guard = self.cache.read().await;
-            if let Some((cached_token, cached)) = guard.as_ref() {
-                if cached_token == token && (now_locked - cached.fetched_at_epoch) < CACHE_TTL_SECS {
+            if let Some((cached_token, cached)) = guard.as_ref()
+                && cached_token == token && (now_locked - cached.fetched_at_epoch) < CACHE_TTL_SECS {
                     return Ok(cached.clone());
                 }
-            }
         }
 
         let mut combined = ApprovedCampaigns {
@@ -642,9 +653,9 @@ impl AccessTradeClient {
             return Err(parsed.message.unwrap_or_else(|| "Tạo link không thành công".to_string()));
         }
 
-        if let Some(data) = parsed.data {
-            if let Some(links) = data.success_link {
-                if let Some(first) = links.first() {
+        if let Some(data) = parsed.data
+            && let Some(links) = data.success_link
+                && let Some(first) = links.first() {
                     if let Some(short) = first.short_link.as_deref().filter(|s| !s.trim().is_empty()) {
                         return Ok(short.to_string());
                     }
@@ -652,8 +663,6 @@ impl AccessTradeClient {
                         return Ok(aff.to_string());
                     }
                 }
-            }
-        }
 
         Err("ACCESSTRADE không trả về đường link hợp lệ".to_string())
     }
@@ -690,8 +699,8 @@ impl AccessTradeClient {
         let parsed: TikTokFeedCreateResp =
             serde_json::from_str(&text).map_err(|e| format!("Lỗi parse JSON v2: {}", e))?;
 
-        if parsed.status == Some(true) {
-            if let Some(data) = parsed.data {
+        if parsed.status == Some(true)
+            && let Some(data) = parsed.data {
                 let target_url = data
                     .aff_short_url
                     .as_deref()
@@ -721,7 +730,6 @@ impl AccessTradeClient {
                     });
                 }
             }
-        }
 
         Err("Sản phẩm không thuộc danh sách TikTok Product Feed".to_string())
     }
@@ -752,28 +760,13 @@ impl AccessTradeClient {
     /// Tìm các mã giảm giá trong kho khớp ĐÚNG với shop / thương hiệu / sản phẩm hoặc mã toàn sàn (tuyệt đối không nhét bừa mã shop khác)
     pub async fn search_matching_vouchers_for_deal(
         &self,
-        platform: &str,
-        product_title: &str,
-        clean_url: &str,
-        shop_name: Option<&str>,
-        brand_name: Option<&str>,
-        price_vnd: Option<f64>,
-        max_items: usize,
+        query: &VoucherMatchQuery<'_>,
     ) -> Vec<VoucherOffer> {
         let all = self.peek_cached_high_discount_vouchers().await;
         if all.is_empty() {
             return Vec::new();
         }
-        match_vouchers_for_product(
-            &all,
-            platform,
-            product_title,
-            clean_url,
-            shop_name,
-            brand_name,
-            price_vnd,
-            max_items,
-        )
+        match_vouchers_for_product(&all, query)
     }
 
     /// Trả về link đích đã qua kiểm tra gateway redirect an toàn cho một mã giảm giá (không bao giờ đưa link chết 404/500)
@@ -804,8 +797,8 @@ impl AccessTradeClient {
         let now = Utc::now().timestamp();
         if !force_refresh {
             let guard = self.voucher_cache.read().await;
-            if let Some((cached_token, fetched_at, cached_min, list)) = guard.as_ref() {
-                if cached_token == token
+            if let Some((cached_token, fetched_at, cached_min, list)) = guard.as_ref()
+                && cached_token == token
                     && *cached_min <= min_discount_pct
                     && (now - *fetched_at) < VOUCHER_CACHE_TTL_SECS
                 {
@@ -819,7 +812,6 @@ impl AccessTradeClient {
                     };
                     return Ok(filtered);
                 }
-            }
         }
 
         let collected = self.sync_market_vouchers_internal(token, true).await?;
@@ -974,8 +966,8 @@ impl AccessTradeClient {
         // Nếu đang là quick sync 60s, gộp giữ lại các mã còn hạn đã thu được từ lần full scan gần nhất
         if !full_scan {
             let guard = self.voucher_cache.read().await;
-            if let Some((cached_token, _, _, existing)) = guard.as_ref() {
-                if cached_token == token {
+            if let Some((cached_token, _, _, existing)) = guard.as_ref()
+                && cached_token == token {
                     for old in existing {
                         let exp = old.end_time.trim();
                         if exp.len() == 10 && exp < today_ymd.as_str() {
@@ -991,7 +983,6 @@ impl AccessTradeClient {
                         }
                     }
                 }
-            }
         }
 
         sort_voucher_offers_priority(&mut collected);
@@ -1408,8 +1399,8 @@ pub fn extract_normalized_host(raw_url: &str) -> Option<String> {
     for prefix in [
         "www.", "m.", "mobile.", "vn.", "vi.", "us.", "uk.", "get.", "shop.", "store.",
     ] {
-        if let Some(rest) = host.strip_prefix(prefix) {
-            if rest.contains('.')
+        if let Some(rest) = host.strip_prefix(prefix)
+            && rest.contains('.')
                 && !matches!(
                     rest,
                     "com.vn" | "net.vn" | "org.vn" | "edu.vn" | "gov.vn" | "co.uk" | "com.au"
@@ -1418,7 +1409,6 @@ pub fn extract_normalized_host(raw_url: &str) -> Option<String> {
                 host = rest.to_string();
                 break;
             }
-        }
     }
     if host.contains('.') {
         Some(host)
@@ -1779,13 +1769,15 @@ mod tests {
 
         let matched = match_vouchers_for_product(
             &offers,
-            "Tiki",
-            "Sữa bột Enfagrow Enspire 3 850g",
-            "https://tiki.vn/product-p274504811.html",
-            Some("Tiki Trading"),
-            Some("Enfa"),
-            Some(822000.0),
-            3,
+            &VoucherMatchQuery {
+                platform: "Tiki",
+                product_title: "Sữa bột Enfagrow Enspire 3 850g",
+                clean_url: "https://tiki.vn/product-p274504811.html",
+                shop_name: Some("Tiki Trading"),
+                brand_name: Some("Enfa"),
+                price_vnd: Some(822000.0),
+                max_items: 3,
+            },
         );
 
         let codes: Vec<&str> = matched.iter().map(|v| v.coupon_code.as_str()).collect();
@@ -1800,13 +1792,15 @@ mod tests {
         ];
         let empty = match_vouchers_for_product(
             &only_other_shops,
-            "Tiki",
-            "Sữa bột Enfagrow Enspire 3 850g",
-            "https://tiki.vn/product-p274504811.html",
-            Some("Enfa Store"),
-            Some("Enfa"),
-            Some(822000.0),
-            3,
+            &VoucherMatchQuery {
+                platform: "Tiki",
+                product_title: "Sữa bột Enfagrow Enspire 3 850g",
+                clean_url: "https://tiki.vn/product-p274504811.html",
+                shop_name: Some("Enfa Store"),
+                brand_name: Some("Enfa"),
+                price_vnd: Some(822000.0),
+                max_items: 3,
+            },
         );
         assert!(empty.is_empty());
     }
@@ -1911,24 +1905,18 @@ fn is_generic_platform_voucher_shop(shop_lower: &str, platform_lower: &str) -> b
 /// Lọc và xếp hạng mã khớp ĐÚNG shop / thương hiệu / toàn sàn của sản phẩm
 pub fn match_vouchers_for_product(
     offers: &[VoucherOffer],
-    platform: &str,
-    product_title: &str,
-    clean_url: &str,
-    shop_name: Option<&str>,
-    brand_name: Option<&str>,
-    price_vnd: Option<f64>,
-    max_items: usize,
+    query: &VoucherMatchQuery<'_>,
 ) -> Vec<VoucherOffer> {
-    let platform_lower = platform.trim().to_lowercase();
-    let title_lower = product_title.trim().to_lowercase();
-    let url_lower = clean_url.trim().to_lowercase();
-    let prod_shop_lower = shop_name.unwrap_or("").trim().to_lowercase();
-    let prod_brand_lower = brand_name.unwrap_or("").trim().to_lowercase();
+    let platform_lower = query.platform.trim().to_lowercase();
+    let title_lower = query.product_title.trim().to_lowercase();
+    let url_lower = query.clean_url.trim().to_lowercase();
+    let prod_shop_lower = query.shop_name.unwrap_or("").trim().to_lowercase();
+    let prod_brand_lower = query.brand_name.unwrap_or("").trim().to_lowercase();
 
     let mut ranked: Vec<(u8, bool, u32, i64, VoucherOffer)> = Vec::new();
 
     for v in offers {
-        if !v.platform.eq_ignore_ascii_case(platform) {
+        if !v.platform.eq_ignore_ascii_case(query.platform) {
             continue;
         }
         let v_shop_lower = v.shop_name.trim().to_lowercase();
@@ -1965,7 +1953,7 @@ pub fn match_vouchers_for_product(
             continue;
         }
 
-        let price_eligible = match price_vnd {
+        let price_eligible = match query.price_vnd {
             Some(price) if price > 0.0 && v.min_spend > 0.0 => price >= v.min_spend,
             _ => true,
         };
@@ -1994,7 +1982,7 @@ pub fn match_vouchers_for_product(
             continue;
         }
         results.push(offer);
-        if results.len() >= max_items {
+        if results.len() >= query.max_items {
             break;
         }
     }
@@ -2186,15 +2174,14 @@ fn detect_offer_platform(merchant: &str, domain: &str, url: &str) -> String {
 }
 
 fn split_shop_and_desc<'a>(name: &'a str, fallback_platform: &str) -> (String, &'a str) {
-    if let Some(rest) = name.strip_prefix('[') {
-        if let Some(end_idx) = rest.find(']') {
+    if let Some(rest) = name.strip_prefix('[')
+        && let Some(end_idx) = rest.find(']') {
             let shop = rest[..end_idx].trim();
             let desc = rest[end_idx + 1..].trim().trim_start_matches('-').trim();
             if !shop.is_empty() {
                 return (shop.to_string(), if desc.is_empty() { name } else { desc });
             }
         }
-    }
     (fallback_platform.to_string(), name)
 }
 

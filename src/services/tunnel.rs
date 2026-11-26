@@ -124,16 +124,13 @@ fn find_cloudflared_executable() -> Option<PathBuf> {
     if let Ok(out) = std::process::Command::new(which_cmd)
         .arg("cloudflared")
         .output()
-    {
-        if out.status.success() {
-            if let Some(first) = String::from_utf8_lossy(&out.stdout).lines().next() {
+        && out.status.success()
+            && let Some(first) = String::from_utf8_lossy(&out.stdout).lines().next() {
                 let trimmed = first.trim();
                 if !trimmed.is_empty() {
                     return Some(PathBuf::from(trimmed));
                 }
             }
-        }
-    }
     None
 }
 
@@ -241,8 +238,8 @@ fn spawn_quick_stream_reader<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
             if is_reg {
                 guard.registered = true;
             }
-            if guard.registered && !guard.announced {
-                if let Some(live_url) = guard.url.clone() {
+            if guard.registered && !guard.announced
+                && let Some(live_url) = guard.url.clone() {
                     guard.announced = true;
                     drop(guard);
                     tokio::spawn(async move {
@@ -263,7 +260,6 @@ fn spawn_quick_stream_reader<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
                         );
                     });
                 }
-            }
         }
     });
 }
@@ -289,12 +285,11 @@ async fn wait_for_quick_tunnel_dns_ready(live_url: &str, gen_id: u64) {
             .send()
             .await
         {
-            if let Ok(text) = resp.text().await {
-                if text.contains("\"Answer\"") {
+            if let Ok(text) = resp.text().await
+                && text.contains("\"Answer\"") {
                     tokio::time::sleep(Duration::from_millis(800)).await;
                     return;
                 }
-            }
         } else if attempt >= 3 {
             return;
         }

@@ -271,11 +271,10 @@ fn is_valid_telegram_secret(secret: &str) -> bool {
 
 /// Tạo khóa bí mật ổn định giữa các lần restart để xác thực Webhook từ Telegram.
 fn resolve_webhook_secret(telegram_token: &str, admin_password: &str) -> String {
-    if let Some(env_secret) = read_env_non_empty("TELEGRAM_WEBHOOK_SECRET") {
-        if is_valid_telegram_secret(&env_secret) {
+    if let Some(env_secret) = read_env_non_empty("TELEGRAM_WEBHOOK_SECRET")
+        && is_valid_telegram_secret(&env_secret) {
             return env_secret;
         }
-    }
     derive_deterministic_secret(telegram_token, admin_password)
 }
 

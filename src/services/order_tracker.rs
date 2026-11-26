@@ -101,8 +101,8 @@ pub async fn sync_orders_once(
             newly_added_orders.len(),
             summary.fetched
         );
-        if let Some(admin_id) = admin_telegram_id {
-            if !config.telegram_token.contains("DEMO_TOKEN")
+        if let Some(admin_id) = admin_telegram_id
+            && !config.telegram_token.contains("DEMO_TOKEN")
                 && !config.telegram_token.trim().is_empty()
             {
                 let bot = Bot::new(&config.telegram_token);
@@ -117,7 +117,6 @@ pub async fn sync_orders_once(
                     }
                 }
             }
-        }
     }
 
     summary

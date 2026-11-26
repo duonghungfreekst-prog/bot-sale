@@ -246,11 +246,10 @@ pub async fn handle_message(
     }
 
     // Nếu tin nhắn bắt đầu bằng lệnh '/'
-    if text.starts_with('/') {
-        if let Ok(cmd) = Command::parse(text, &config.bot_username) {
+    if text.starts_with('/')
+        && let Ok(cmd) = Command::parse(text, &config.bot_username) {
             return handle_command(bot, msg, cmd, db, config, parser).await;
         }
-    }
 
     // Kiểm tra xem tin nhắn có chứa 1 hay nhiều URL link sản phẩm không (hỗ trợ cả caption ảnh, tối đa 5 link/tin & mọi sàn đã duyệt trên ACCESSTRADE)
     if parser.extract_first_url(text).is_some() {
@@ -288,8 +287,7 @@ pub async fn handle_message(
                 .unwrap_or_else(|_| reqwest::Client::new());
             if let Some(social_params) =
                 crate::services::social_harvester::resolve_social_params_from_input(&http_probe, text).await
-            {
-                if crate::services::shopee_affiliate::social_param_strength(&social_params) >= 3 {
+                && crate::services::shopee_affiliate::social_param_strength(&social_params) >= 3 {
                     let _ = Repository::set_setting(&conn, "shopee_social_params", &social_params).await;
                     let _ = bot
                         .send_message(
@@ -302,7 +300,6 @@ pub async fn handle_message(
                         .parse_mode(ParseMode::Html)
                         .await;
                 }
-            }
         }
 
         let owned_aff = load_owned_aff_settings(&conn, &config).await;
@@ -387,15 +384,15 @@ pub async fn handle_message(
                         if voucher_hint.is_empty() {
                             let matched_mv = parser
                                 .accesstrade()
-                                .search_matching_vouchers_for_deal(
-                                    parsed.platform.as_str(),
-                                    &parsed.product_title,
-                                    &parsed.clean_url,
-                                    parsed.product_shop.as_deref(),
-                                    parsed.product_brand.as_deref(),
-                                    parsed.product_price_vnd,
-                                    1,
-                                )
+                                .search_matching_vouchers_for_deal(&crate::services::accesstrade::VoucherMatchQuery {
+                                    platform: parsed.platform.as_str(),
+                                    product_title: &parsed.product_title,
+                                    clean_url: &parsed.clean_url,
+                                    shop_name: parsed.product_shop.as_deref(),
+                                    brand_name: parsed.product_brand.as_deref(),
+                                    price_vnd: parsed.product_price_vnd,
+                                    max_items: 1,
+                                })
                                 .await;
                             let allow_market_generic = match parsed.platform {
                                 crate::services::deal_parser::Platform::Shopee => {
@@ -648,15 +645,15 @@ pub async fn handle_message(
                 };
                 let matched_market: Vec<_> = parser
                     .accesstrade()
-                    .search_matching_vouchers_for_deal(
-                        parsed.platform.as_str(),
-                        &parsed.product_title,
-                        &parsed.clean_url,
-                        parsed.product_shop.as_deref(),
-                        parsed.product_brand.as_deref(),
-                        parsed.product_price_vnd,
-                        4,
-                    )
+                    .search_matching_vouchers_for_deal(&crate::services::accesstrade::VoucherMatchQuery {
+                        platform: parsed.platform.as_str(),
+                        product_title: &parsed.product_title,
+                        clean_url: &parsed.clean_url,
+                        shop_name: parsed.product_shop.as_deref(),
+                        brand_name: parsed.product_brand.as_deref(),
+                        price_vnd: parsed.product_price_vnd,
+                        max_items: 4,
+                    })
                     .await
                     .into_iter()
                     .filter(|mv| allow_market_generic || mv.is_shop_specific())
@@ -779,10 +776,10 @@ pub async fn handle_message(
                     &portal_buttons,
                 );
                 let mut sent_photo = false;
-                if let Some(ref img_url_str) = parsed.product_image_url {
-                    if reply_html.chars().count() <= 960 {
-                        if let Ok(parsed_img) = url::Url::parse(img_url_str) {
-                            if bot
+                if let Some(ref img_url_str) = parsed.product_image_url
+                    && reply_html.chars().count() <= 960
+                        && let Ok(parsed_img) = url::Url::parse(img_url_str)
+                            && bot
                                 .send_photo(msg.chat.id, InputFile::url(parsed_img))
                                 .caption(&reply_html)
                                 .parse_mode(ParseMode::Html)
@@ -792,9 +789,6 @@ pub async fn handle_message(
                             {
                                 sent_photo = true;
                             }
-                        }
-                    }
-                }
                 if !sent_photo {
                     bot.send_message(msg.chat.id, reply_html)
                         .parse_mode(ParseMode::Html)
@@ -1066,11 +1060,10 @@ fn parse_discount_pct_hint(text: &str) -> u32 {
                 .rposition(|c| !c.is_ascii_digit())
                 .map(|p| p + 1)
                 .unwrap_or(0);
-            if let Ok(v) = text[start..i].parse::<u32>() {
-                if v <= 99 {
+            if let Ok(v) = text[start..i].parse::<u32>()
+                && v <= 99 {
                     best = best.max(v);
                 }
-            }
         }
     }
     best
@@ -1096,15 +1089,14 @@ pub fn is_exclusive_deal_relevant(deal: &crate::db::models::DealItem, parsed: &P
     }
 
     // Kiểm tra điều kiện giá tối thiểu nếu đã đọc được giá sản phẩm thật
-    if let Some(price) = parsed.product_price_vnd.filter(|&p| p > 0.0) {
-        if deal.min_spend > 0.0 && price < deal.min_spend {
+    if let Some(price) = parsed.product_price_vnd.filter(|&p| p > 0.0)
+        && deal.min_spend > 0.0 && price < deal.min_spend {
             return false;
         }
-    }
 
     // Nếu tiêu đề mã có tiền tố [Tên Shop], kiểm tra xem có phải mã toàn sàn hay khớp shop/brand/tên sản phẩm không
-    if let Some(rest) = deal.title.trim().strip_prefix('[') {
-        if let Some(end_idx) = rest.find(']') {
+    if let Some(rest) = deal.title.trim().strip_prefix('[')
+        && let Some(end_idx) = rest.find(']') {
             let tag = rest[..end_idx].trim().to_lowercase();
             let plat = parsed.platform.as_str().to_lowercase();
             let is_global_tag = tag.is_empty()
@@ -1127,7 +1119,6 @@ pub fn is_exclusive_deal_relevant(deal: &crate::db::models::DealItem, parsed: &P
             let title_match = parsed.product_title.to_lowercase().contains(&tag);
             return shop_match || brand_match || title_match;
         }
-    }
 
     true
 }

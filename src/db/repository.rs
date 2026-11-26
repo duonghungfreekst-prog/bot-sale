@@ -76,15 +76,14 @@ impl Repository {
         let mut referrer_id: Option<i64> = None;
         if let Some(code) = referred_by_code {
             let clean_code = code.trim().to_uppercase();
-            if let Some(referrer) = Self::get_user_by_ref_code(conn, &clean_code).await? {
-                if referrer.telegram_id != telegram_id {
+            if let Some(referrer) = Self::get_user_by_ref_code(conn, &clean_code).await?
+                && referrer.telegram_id != telegram_id {
                     referrer_id = Some(referrer.telegram_id);
                     info!(
                         "Người dùng mới {} được giới thiệu bởi {} (ID: {})",
                         telegram_id, referrer.full_name, referrer.telegram_id
                     );
                 }
-            }
         }
 
         // Sinh mã giới thiệu không trùng lặp
@@ -350,8 +349,8 @@ impl Repository {
             .await?;
 
             // Nếu có người giới thiệu F0, cộng hoa hồng giới thiệu thẳng vào balance_available của F0
-            if let Some(ref_id) = referrer_id {
-                if referrer_bonus > 0.0 {
+            if let Some(ref_id) = referrer_id
+                && referrer_bonus > 0.0 {
                     conn.execute(
                         "UPDATE users SET balance_available = balance_available + ?1 WHERE telegram_id = ?2",
                         params![referrer_bonus, ref_id],
@@ -362,7 +361,6 @@ impl Repository {
                         referrer_bonus, order_id, ref_id
                     );
                 }
-            }
 
             info!("Đã duyệt thành công đơn hoàn tiền {}.", order_id);
             Ok(())
@@ -534,46 +532,36 @@ impl Repository {
         let mut tiki_clicks = 0i64;
         let mut tiktok_clicks = 0i64;
 
-        if let Ok(mut rows) = conn.query("SELECT COUNT(*) FROM users", ()).await {
-            if let Ok(Some(row)) = rows.next().await {
-                total_users = row.get(0).unwrap_or(0);
-            }
+        if let Ok(mut rows) = conn
+            .query(
+                "SELECT (SELECT COUNT(*) FROM users), (SELECT COUNT(*) FROM deals)",
+                (),
+            )
+            .await
+            && let Ok(Some(row)) = rows.next().await
+        {
+            total_users = row.get(0).unwrap_or(0);
+            total_deals = row.get(1).unwrap_or(0);
         }
 
-        if let Ok(mut rows) = conn.query("SELECT COUNT(*) FROM clicks", ()).await {
-            if let Ok(Some(row)) = rows.next().await {
-                total_clicks = row.get(0).unwrap_or(0);
-            }
-        }
-
-        if let Ok(mut rows) = conn.query("SELECT COUNT(*) FROM deals", ()).await {
-            if let Ok(Some(row)) = rows.next().await {
-                total_deals = row.get(0).unwrap_or(0);
-            }
-        }
-
-        if let Ok(mut rows) = conn.query("SELECT COUNT(*) FROM clicks WHERE LOWER(platform) = 'shopee'", ()).await {
-            if let Ok(Some(row)) = rows.next().await {
-                shopee_clicks = row.get(0).unwrap_or(0);
-            }
-        }
-
-        if let Ok(mut rows) = conn.query("SELECT COUNT(*) FROM clicks WHERE LOWER(platform) = 'lazada'", ()).await {
-            if let Ok(Some(row)) = rows.next().await {
-                lazada_clicks = row.get(0).unwrap_or(0);
-            }
-        }
-
-        if let Ok(mut rows) = conn.query("SELECT COUNT(*) FROM clicks WHERE LOWER(platform) = 'tiki'", ()).await {
-            if let Ok(Some(row)) = rows.next().await {
-                tiki_clicks = row.get(0).unwrap_or(0);
-            }
-        }
-
-        if let Ok(mut rows) = conn.query("SELECT COUNT(*) FROM clicks WHERE LOWER(platform) LIKE '%tiktok%'", ()).await {
-            if let Ok(Some(row)) = rows.next().await {
-                tiktok_clicks = row.get(0).unwrap_or(0);
-            }
+        if let Ok(mut rows) = conn
+            .query(
+                "SELECT COUNT(*),
+                        COALESCE(SUM(CASE WHEN LOWER(platform) = 'shopee' THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN LOWER(platform) = 'lazada' THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN LOWER(platform) = 'tiki' THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN LOWER(platform) LIKE '%tiktok%' THEN 1 ELSE 0 END), 0)
+                 FROM clicks",
+                (),
+            )
+            .await
+            && let Ok(Some(row)) = rows.next().await
+        {
+            total_clicks = row.get(0).unwrap_or(0);
+            shopee_clicks = row.get(1).unwrap_or(0);
+            lazada_clicks = row.get(2).unwrap_or(0);
+            tiki_clicks = row.get(3).unwrap_or(0);
+            tiktok_clicks = row.get(4).unwrap_or(0);
         }
 
         Ok(AdminStats {

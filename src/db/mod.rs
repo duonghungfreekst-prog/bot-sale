@@ -216,6 +216,31 @@ impl AppDb {
             )
             .await;
 
+        let _ = conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_clicks_created_at ON clicks(created_at DESC);",
+                (),
+            )
+            .await;
+        let _ = conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_clicks_platform ON clicks(platform);",
+                (),
+            )
+            .await;
+        let _ = conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_deals_active_exclusive ON deals(is_active, is_exclusive DESC, id DESC);",
+                (),
+            )
+            .await;
+        let _ = conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);",
+                (),
+            )
+            .await;
+
         // Dọn dẹp triệt để các bản ghi seed giả mẫu cũ (AUTO_*, SHOPEE50K...) và các bài hướng dẫn rác quét nhầm từ trước
         let _ = conn
             .execute(

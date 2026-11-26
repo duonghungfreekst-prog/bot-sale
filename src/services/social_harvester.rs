@@ -97,19 +97,21 @@ pub fn decode_embedded_html_escapes(raw: &str) -> String {
 
 /// Trích xuất URL đích từ JS-bridge HTML (`httpUrl:"..."`, `window.location.replace(...)` hoặc `<meta http-equiv="refresh">`).
 pub fn extract_shopee_config_http_url(html: &str) -> Option<String> {
-    let patterns = [
-        r#"httpUrl\s*:\s*"([^"]+)""#,
-        r#"window\.location\.(?:replace|assign)\(\s*["']([^"']+)["']\s*\)"#,
-        r#"(?is)<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*?url=([^"'\s>]+)["']"#,
-    ];
-    for pat in patterns {
-        let Ok(re) = Regex::new(pat) else { continue };
-        if let Some(caps) = re.captures(html) {
-            if let Some(m) = caps.get(1) {
-                let decoded = decode_embedded_html_escapes(m.as_str()).replace("&amp;", "&");
-                if decoded.starts_with("https://") || decoded.starts_with("http://") {
-                    return Some(decoded);
-                }
+    static RE_PATTERNS: OnceLock<[Regex; 3]> = OnceLock::new();
+    let compiled = RE_PATTERNS.get_or_init(|| {
+        [
+            Regex::new(r#"httpUrl\s*:\s*"([^"]+)""#).unwrap(),
+            Regex::new(r#"window\.location\.(?:replace|assign)\(\s*["']([^"']+)["']\s*\)"#).unwrap(),
+            Regex::new(r#"(?is)<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*?url=([^"'\s>]+)["']"#).unwrap(),
+        ]
+    });
+    for re in compiled {
+        if let Some(caps) = re.captures(html)
+            && let Some(m) = caps.get(1)
+        {
+            let decoded = decode_embedded_html_escapes(m.as_str()).replace("&amp;", "&");
+            if decoded.starts_with("https://") || decoded.starts_with("http://") {
+                return Some(decoded);
             }
         }
     }
@@ -200,14 +202,20 @@ async fn probe_url_for_social_candidates(http: &Client, url: &str, max_hops: u8)
     out
 }
 
+fn re_ws() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\s+").unwrap())
+}
+
 /// Bóc tách bộ tham số Shopee FB/IG từ input thô hoặc tự giải mã nếu Admin dán link rút gọn / link cầu nối.
 pub async fn resolve_social_params_from_input(http: &Client, raw_input: &str) -> Option<String> {
-    if let Some(direct) = extract_social_passthrough_params(raw_input) {
-        if social_param_strength(&direct) >= 3 || !raw_input.trim().starts_with("http") {
-            return Some(direct);
-        }
+    if let Some(direct) = extract_social_passthrough_params(raw_input)
+        && (social_param_strength(&direct) >= 3 || !raw_input.trim().starts_with("http"))
+    {
+        return Some(direct);
     }
-    let re_url = Regex::new(r#"https?://[^\s<>"']+"#).ok()?;
+    static RE_URL: OnceLock<Regex> = OnceLock::new();
+    let re_url = RE_URL.get_or_init(|| Regex::new(r#"https?://[^\s<>"']+"#).unwrap());
     let url = re_url.find(raw_input)?.as_str();
     let mut best: Option<String> = None;
     for candidate in probe_url_for_social_candidates(http, url, 2).await {
@@ -220,18 +228,23 @@ pub async fn resolve_social_params_from_input(http: &Client, raw_input: &str) ->
 }
 
 fn clean_harvested_desc(text: &str) -> String {
-    let re_urls = Regex::new(
-        r"(?i)(?:https?://\S+|(?:s\.shopee\.vn|shp\.ee|vn\.shp\.ee|nghien\.co|noti\.sale|sandeal\.co|go\.isclix\.com|bit\.ly)/\S+)",
-    )
-    .unwrap();
+    static RE_URLS: OnceLock<Regex> = OnceLock::new();
+    static RE_NOISE: OnceLock<Regex> = OnceLock::new();
+    let re_urls = RE_URLS.get_or_init(|| {
+        Regex::new(
+            r"(?i)(?:https?://\S+|(?:s\.shopee\.vn|shp\.ee|vn\.shp\.ee|nghien\.co|noti\.sale|sandeal\.co|go\.isclix\.com|bit\.ly)/\S+)",
+        )
+        .unwrap()
+    });
     let no_urls = re_urls.replace_all(text, " ");
-    let re_noise = Regex::new(
-        r"(?i)(?:►+|list\s*áp\s*dụng\s*[>:]*|áp\s*(?:cho\s*)?list\s*[>:]*|lưu\s*banner\s*|\[c\s+link=[^\]]*\]?)",
-    )
-    .unwrap();
+    let re_noise = RE_NOISE.get_or_init(|| {
+        Regex::new(
+            r"(?i)(?:►+|list\s*áp\s*dụng\s*[>:]*|áp\s*(?:cho\s*)?list\s*[>:]*|lưu\s*banner\s*|\[c\s+link=[^\]]*\]?)",
+        )
+        .unwrap()
+    });
     let no_noise = re_noise.replace_all(&no_urls, " ");
-    let re_ws = Regex::new(r"\s+").unwrap();
-    re_ws
+    re_ws()
         .replace_all(no_noise.trim(), " ")
         .trim_matches(|c: char| matches!(c, '>' | '=' | ':' | '-' | '.' | ' '))
         .chars()
@@ -240,7 +253,8 @@ fn clean_harvested_desc(text: &str) -> String {
 }
 
 fn strip_html_entities_and_tags(raw: &str) -> String {
-    let re_tag = Regex::new(r"<[^>]+>").unwrap();
+    static RE_TAG: OnceLock<Regex> = OnceLock::new();
+    let re_tag = RE_TAG.get_or_init(|| Regex::new(r"<[^>]+>").unwrap());
     let no_tags = re_tag.replace_all(raw, " ");
     let decoded = no_tags
         .replace("&amp;", "&")
@@ -249,16 +263,18 @@ fn strip_html_entities_and_tags(raw: &str) -> String {
         .replace("&#8212;", "-")
         .replace("&gt;", ">")
         .replace("&lt;", "<");
-    let re_ws = Regex::new(r"\s+").unwrap();
-    re_ws.replace_all(decoded.trim(), " ").to_string()
+    re_ws().replace_all(decoded.trim(), " ").to_string()
 }
 
 fn parse_vnd_amount_hint(text: &str) -> f64 {
     let lower = text.to_ascii_lowercase();
-    if lower.contains("đơn 0đ") || lower.contains("từ 0đ") || lower.contains("đơn 0đ") {
+    if lower.contains("đơn 0đ") || lower.contains("từ 0đ") {
         return 0.0;
     }
-    let re = Regex::new(r"(?i)(?:đơn\s*từ|từ)\s*(\d+(?:[.,]\d+)?)\s*(k|tr|triệu|đ|d)?").unwrap();
+    static RE_VND: OnceLock<Regex> = OnceLock::new();
+    let re = RE_VND.get_or_init(|| {
+        Regex::new(r"(?i)(?:đơn\s*từ|từ)\s*(\d+(?:[.,]\d+)?)\s*(k|tr|triệu|đ|d)?").unwrap()
+    });
     if let Some(caps) = re.captures(&lower) {
         let num = caps
             .get(1)
@@ -295,9 +311,12 @@ fn stable_deal_code_suffix(prefix: &str, seed: &str) -> String {
 /// Phân tích HTML trang web deal Shopee (hỗ trợ cả HTML thường & HTML nhúng JSON) để nhặt Mã Instagram, Mã Facebook KOL & top voucher Shopee sạch.
 pub fn parse_magiamgiashopee_deals(raw_html: &str) -> Vec<NewDealInput> {
     let html = decode_embedded_html_escapes(raw_html);
-    let re_p = Regex::new(r"(?is)<p\b[^>]*>(.*?)</p>").unwrap();
-    let re_href = Regex::new(r#"(?i)href="([^"]+)""#).unwrap();
-    let re_pct = Regex::new(r"(\d{1,2})\s*%").unwrap();
+    static RE_P: OnceLock<Regex> = OnceLock::new();
+    static RE_HREF: OnceLock<Regex> = OnceLock::new();
+    static RE_PCT: OnceLock<Regex> = OnceLock::new();
+    let re_p = RE_P.get_or_init(|| Regex::new(r"(?is)<p\b[^>]*>(.*?)</p>").unwrap());
+    let re_href = RE_HREF.get_or_init(|| Regex::new(r#"(?i)href="([^"]+)""#).unwrap());
+    let re_pct = RE_PCT.get_or_init(|| Regex::new(r"(\d{1,2})\s*%").unwrap());
 
     let mut section_url: Option<String> = None;
     let mut kol_social_deals: Vec<NewDealInput> = Vec::new();
@@ -316,26 +335,23 @@ pub fn parse_magiamgiashopee_deals(raw_html: &str) -> Vec<NewDealInput> {
         let mut inline_clean_url: Option<String> = None;
         for hcap in re_href.captures_iter(block_html) {
             let href = hcap.get(1).map(|m| m.as_str()).unwrap_or("");
-            if let Some(origin) = extract_origin_link_from_an_redir(href) {
-                if origin.contains("shopee.vn") {
+            if let Some(origin) = extract_origin_link_from_an_redir(href)
+                && origin.contains("shopee.vn") {
                     inline_clean_url = Some(origin);
                     break;
                 }
-            }
         }
 
-        if lower.contains("mã shopee kol")
+        if (lower.contains("mã shopee kol")
             || lower.contains("mã link kol")
             || lower.contains("mã lưu từ banner")
             || lower.contains("ưu đãi shopeevip")
             || lower.contains("mã hot sẵn ví")
             || lower.contains("mã bách hoá")
-            || lower.contains("mã shopee video")
-        {
-            if let Some(ref u) = inline_clean_url {
+            || lower.contains("mã shopee video"))
+            && let Some(ref u) = inline_clean_url {
                 section_url = Some(u.clone());
             }
-        }
 
         let is_ig = lower.contains("mã instagram") || lower.contains("instagram");
         let is_fb = lower.contains("mã facebook") || lower.contains("shopee x facebook");
@@ -393,9 +409,9 @@ pub fn parse_magiamgiashopee_deals(raw_html: &str) -> Vec<NewDealInput> {
         }
 
         // Ưu tiên 2: Các mã % cao kèm link `shopee.vn/search?evcode=...` hoặc `shopee.vn/m/...` thật trên trang
-        if pct_val >= 20 && top_voucher_deals.len() < 8 {
-            if let Some(ref target_url) = inline_clean_url {
-                if target_url.contains("shopee.vn/search?") || target_url.contains("shopee.vn/m/") {
+        if pct_val >= 20 && top_voucher_deals.len() < 8
+            && let Some(ref target_url) = inline_clean_url
+                && (target_url.contains("shopee.vn/search?") || target_url.contains("shopee.vn/m/")) {
                     let code = stable_deal_code_suffix("SHP_AUTO", target_url);
                     if seen_codes.insert(code.clone()) {
                         let min_spend = parse_vnd_amount_hint(&text);
@@ -411,8 +427,6 @@ pub fn parse_magiamgiashopee_deals(raw_html: &str) -> Vec<NewDealInput> {
                         });
                     }
                 }
-            }
-        }
     }
 
     kol_social_deals.extend(top_voucher_deals);
@@ -454,14 +468,15 @@ fn collect_shortlinks_from_html(
     scanned_best: &mut Option<String>,
     max_total: usize,
 ) {
-    let Ok(re_short) = Regex::new(
-        r#"(?i)https?://(?:s\.shopee\.vn|shp\.ee|vn\.shp\.ee|sandeal\.co)/[^\s"'<>\\)\]]+"#,
-    ) else {
-        return;
-    };
-    let Ok(re_bare_shopee) = Regex::new(r#"(?i)\bs\.shopee\.vn/[A-Za-z0-9_-]{5,}"#) else {
-        return;
-    };
+    static RE_SHORT: OnceLock<Regex> = OnceLock::new();
+    static RE_BARE: OnceLock<Regex> = OnceLock::new();
+    let re_short = RE_SHORT.get_or_init(|| {
+        Regex::new(r#"(?i)https?://(?:s\.shopee\.vn|shp\.ee|vn\.shp\.ee|sandeal\.co)/[^\s"'<>\\)\]]+"#)
+            .unwrap()
+    });
+    let re_bare_shopee = RE_BARE.get_or_init(|| {
+        Regex::new(r#"(?i)\bs\.shopee\.vn/[A-Za-z0-9_-]{5,}"#).unwrap()
+    });
 
     let mut extracted = Vec::new();
     for m in re_short.find_iter(html) {
@@ -540,8 +555,8 @@ pub async fn sync_social_all_once(
         );
 
         // Với kênh chính magiamgiashopee, lấy thêm 1 trang trước đó để tăng cơ hội săn chữ ký FB/IG Reels
-        if channel_url.ends_with("/magiamgiashopee") && candidate_links.len() < 70 {
-            if let Some(before_id) = re_before
+        if channel_url.ends_with("/magiamgiashopee") && candidate_links.len() < 70
+            && let Some(before_id) = re_before
                 .as_ref()
                 .and_then(|re| re.captures(&html))
                 .and_then(|c| c.get(1))
@@ -554,9 +569,8 @@ pub async fn sync_social_all_once(
                     .timeout(Duration::from_secs(8))
                     .send()
                     .await
-                {
-                    if prev_resp.status().is_success() {
-                        if let Ok(prev_html) = prev_resp.text().await {
+                    && prev_resp.status().is_success()
+                        && let Ok(prev_html) = prev_resp.text().await {
                             collect_shortlinks_from_html(
                                 &prev_html,
                                 true,
@@ -566,10 +580,7 @@ pub async fn sync_social_all_once(
                                 70,
                             );
                         }
-                    }
-                }
             }
-        }
 
         if candidate_links.len() >= 70 {
             break;

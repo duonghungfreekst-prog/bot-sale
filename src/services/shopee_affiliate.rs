@@ -23,7 +23,7 @@ pub fn sha256_hex(data: &[u8]) -> String {
     let mut h = SHA256_H0;
     let bit_len = (data.len() as u64).wrapping_mul(8);
 
-    let mut padded = Vec::with_capacity(((data.len() + 9 + 63) / 64) * 64);
+    let mut padded = Vec::with_capacity((data.len() + 9).div_ceil(64) * 64);
     padded.extend_from_slice(data);
     padded.push(0x80);
     while (padded.len() % 64) != 56 {
@@ -33,9 +33,8 @@ pub fn sha256_hex(data: &[u8]) -> String {
 
     for chunk in padded.chunks_exact(64) {
         let mut w = [0u32; 64];
-        for i in 0..16 {
-            let idx = i * 4;
-            w[i] = u32::from_be_bytes([chunk[idx], chunk[idx + 1], chunk[idx + 2], chunk[idx + 3]]);
+        for (dst, src) in w.iter_mut().take(16).zip(chunk.chunks_exact(4)) {
+            *dst = u32::from_be_bytes([src[0], src[1], src[2], src[3]]);
         }
         for i in 16..64 {
             let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
@@ -47,14 +46,14 @@ pub fn sha256_hex(data: &[u8]) -> String {
         }
 
         let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = h;
-        for i in 0..64 {
+        for (&k_i, &w_i) in SHA256_K.iter().zip(w.iter()) {
             let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
             let ch = (e & f) ^ ((!e) & g);
             let temp1 = hh
                 .wrapping_add(s1)
                 .wrapping_add(ch)
-                .wrapping_add(SHA256_K[i])
-                .wrapping_add(w[i]);
+                .wrapping_add(k_i)
+                .wrapping_add(w_i);
             let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
             let maj = (a & b) ^ (a & c) ^ (b & c);
             let temp2 = s0.wrapping_add(maj);
@@ -201,8 +200,8 @@ pub async fn generate_open_api_short_link(
     let parsed: ShopeeGraphQlResp = serde_json::from_str(&body_text)
         .map_err(|e| format!("Lỗi giải mã JSON Shopee Open API: {}", e))?;
 
-    if let Some(errors) = parsed.errors {
-        if let Some(first) = errors.first() {
+    if let Some(errors) = parsed.errors
+        && let Some(first) = errors.first() {
             let msg = first
                 .message
                 .as_deref()
@@ -210,7 +209,6 @@ pub async fn generate_open_api_short_link(
                 .unwrap_or("Shopee Open API từ chối yêu cầu");
             return Err(msg.to_string());
         }
-    }
 
     if let Some(short_link) = parsed
         .data
