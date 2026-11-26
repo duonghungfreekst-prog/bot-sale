@@ -1040,30 +1040,7 @@ mod tests {
     #[tokio::test]
     async fn test_short_link_wrap_and_deduplicate() {
         let test_db_path = format!("target/test_short_{}.db", Uuid::new_v4().simple());
-        let config = Config {
-            telegram_token: "test".to_string(),
-            bot_username: "test_bot".to_string(),
-            database_path: test_db_path.clone(),
-            turso_url: None,
-            turso_auth_token: None,
-            default_cashback_rate: 70.0,
-            default_referral_bonus_rate: 10.0,
-            min_withdrawal_vnd: 50000.0,
-            accesstrade_deeplink_template: String::new(),
-            accesstrade_api_token: None,
-            shopee_affiliate_id: None,
-            shopee_app_id: None,
-            shopee_app_secret: None,
-            shopee_social_params: None,
-            shortlink_base_url: None,
-            admin_username: "admin".to_string(),
-            admin_password: "pass".to_string(),
-            admin_telegram_id: None,
-            port: 10000,
-            public_base_url: Some("https://bot-sale.onrender.com".to_string()),
-            telegram_webhook_secret: "secret".to_string(),
-        };
-        let db = AppDb::init(&config).await.unwrap();
+        let db = AppDb::init_local_for_test(&test_db_path).await.unwrap();
         let conn = db.conn().unwrap();
 
         let target = "https://s.shopee.vn/an_redir?origin_link=https%3A%2F%2Fshopee.vn%2Fproduct%2F1%2F2&affiliate_id=17375520550";

@@ -401,10 +401,15 @@ pub(super) async fn handle_dashboard(
             </div>"#,
             escape_html(&state.config.database_path)
         )
-    } else if !has_env_token || !has_turso {
+    } else if !has_turso {
         r#"<div class="notice-banner notice-banner--warn">
             <span>⚠️</span>
-            <span><b>Lưu ý lưu trữ:</b> Đang dùng ổ đĩa tạm thời trên Cloud. Hãy thêm <code>TURSO_DATABASE_URL</code> &amp; <code>ACCESSTRADE_API_TOKEN</code> vào Environment để lưu dữ liệu vĩnh viễn.</span>
+            <span><b>Chưa gắn Turso Cloud Database:</b> Khi chạy Hosting/Cloud bắt buộc phải thêm <code>TURSO_DATABASE_URL</code> &amp; <code>TURSO_AUTH_TOKEN</code> vào Environment (hệ thống không còn fallback về file SQLite tạm).</span>
+        </div>"#.to_string()
+    } else if !has_env_token {
+        r#"<div class="notice-banner notice-banner--warn">
+            <span>⚠️</span>
+            <span><b>Đã kết nối Turso Cloud:</b> Nên thêm cố định <code>ACCESSTRADE_API_TOKEN</code> vào Environment của Hosting để không phải nhập lại sau mỗi lần deploy.</span>
         </div>"#.to_string()
     } else {
         r#"<div class="notice-banner notice-banner--ok">

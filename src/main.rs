@@ -149,12 +149,10 @@ async fn run_backend(
     if config.public_base_url.is_some() && config.admin_password == "DealX@Admin2026" {
         warn!("⚠️ CẢNH BÁO BẢO MẬT: Đang chạy chế độ Cloud nhưng dùng ADMIN_PASSWORD mặc định — hãy đặt biến môi trường ADMIN_PASSWORD mạnh ngay!");
     }
-    if config.turso_url.is_none() || config.turso_auth_token.is_none() {
-        if config.public_base_url.is_some() {
-            warn!("⚠️ Đang dùng SQLite cục bộ ({}) trên môi trường Cloud: dữ liệu DB có thể bị reset khi container khởi động lại.", config.database_path);
-        } else {
-            info!("💾 Đang chạy chế độ PC Local — lưu dữ liệu bền vững trên file SQLite: {}", config.database_path);
-        }
+    if config.turso_url.is_some() && config.turso_auth_token.is_some() {
+        info!("☁️ Đã kích hoạt Turso Cloud Database làm kho lưu trữ bền vững (không dùng file SQLite cục bộ).");
+    } else {
+        info!("💾 Đang chạy chế độ PC Local — lưu dữ liệu bền vững trên file SQLite: {}", config.database_path);
     }
 
     // Nạp ngay cache mã thị trường đã lưu ở DB (nếu có) để bot sẵn sàng bắt voucher tức thì từ giây thứ 0

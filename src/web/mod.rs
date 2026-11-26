@@ -250,7 +250,7 @@ mod tests {
             public_base_url: Some("https://bot-sale.onrender.com".to_string()),
             telegram_webhook_secret: "valid_secret_xyz".to_string(),
         };
-        let db = AppDb::init(&config).await.unwrap();
+        let db = AppDb::init_local_for_test(test_db_path).await.unwrap();
         let accesstrade = Arc::new(AccessTradeClient::new());
         let parser = Arc::new(DealParser::with_accesstrade(accesstrade.clone()));
         AppState {

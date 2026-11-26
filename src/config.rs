@@ -248,16 +248,41 @@ pub fn resolve_pc_runtime_shortlink_base_url(
     Some(effective)
 }
 
-/// Xác định URL công khai HTTPS của dịch vụ (ưu tiên WEBHOOK_BASE_URL, sau đó RENDER_EXTERNAL_URL).
-fn resolve_public_base_url() -> Option<String> {
-    let raw = read_env_non_empty("WEBHOOK_BASE_URL")
-        .or_else(|| read_env_non_empty("RENDER_EXTERNAL_URL"))?;
-    let normalized = raw.trim_end_matches('/').to_string();
-    if normalized.starts_with("https://") {
-        Some(normalized)
-    } else {
-        None
+/// Kiểm tra biến môi trường đặc trưng của nền tảng Hosting/Cloud PaaS (Render, Railway, Fly.io).
+fn has_cloud_platform_env() -> bool {
+    read_env_non_empty("RENDER").is_some()
+        || read_env_non_empty("RAILWAY_ENVIRONMENT").is_some()
+        || read_env_non_empty("FLY_APP_NAME").is_some()
+}
+
+impl Config {
+    /// Trả về `true` khi ứng dụng đang chạy ở chế độ Hosting/Cloud thay vì PC Local.
+    pub fn is_cloud_runtime(&self) -> bool {
+        self.public_base_url.is_some() || has_cloud_platform_env()
     }
+}
+
+/// Xác định URL công khai HTTPS của dịch vụ (ưu tiên WEBHOOK_BASE_URL, PUBLIC_BASE_URL, RENDER_EXTERNAL_URL, RAILWAY_PUBLIC_DOMAIN).
+fn resolve_public_base_url() -> Option<String> {
+    if let Some(raw) = read_env_non_empty("WEBHOOK_BASE_URL")
+        .or_else(|| read_env_non_empty("PUBLIC_BASE_URL"))
+        .or_else(|| read_env_non_empty("RENDER_EXTERNAL_URL"))
+    {
+        let normalized = raw.trim_end_matches('/').to_string();
+        if normalized.starts_with("https://") {
+            return Some(normalized);
+        }
+    }
+    if let Some(domain) = read_env_non_empty("RAILWAY_PUBLIC_DOMAIN") {
+        let trimmed = domain.trim().trim_end_matches('/');
+        if trimmed.starts_with("https://") {
+            return Some(trimmed.to_string());
+        }
+        if !trimmed.is_empty() && !trimmed.starts_with("http://") {
+            return Some(format!("https://{}", trimmed));
+        }
+    }
+    None
 }
 
 /// Kiểm tra chuỗi secret token hợp lệ theo chuẩn Telegram Bot API (1-256 ký tự [A-Za-z0-9_-]).

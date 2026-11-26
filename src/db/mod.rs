@@ -15,14 +15,35 @@ pub struct AppDb {
 
 impl AppDb {
     pub async fn init(config: &Config) -> Result<Self> {
-        let db = if let (Some(url), Some(token)) = (&config.turso_url, &config.turso_auth_token) {
-            info!("Kết nối đến Turso Database từ xa: {}", url);
-            Builder::new_remote(url.clone(), token.clone())
+        let turso_creds = config
+            .turso_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .zip(
+                config
+                    .turso_auth_token
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty()),
+            );
+
+        let db = if let Some((url, token)) = turso_creds {
+            info!("☁️ Kết nối đến Turso Cloud Database từ xa: {}", url);
+            Builder::new_remote(url.to_string(), token.to_string())
                 .build()
                 .await
-                .context("Không thể khởi tạo kết nối Turso từ xa")?
+                .context("Không thể khởi tạo kết nối Turso Cloud từ xa")?
+        } else if config.is_cloud_runtime() {
+            anyhow::bail!(
+                "Đã tắt fallback SQLite cục bộ trên môi trường Hosting/Cloud: bắt buộc phải cấu hình TURSO_DATABASE_URL và TURSO_AUTH_TOKEN (từ chối tạo file `{}`).",
+                config.database_path
+            );
         } else {
-            info!("Khởi tạo LibSQL Database cục bộ tại: {}", config.database_path);
+            info!(
+                "💾 Khởi tạo LibSQL Database cục bộ (PC Local) tại: {}",
+                config.database_path
+            );
             Builder::new_local(&config.database_path)
                 .build()
                 .await
@@ -35,6 +56,20 @@ impl AppDb {
 
         app_db.migrate().await?;
 
+        Ok(app_db)
+    }
+
+    /// Hàm chỉ phục vụ `cargo test`: khởi tạo DB cục bộ/in-memory độc lập để kiểm thử Web Admin Cloud không cần mạng Turso.
+    #[cfg(test)]
+    pub async fn init_local_for_test(database_path: &str) -> Result<Self> {
+        let db = Builder::new_local(database_path)
+            .build()
+            .await
+            .context("Không thể khởi tạo LibSQL Database cục bộ cho test")?;
+        let app_db = Self {
+            db: Arc::new(db),
+        };
+        app_db.migrate().await?;
         Ok(app_db)
     }
 
@@ -266,5 +301,69 @@ impl AppDb {
 
         info!("LibSQL schema migration thành công.");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_cloud_config(db_path: &str, turso_url: Option<&str>, turso_token: Option<&str>) -> Config {
+        Config {
+            telegram_token: "test".to_string(),
+            bot_username: "vvipass_vip_bot".to_string(),
+            database_path: db_path.to_string(),
+            turso_url: turso_url.map(str::to_string),
+            turso_auth_token: turso_token.map(str::to_string),
+            default_cashback_rate: 70.0,
+            default_referral_bonus_rate: 10.0,
+            min_withdrawal_vnd: 50000.0,
+            accesstrade_deeplink_template: String::new(),
+            accesstrade_api_token: None,
+            shopee_affiliate_id: None,
+            shopee_app_id: None,
+            shopee_app_secret: None,
+            shopee_social_params: None,
+            admin_username: "admin".to_string(),
+            admin_password: "StrongPassword!123".to_string(),
+            admin_telegram_id: None,
+            port: 10000,
+            public_base_url: Some("https://hosting.example".to_string()),
+            shortlink_base_url: None,
+            telegram_webhook_secret: "secret_xyz".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cloud_mode_rejects_local_sqlite_fallback() {
+        let forbidden_path = format!(
+            "target/must_not_create_cloud_{}.db",
+            uuid::Uuid::new_v4().simple()
+        );
+        let cfg_missing_both = sample_cloud_config(&forbidden_path, None, None);
+        let err_both = AppDb::init(&cfg_missing_both)
+            .await
+            .err()
+            .expect("Cloud mode without Turso must fail instead of falling back to SQLite");
+        assert!(err_both.to_string().contains("TURSO_DATABASE_URL"));
+        assert!(!std::path::Path::new(&forbidden_path).exists());
+
+        let cfg_missing_token = sample_cloud_config(
+            &forbidden_path,
+            Some("libsql://example.turso.io"),
+            Some("   "),
+        );
+        assert!(AppDb::init(&cfg_missing_token).await.is_err());
+        assert!(!std::path::Path::new(&forbidden_path).exists());
+
+        // Chế độ PC Local (public_base_url = None) vẫn khởi tạo được SQLite cục bộ bình thường
+        let local_path = format!("target/test_pc_local_ok_{}.db", uuid::Uuid::new_v4().simple());
+        let mut cfg_local = sample_cloud_config(&local_path, None, None);
+        cfg_local.public_base_url = None;
+        if !cfg_local.is_cloud_runtime() {
+            let db_ok = AppDb::init(&cfg_local).await;
+            assert!(db_ok.is_ok());
+        }
+        let _ = std::fs::remove_file(&local_path);
     }
 }
