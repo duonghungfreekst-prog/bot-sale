@@ -172,9 +172,15 @@ func SyncOrdersOnce(appDB *db.AppDb, cfg config.Config, at *accesstrade.AccessTr
 	return summary
 }
 
-// SpawnOrderTrackerTask chạy nền đối soát đơn hàng mỗi 10 phút.
-func SpawnOrderTrackerTask(stopCh <-chan struct{}, appDB *db.AppDb, cfg config.Config, at *accesstrade.AccessTradeClient) {
+// SpawnOrderTrackerTask chạy nền đối soát đơn hàng mỗi 10 phút và hỗ trợ WaitGroup khi Graceful Shutdown.
+func SpawnOrderTrackerTask(stopCh <-chan struct{}, wg *sync.WaitGroup, appDB *db.AppDb, cfg config.Config, at *accesstrade.AccessTradeClient) {
+	if wg != nil {
+		wg.Add(1)
+	}
 	go func() {
+		if wg != nil {
+			defer wg.Done()
+		}
 		select {
 		case <-stopCh:
 			return

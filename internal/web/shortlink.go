@@ -264,10 +264,8 @@ func HandleShortlinkRedirect(state *AppState, code string) http.HandlerFunc {
 			return
 		}
 
-		if state.DB != nil && state.DB.DB != nil {
-			go func(codeCopy string) {
-				_ = db.IncrementShortLinkClick(state.DB.DB, codeCopy)
-			}(c)
+		if state.DB != nil {
+			state.DB.RecordShortLinkClickBuffered(c)
 		}
 
 		if !mobileOnly && !IsMobileBrowser(r) {

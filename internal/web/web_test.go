@@ -300,3 +300,27 @@ func TestPruneRateLimiterMapAndAssets(t *testing.T) {
 		}
 	}
 }
+
+func TestLoopbackShortlinkDoesNotSelfCloak(t *testing.T) {
+	state := makeTestState(t, "", nil)
+	state.Config.ShortlinkBaseURL = "http://127.0.0.1:18080"
+	handler := BuildRouter(state)
+
+	for _, path := range []string{"/health", "/", "/admin"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "127.0.0.1:18080"
+		req.RemoteAddr = "127.0.0.1:50001"
+		res := doReq(handler, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("loopback path %s should not self-cloak to 404, got %d", path, res.Code)
+		}
+	}
+
+	// Nhưng nếu có X-Dealx-Cloak: 1 thì vẫn phải ẩn /admin thành 404
+	reqCloak := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	reqCloak.Host = "127.0.0.1:18080"
+	reqCloak.Header.Set("X-Dealx-Cloak", "1")
+	if res := doReq(handler, reqCloak); res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when X-Dealx-Cloak: 1 is set, got %d", res.Code)
+	}
+}

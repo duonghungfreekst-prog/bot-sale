@@ -786,7 +786,11 @@ func (c *AccessTradeClient) GetApprovedCampaigns(rawToken string, forceRefresh b
 			if strings.Contains(bodyStr, "IP") || strings.Contains(bodyStr, "whitelist") {
 				return nil, fmt.Errorf("ACCESSTRADE từ chối IP (HTTP %d): Hãy kiểm tra cấu hình IP Whitelist hoặc Token API", status)
 			}
-			return nil, fmt.Errorf("ACCESSTRADE API trả về HTTP %d: %s", status, bodyStr)
+			safeBody := strings.ReplaceAll(bodyStr, token, MaskToken(token))
+			if len(safeBody) > 240 {
+				safeBody = safeBody[:240] + "..."
+			}
+			return nil, fmt.Errorf("ACCESSTRADE API trả về HTTP %d: %s", status, utils.SanitizeCRLF(safeBody))
 		}
 		parsedPage, rawCount, err := ParseApprovedCampaignsPage(bodyStr)
 		if err != nil {

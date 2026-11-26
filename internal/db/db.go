@@ -33,20 +33,23 @@ type dealsCacheEntry struct {
 }
 
 type dbRuntimeCache struct {
-	enabled          atomic.Bool
-	muSettings       sync.RWMutex
-	settings         *settingsCacheEntry
-	muDeals          sync.RWMutex
-	activeDeals      *dealsCacheEntry
-	muShort          sync.RWMutex
-	shortCodeByURL   map[string]string
-	shortLinkByCode  map[string]ShortLinkRecord
+	enabled            atomic.Bool
+	muSettings         sync.RWMutex
+	settings           *settingsCacheEntry
+	muDeals            sync.RWMutex
+	activeDeals        *dealsCacheEntry
+	muShort            sync.RWMutex
+	shortCodeByURL     map[string]string
+	shortLinkByCode    map[string]ShortLinkRecord
+	muClicks           sync.Mutex
+	pendingShortClicks map[string]int64
 }
 
 func newDBRuntimeCache(enabled bool) *dbRuntimeCache {
 	c := &dbRuntimeCache{
-		shortCodeByURL:  make(map[string]string),
-		shortLinkByCode: make(map[string]ShortLinkRecord),
+		shortCodeByURL:     make(map[string]string),
+		shortLinkByCode:    make(map[string]ShortLinkRecord),
+		pendingShortClicks: make(map[string]int64),
 	}
 	c.enabled.Store(enabled)
 	return c
@@ -589,6 +592,59 @@ func (a *AppDb) WrapURLsBatchCached(baseURLOpt string, items []WrapLinkItem) []s
 		}
 	}
 	return out
+}
+
+// RecordShortLinkClickBuffered cộng dồn lượt click trong RAM (chống spam write Turso),
+// hoặc ghi thẳng khi tắt L1 cache. Tự flush nếu số mã đang chờ vượt ngưỡng cache.
+func (a *AppDb) RecordShortLinkClickBuffered(code string) {
+	if a == nil || a.DB == nil || !IsValidShortCode(code) {
+		return
+	}
+	if !a.cache.enabled.Load() {
+		_ = IncrementShortLinkClick(a.DB, code)
+		return
+	}
+	var flushBatch map[string]int64
+	a.cache.muClicks.Lock()
+	a.cache.pendingShortClicks[code]++
+	if len(a.cache.pendingShortClicks) >= shortlinkCacheMax {
+		flushBatch = a.cache.pendingShortClicks
+		a.cache.pendingShortClicks = make(map[string]int64)
+	}
+	a.cache.muClicks.Unlock()
+
+	if len(flushBatch) > 0 {
+		go func(batch map[string]int64) {
+			if err := IncrementShortLinkClicksBatch(a.DB, batch); err != nil {
+				slog.Warn("Không thể flush batch clicks shortlink", "err", err)
+			}
+		}(flushBatch)
+	}
+}
+
+// FlushShortLinkClicks ghi toàn bộ bộ đếm click shortlink từ RAM xuống DB trong 1 transaction.
+func (a *AppDb) FlushShortLinkClicks() int {
+	if a == nil || a.DB == nil {
+		return 0
+	}
+	a.cache.muClicks.Lock()
+	if len(a.cache.pendingShortClicks) == 0 {
+		a.cache.muClicks.Unlock()
+		return 0
+	}
+	batch := a.cache.pendingShortClicks
+	a.cache.pendingShortClicks = make(map[string]int64)
+	a.cache.muClicks.Unlock()
+
+	if err := IncrementShortLinkClicksBatch(a.DB, batch); err != nil {
+		slog.Warn("Lỗi flush shortlink clicks batch xuống DB", "err", err)
+		return 0
+	}
+	total := 0
+	for _, delta := range batch {
+		total += int(delta)
+	}
+	return total
 }
 
 // CleanupExpiredSessions dọn phiên đăng nhập Admin đã hết hạn.

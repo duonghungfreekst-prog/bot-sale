@@ -1,14 +1,12 @@
 package config
 
 import (
-	"strings"
 	"testing"
 )
 
 func TestFallbackAccessTradeToken(t *testing.T) {
-	tok := resolveAccessTradeAPIToken("")
-	if !strings.HasPrefix(tok, "XcsOD") || !strings.HasSuffix(tok, "9N_6") {
-		t.Fatalf("unexpected fallback token: %q", tok)
+	if tok := resolveAccessTradeAPIToken(""); tok != "" {
+		t.Fatalf("expected empty token when env unset (no hardcoded secret), got %q", tok)
 	}
 	if got := resolveAccessTradeAPIToken("  custom-token "); got != "custom-token" {
 		t.Fatalf("expected custom-token, got %q", got)

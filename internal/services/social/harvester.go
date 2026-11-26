@@ -649,7 +649,7 @@ func SyncSocialAllOnce(client *http.Client, appDB *db.AppDb, cfg config.Config) 
 			slog.Info("🎉 [SOCIAL_HARVESTER] Đã tự động cập nhật chữ ký Shopee FB/IG",
 				"strength", shopee.SocialParamStrength(*effective),
 			)
-			notifyAdminHarvested(client, *effective, cfg)
+			notifyAdminHarvested(client, appDB, *effective, cfg)
 		}
 		cp := *effective
 		report.HarvestedParams = &cp
@@ -693,8 +693,18 @@ func SyncSocialAllOnce(client *http.Client, appDB *db.AppDb, cfg config.Config) 
 	return report
 }
 
-func notifyAdminHarvested(client *http.Client, params string, cfg config.Config) {
-	if cfg.AdminTelegramID == 0 || strings.TrimSpace(cfg.TelegramToken) == "" || strings.Contains(cfg.TelegramToken, "DEMO_TOKEN") {
+func notifyAdminHarvested(client *http.Client, appDB *db.AppDb, params string, cfg config.Config) {
+	adminID := cfg.AdminTelegramID
+	if appDB != nil {
+		if settings, err := appDB.GetSettingsMapCached(); err == nil {
+			if rawID := strings.TrimSpace(settings["admin_telegram_id"]); rawID != "" {
+				if parsedID, pErr := strconv.ParseInt(rawID, 10, 64); pErr == nil && parsedID != 0 {
+					adminID = parsedID
+				}
+			}
+		}
+	}
+	if adminID == 0 || strings.TrimSpace(cfg.TelegramToken) == "" || strings.Contains(cfg.TelegramToken, "DEMO_TOKEN") {
 		return
 	}
 	msg := fmt.Sprintf(
@@ -705,7 +715,7 @@ func notifyAdminHarvested(client *http.Client, params string, cfg config.Config)
 		utils.EscapeHTML(params),
 	)
 	payload, _ := json.Marshal(map[string]any{
-		"chat_id":    cfg.AdminTelegramID,
+		"chat_id":    adminID,
 		"text":       msg,
 		"parse_mode": "HTML",
 	})
@@ -721,7 +731,7 @@ func notifyAdminHarvested(client *http.Client, params string, cfg config.Config)
 }
 
 // SpawnSocialHarvesterTask chạy nền quét Social Harvester ngay khi khởi động và lặp mỗi 5 phút.
-func SpawnSocialHarvesterTask(stopCh <-chan struct{}, appDB *db.AppDb, cfg config.Config) {
+func SpawnSocialHarvesterTask(stopCh <-chan struct{}, wg *sync.WaitGroup, appDB *db.AppDb, cfg config.Config) {
 	statusMu.Lock()
 	socialStatus.IsRunning = true
 	socialStatus.IsSyncing = true
@@ -738,7 +748,13 @@ func SpawnSocialHarvesterTask(stopCh <-chan struct{}, appDB *db.AppDb, cfg confi
 		},
 	}
 
+	if wg != nil {
+		wg.Add(1)
+	}
 	go func() {
+		if wg != nil {
+			defer wg.Done()
+		}
 		select {
 		case <-stopCh:
 			return

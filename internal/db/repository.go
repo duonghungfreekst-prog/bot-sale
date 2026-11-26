@@ -874,6 +874,34 @@ func IncrementShortLinkClick(db *sql.DB, code string) error {
 	return err
 }
 
+// IncrementShortLinkClicksBatch cộng dồn clicks_count cho nhiều shortlink trong 1 transaction duy nhất.
+func IncrementShortLinkClicksBatch(db *sql.DB, counts map[string]int64) error {
+	if len(counts) == 0 {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare("UPDATE short_links SET clicks_count = clicks_count + ?1 WHERE code = ?2")
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer func() { _ = stmt.Close() }()
+
+	for code, delta := range counts {
+		if delta <= 0 || !IsValidShortCode(code) {
+			continue
+		}
+		if _, err := stmt.Exec(delta, code); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // WrapURLIfPublic bọc URL nếu baseURLOpt là http(s):// hợp lệ (dùng trực tiếp DB không cache).
 func WrapURLIfPublic(db *sql.DB, baseURLOpt, targetURL, title, platform string) string {
 	trimmed := strings.TrimSpace(targetURL)

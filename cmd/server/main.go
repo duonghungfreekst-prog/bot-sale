@@ -119,8 +119,8 @@ func main() {
 	}
 
 	// Chạy ngầm đối soát đơn hàng (mỗi 10 phút) & Social Harvester FB/IG Reels (mỗi 5 phút)
-	orders.SpawnOrderTrackerTask(ctx.Done(), appDB, cfg, atClient)
-	social.SpawnSocialHarvesterTask(ctx.Done(), appDB, cfg)
+	orders.SpawnOrderTrackerTask(ctx.Done(), &bgWG, appDB, cfg, atClient)
+	social.SpawnSocialHarvesterTask(ctx.Done(), &bgWG, appDB, cfg)
 
 	botErrCh := make(chan error, 1)
 	if strings.TrimSpace(cfg.TelegramToken) == "" || strings.Contains(cfg.TelegramToken, "DEMO_TOKEN") {
@@ -161,6 +161,9 @@ func main() {
 		slog.Warn("Cưỡng chế đóng HTTP connections còn sót sau 5s", "err", err)
 	}
 	bgWG.Wait()
+	if flushed := appDB.FlushShortLinkClicks(); flushed > 0 {
+		slog.Info("💾 Đã lưu lượt click shortlink còn lại trước khi thoát", "clicks", flushed)
+	}
 	slog.Info("✅ Hệ thống đã dừng sạch sẽ.")
 }
 
@@ -217,6 +220,10 @@ func runWarmupLoop(ctx context.Context, appDB *db.AppDb, cfg config.Config, atCl
 			}
 		} else {
 			slog.Warn("⚠️ Chưa tìm thấy ACCESSTRADE_API_TOKEN trong Environment hoặc DB.")
+		}
+
+		if flushed := appDB.FlushShortLinkClicks(); flushed > 0 {
+			slog.Info("💾 Đã flush batch clicks shortlink lên Database", "clicks", flushed)
 		}
 
 		if cycle%360 == 0 {

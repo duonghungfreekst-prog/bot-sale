@@ -217,3 +217,40 @@ func TestTrackedOrderUpsertIdempotentAndSession(t *testing.T) {
 		t.Fatalf("session should be deleted after logout")
 	}
 }
+
+func TestBufferedShortLinkClickFlush(t *testing.T) {
+	appDB, err := InitLocalForTest(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = appDB.Close() }()
+	appDB.SetCacheEnabledForTest(true)
+
+	wrapped := appDB.WrapURLCached("https://go.example.com", "https://shopee.vn/product/9/10", "SP Click", "Shopee")
+	parts := strings.Split(wrapped, "/")
+	code := parts[len(parts)-1]
+
+	appDB.RecordShortLinkClickBuffered(code)
+	appDB.RecordShortLinkClickBuffered(code)
+	appDB.RecordShortLinkClickBuffered(code)
+
+	var beforeFlush int64
+	if err := appDB.DB.QueryRow("SELECT clicks_count FROM short_links WHERE code = ?1", code).Scan(&beforeFlush); err != nil {
+		t.Fatal(err)
+	}
+	if beforeFlush != 0 {
+		t.Fatalf("expected 0 DB writes before flush, got %d", beforeFlush)
+	}
+
+	flushed := appDB.FlushShortLinkClicks()
+	if flushed != 3 {
+		t.Fatalf("expected flushed=3, got %d", flushed)
+	}
+	var afterFlush int64
+	if err := appDB.DB.QueryRow("SELECT clicks_count FROM short_links WHERE code = ?1", code).Scan(&afterFlush); err != nil {
+		t.Fatal(err)
+	}
+	if afterFlush != 3 {
+		t.Fatalf("expected clicks_count=3 after flush, got %d", afterFlush)
+	}
+}

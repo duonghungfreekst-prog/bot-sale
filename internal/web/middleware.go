@@ -329,7 +329,7 @@ func ShortlinkCloakMiddleware(state *AppState) func(http.Handler) http.Handler {
 					shortHost := ExtractHostOnly(shortBase)
 					if strings.HasSuffix(reqHost, ".trycloudflare.com") && publicHost == "" {
 						isCloakedDomain = true
-					} else if shortHost != "" {
+					} else if shortHost != "" && shortHost != "127.0.0.1" && shortHost != "localhost" && shortHost != "::1" {
 						originSub := "origin." + shortHost
 						if (shortHost == reqHost || reqHost == originSub) &&
 							publicHost != shortHost &&

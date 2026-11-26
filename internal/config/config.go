@@ -74,14 +74,7 @@ func readEnvNonEmpty(key string) string {
 }
 
 func resolveAccessTradeAPIToken(envOverride string) string {
-	if tok := strings.TrimSpace(envOverride); tok != "" {
-		return tok
-	}
-	defaultATBytes := []byte{
-		88, 99, 115, 79, 68, 121, 111, 57, 84, 115, 111, 55, 79, 54, 52, 48, 81, 69, 100, 116,
-		112, 115, 70, 45, 107, 56, 71, 95, 57, 78, 95, 54,
-	}
-	return string(defaultATBytes)
+	return strings.TrimSpace(envOverride)
 }
 
 // IsShortlinkDisabledValue kiểm tra giá trị có phải lệnh tắt bọc link hay không.
@@ -216,15 +209,7 @@ func resolveWebhookSecret(telegramToken, adminPassword string) string {
 func FromEnv() Config {
 	loadDotEnvIfExists()
 
-	defaultTokenBytes := []byte{
-		56, 56, 51, 49, 48, 56, 53, 56, 50, 54, 58, 65, 65, 71, 85, 90, 104, 100, 87, 51,
-		74, 52, 86, 107, 54, 116, 113, 53, 66, 89, 100, 87, 102, 81, 50, 116, 90, 50, 122,
-		72, 70, 80, 65, 51, 74, 119,
-	}
 	telegramToken := readEnvNonEmpty("TELEGRAM_BOT_TOKEN")
-	if telegramToken == "" {
-		telegramToken = string(defaultTokenBytes)
-	}
 
 	botUsername := readEnvNonEmpty("BOT_USERNAME")
 	if botUsername == "" {
