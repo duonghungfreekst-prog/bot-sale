@@ -2,6 +2,7 @@ package social
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -521,8 +522,13 @@ func currentVNTimestampStr() string {
 
 // SyncSocialAllOnce chạy 1 chu kỳ thu thập chữ ký FB/IG Reels và mã Shopee công khai.
 func SyncSocialAllOnce(client *http.Client, appDB *db.AppDb, cfg config.Config) SocialSyncReport {
+	return SyncSocialAllOnceWithContext(context.Background(), client, appDB, cfg)
+}
+
+// SyncSocialAllOnceWithContext chạy 1 chu kỳ thu thập có hỗ trợ hủy tức thì qua context khi Graceful Shutdown.
+func SyncSocialAllOnceWithContext(ctx context.Context, client *http.Client, appDB *db.AppDb, cfg config.Config) SocialSyncReport {
 	var report SocialSyncReport
-	if appDB == nil || appDB.DB == nil {
+	if ctx.Err() != nil || appDB == nil || appDB.DB == nil {
 		return report
 	}
 
@@ -539,7 +545,10 @@ func SyncSocialAllOnce(client *http.Client, appDB *db.AppDb, cfg config.Config) 
 
 	// 1. Quét Telegram public channel HTML
 	for _, channelURL := range DefaultChannels {
-		req, err := http.NewRequest(http.MethodGet, channelURL, nil)
+		if ctx.Err() != nil {
+			return report
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, channelURL, nil)
 		if err != nil {
 			continue
 		}
@@ -556,10 +565,10 @@ func SyncSocialAllOnce(client *http.Client, appDB *db.AppDb, cfg config.Config) 
 		html := string(bodyBytes)
 		CollectShortlinksFromHTML(html, true, seenURLs, &candidateLinks, &scannedBest, 70)
 
-		if strings.HasSuffix(channelURL, "/magiamgiashopee") && len(candidateLinks) < 70 {
+		if strings.HasSuffix(channelURL, "/magiamgiashopee") && len(candidateLinks) < 70 && ctx.Err() == nil {
 			if bm := reBeforePag.FindStringSubmatch(html); len(bm) > 1 {
 				prevURL := channelURL + "?before=" + bm[1]
-				if pReq, pErr := http.NewRequest(http.MethodGet, prevURL, nil); pErr == nil {
+				if pReq, pErr := http.NewRequestWithContext(ctx, http.MethodGet, prevURL, nil); pErr == nil {
 					pReq.Header.Set("User-Agent", MobileUA)
 					if pResp, pDoErr := client.Do(pReq); pDoErr == nil {
 						pBytes, pReadErr := io.ReadAll(io.LimitReader(pResp.Body, 2*1024*1024))
@@ -581,7 +590,10 @@ func SyncSocialAllOnce(client *http.Client, appDB *db.AppDb, cfg config.Config) 
 	var harvestedDeals []db.NewDealInput
 	seenDealCodes := make(map[string]struct{})
 	for _, pageURL := range DefaultWebDealPages {
-		req, err := http.NewRequest(http.MethodGet, pageURL, nil)
+		if ctx.Err() != nil {
+			return report
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
 		if err != nil {
 			continue
 		}
@@ -623,11 +635,14 @@ func SyncSocialAllOnce(client *http.Client, appDB *db.AppDb, cfg config.Config) 
 			results := make([][]string, len(chunk))
 			var wg sync.WaitGroup
 			for i, link := range chunk {
-				wg.Add(1)
-				go func(idx int, target string) {
-					defer wg.Done()
+				if ctx.Err() != nil {
+					break
+				}
+				idx := i
+				target := link
+				utils.SafeGo(&wg, "social.probe_worker", func() {
 					results[idx] = ProbeURLForSocialCandidates(client, target, 3)
-				}(i, link)
+				})
 			}
 			wg.Wait()
 			for _, cands := range results {
@@ -745,13 +760,13 @@ func SpawnSocialHarvesterTask(stopCh <-chan struct{}, wg *sync.WaitGroup, appDB 
 		return nil
 	})
 
-	if wg != nil {
-		wg.Add(1)
-	}
-	go func() {
-		if wg != nil {
-			defer wg.Done()
-		}
+	taskCtx, cancel := context.WithCancel(context.Background())
+	utils.SafeGo(nil, "social.stop_watcher", func() {
+		<-stopCh
+		cancel()
+	})
+	utils.SafeGo(wg, "social.harvester_loop", func() {
+		defer cancel()
 		select {
 		case <-stopCh:
 			return
@@ -762,11 +777,12 @@ func SpawnSocialHarvesterTask(stopCh <-chan struct{}, wg *sync.WaitGroup, appDB 
 		defer ticker.Stop()
 
 		runOnce := func() {
+			defer utils.RecoverPanic("social.SyncSocialAllOnce")
 			statusMu.Lock()
 			socialStatus.IsSyncing = true
 			statusMu.Unlock()
-			report := SyncSocialAllOnce(client, appDB, cfg)
-			if report.HarvestedParams == nil && report.DealsFound == 0 {
+			report := SyncSocialAllOnceWithContext(taskCtx, client, appDB, cfg)
+			if report.HarvestedParams == nil && report.DealsFound == 0 && taskCtx.Err() == nil {
 				slog.Warn("⚠️ [SOCIAL_HARVESTER] Chưa tìm thấy chữ ký hoặc mã FB/IG mới trong chu kỳ này.")
 			}
 		}
@@ -780,5 +796,5 @@ func SpawnSocialHarvesterTask(stopCh <-chan struct{}, wg *sync.WaitGroup, appDB 
 				runOnce()
 			}
 		}
-	}()
+	})
 }

@@ -3,6 +3,7 @@ package web
 import (
 	"fmt"
 	"math"
+	"net/http"
 	"strings"
 
 	salehunterassets "salehunter-go"
@@ -1206,7 +1207,7 @@ const adminCSS = `<style>
         }
     </style>`
 
-const adminScript = `<script>
+const adminJSContent = `
         const TAB_META = {
             overview: {
                 title: 'Tổng Quan Hệ Thống',
@@ -1276,6 +1277,16 @@ const adminScript = `<script>
 
         window.addEventListener('DOMContentLoaded', () => {
             syncThemeButton();
+            const themeBtn = document.getElementById('theme-toggle-btn');
+            if (themeBtn) {
+                themeBtn.addEventListener('click', toggleTheme);
+            }
+            document.querySelectorAll('.tab-btn[data-tab]').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const tabId = btn.getAttribute('data-tab');
+                    if (tabId) switchTab(tabId);
+                });
+            });
             const csrfMeta = document.querySelector('meta[name="csrf-token"]');
             const csrfVal = csrfMeta ? csrfMeta.getAttribute('content') || '' : '';
             if (csrfVal) {
@@ -1346,7 +1357,15 @@ const adminScript = `<script>
                 refreshingOverview = false;
             }
         }, 30000);
-    </script>`
+`
+
+// HandleAdminJS phục vụ `/assets/admin.js` tách khỏi inline script để bật Strict CSP.
+func HandleAdminJS(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(adminJSContent))
+}
 
 func renderPlatformStatus(label string, matched *accesstrade.CampaignPair, manualID, backupNote string) string {
 	if strings.TrimSpace(manualID) != "" {
@@ -1892,15 +1911,7 @@ func renderDashboardDocument(d dashboardRenderData) string {
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <meta name="csrf-token" content="%s">
-    <script>
-        (function () {
-            try {
-                if (localStorage.getItem('dealx-theme') === 'dark') {
-                    document.documentElement.setAttribute('data-theme', 'dark');
-                }
-            } catch (e) {}
-        })();
-    </script>
+    <script src="/assets/theme.js"></script>
     %s
 </head>
 <body>
@@ -1924,19 +1935,19 @@ func renderDashboardDocument(d dashboardRenderData) string {
             <div>
                 <div class="sidebar__section-label">Điều Hướng Hệ Thống</div>
                 <nav class="tab-nav" aria-label="Danh mục quản trị">
-                    <button type="button" onclick="switchTab('overview')" id="tab-btn-overview" class="tab-btn active" aria-current="page">
+                    <button type="button" data-tab="overview" id="tab-btn-overview" class="tab-btn active" aria-current="page">
                         <span class="tab-btn__icon" aria-hidden="true"><svg class="ico"><use href="#ico-overview"/></svg></span>
                         <span>Tổng Quan</span>
                     </button>
-                    <button type="button" onclick="switchTab('platforms')" id="tab-btn-platforms" class="tab-btn">
+                    <button type="button" data-tab="platforms" id="tab-btn-platforms" class="tab-btn">
                         <span class="tab-btn__icon" aria-hidden="true"><svg class="ico"><use href="#ico-platforms"/></svg></span>
                         <span>Kết Nối Sàn &amp; API</span>
                     </button>
-                    <button type="button" onclick="switchTab('vouchers')" id="tab-btn-vouchers" class="tab-btn">
+                    <button type="button" data-tab="vouchers" id="tab-btn-vouchers" class="tab-btn">
                         <span class="tab-btn__icon" aria-hidden="true"><svg class="ico"><use href="#ico-vouchers"/></svg></span>
                         <span>Kho Voucher Thị Trường</span>
                     </button>
-                    <button type="button" onclick="switchTab('orders')" id="tab-btn-orders" class="tab-btn">
+                    <button type="button" data-tab="orders" id="tab-btn-orders" class="tab-btn">
                         <span class="tab-btn__icon" aria-hidden="true"><svg class="ico"><use href="#ico-orders"/></svg></span>
                         <span>Báo Đơn &amp; Doanh Thu</span>
                     </button>
@@ -1975,7 +1986,7 @@ func renderDashboardDocument(d dashboardRenderData) string {
                         <span>Admin: <strong>%s</strong></span>
                     </div>
                     %s
-                    <button type="button" id="theme-toggle-btn" class="theme-btn" onclick="toggleTheme()" aria-label="Chuyển đổi giao diện Sáng/Tối">
+                    <button type="button" id="theme-toggle-btn" class="theme-btn" aria-label="Chuyển đổi giao diện Sáng/Tối">
                         <svg class="ico ico--xs" aria-hidden="true"><use id="theme-ico-use" href="#ico-moon"/></svg>
                         <span id="theme-btn-text">Tối</span>
                     </button>
@@ -2302,7 +2313,7 @@ func renderDashboardDocument(d dashboardRenderData) string {
         </div>
     </div>
 
-    `+adminScript+`
+    <script src="/assets/admin.js" defer></script>
     <script src="/assets/home.js" defer></script>
 </body>
 </html>`,

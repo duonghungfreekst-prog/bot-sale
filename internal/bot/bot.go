@@ -12,6 +12,7 @@ import (
 	"salehunter-go/internal/db"
 	"salehunter-go/internal/services/accesstrade"
 	"salehunter-go/internal/services/parser"
+	"salehunter-go/internal/utils"
 )
 
 const botDisplayName = "Thế Giới Siêu Sale"
@@ -63,6 +64,7 @@ func RunBot(
 				<-sem
 				wg.Done()
 			}()
+			defer utils.RecoverPanic("bot.dispatchUpdate")
 			opCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 			defer cancel()
 

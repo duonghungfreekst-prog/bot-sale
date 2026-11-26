@@ -14,6 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"salehunter-go/internal/config"
+	"salehunter-go/internal/utils"
 )
 
 const (
@@ -43,6 +44,7 @@ type dbRuntimeCache struct {
 	shortLinkByCode    map[string]ShortLinkRecord
 	muClicks           sync.Mutex
 	pendingShortClicks map[string]int64
+	flushingClicks     atomic.Bool
 }
 
 func newDBRuntimeCache(enabled bool) *dbRuntimeCache {
@@ -315,6 +317,14 @@ func (a *AppDb) migrate() error {
 			);`,
 			desc: "tracked_orders",
 		},
+		{
+			sql: `CREATE TABLE IF NOT EXISTS login_rate_limits (
+				ip TEXT PRIMARY KEY,
+				attempts INTEGER NOT NULL,
+				last_attempt INTEGER NOT NULL
+			);`,
+			desc: "login_rate_limits",
+		},
 	}
 
 	for _, st := range stmts {
@@ -334,6 +344,7 @@ func (a *AppDb) migrate() error {
 		"CREATE INDEX IF NOT EXISTS idx_clicks_platform ON clicks(platform);",
 		"CREATE INDEX IF NOT EXISTS idx_deals_active_exclusive ON deals(is_active, is_exclusive DESC, id DESC);",
 		"CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);",
+		"CREATE INDEX IF NOT EXISTS idx_login_rate_limits_last ON login_rate_limits(last_attempt);",
 	}
 	for _, idxSQL := range indexes {
 		_, _ = a.DB.Exec(idxSQL)
@@ -594,6 +605,24 @@ func (a *AppDb) WrapURLsBatchCached(baseURLOpt string, items []WrapLinkItem) []s
 	return out
 }
 
+func (a *AppDb) restoreShortLinkClicks(batch map[string]int64) {
+	if len(batch) == 0 {
+		return
+	}
+	maxKeep := shortlinkCacheMax * 4
+	a.cache.muClicks.Lock()
+	for code, delta := range batch {
+		if delta <= 0 {
+			continue
+		}
+		if _, exists := a.cache.pendingShortClicks[code]; !exists && len(a.cache.pendingShortClicks) >= maxKeep {
+			continue
+		}
+		a.cache.pendingShortClicks[code] += delta
+	}
+	a.cache.muClicks.Unlock()
+}
+
 // RecordShortLinkClickBuffered cộng dồn lượt click trong RAM (chống spam write Turso),
 // hoặc ghi thẳng khi tắt L1 cache. Tự flush nếu số mã đang chờ vượt ngưỡng cache.
 func (a *AppDb) RecordShortLinkClickBuffered(code string) {
@@ -607,22 +636,25 @@ func (a *AppDb) RecordShortLinkClickBuffered(code string) {
 	var flushBatch map[string]int64
 	a.cache.muClicks.Lock()
 	a.cache.pendingShortClicks[code]++
-	if len(a.cache.pendingShortClicks) >= shortlinkCacheMax {
+	if len(a.cache.pendingShortClicks) >= shortlinkCacheMax && a.cache.flushingClicks.CompareAndSwap(false, true) {
 		flushBatch = a.cache.pendingShortClicks
 		a.cache.pendingShortClicks = make(map[string]int64)
 	}
 	a.cache.muClicks.Unlock()
 
 	if len(flushBatch) > 0 {
-		go func(batch map[string]int64) {
-			if err := IncrementShortLinkClicksBatch(a.DB, batch); err != nil {
-				slog.Warn("Không thể flush batch clicks shortlink", "err", err)
+		utils.SafeGo(nil, "db.flush_shortlink_clicks", func() {
+			defer a.cache.flushingClicks.Store(false)
+			if err := IncrementShortLinkClicksBatch(a.DB, flushBatch); err != nil {
+				slog.Warn("Không thể flush batch clicks shortlink, sẽ giữ lại để thử lần sau", "err", err)
+				a.restoreShortLinkClicks(flushBatch)
 			}
-		}(flushBatch)
+		})
 	}
 }
 
 // FlushShortLinkClicks ghi toàn bộ bộ đếm click shortlink từ RAM xuống DB trong 1 transaction.
+// Nếu DB tạm thời lỗi mạng, tự động hoàn trả batch về RAM để không mất số liệu.
 func (a *AppDb) FlushShortLinkClicks() int {
 	if a == nil || a.DB == nil {
 		return 0
@@ -637,7 +669,8 @@ func (a *AppDb) FlushShortLinkClicks() int {
 	a.cache.muClicks.Unlock()
 
 	if err := IncrementShortLinkClicksBatch(a.DB, batch); err != nil {
-		slog.Warn("Lỗi flush shortlink clicks batch xuống DB", "err", err)
+		slog.Warn("Lỗi flush shortlink clicks batch xuống DB, hoàn trả vào bộ đệm để thử lại", "err", err)
+		a.restoreShortLinkClicks(batch)
 		return 0
 	}
 	total := 0
@@ -650,4 +683,12 @@ func (a *AppDb) FlushShortLinkClicks() int {
 // CleanupExpiredSessions dọn phiên đăng nhập Admin đã hết hạn.
 func (a *AppDb) CleanupExpiredSessions() (int64, error) {
 	return CleanupExpiredAdminSessions(a.DB, time.Now().UTC().Unix())
+}
+
+// CleanupExpiredLoginRateLimits dọn các bản ghi khóa brute-force quá hạn 15 phút trong DB.
+func (a *AppDb) CleanupExpiredLoginRateLimits() (int64, error) {
+	if a == nil || a.DB == nil {
+		return 0, nil
+	}
+	return CleanupExpiredLoginRateLimits(a.DB, time.Now().UTC().Unix()-900)
 }

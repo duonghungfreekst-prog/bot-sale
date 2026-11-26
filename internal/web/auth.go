@@ -1,7 +1,8 @@
 package web
 
 import (
-	"crypto/subtle"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,11 +11,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
 	"salehunter-go/internal/db"
 	"salehunter-go/internal/utils"
 )
+
+func generateSecureHexToken(numBytes int) string {
+	b := make([]byte, numBytes)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
 
 // ExtractCookieValue đọc giá trị cookie theo tên từ HTTP Request.
 func ExtractCookieValue(r *http.Request, name string) string {
@@ -40,11 +47,16 @@ func ExtractSessionToken(r *http.Request) string {
 	return ExtractCookieValue(r, "dealx_session")
 }
 
-// ExtractClientIP lấy địa chỉ IP thực của client an toàn trước giả mạo Proxy Header.
-// Chỉ tin Cf-Connecting-Ip khi đi kèm Cf-Ray; duyệt X-Forwarded-For từ phải sang trái để
-// chọn IP public gần proxy tin cậy nhất thay vì phần tử đầu do attacker tự chèn.
+// ExtractClientIP lấy địa chỉ IP thực của client mặc định không tin header Cloudflare (an toàn cho Render/Fly/VPS).
 func ExtractClientIP(r *http.Request) string {
-	if strings.TrimSpace(r.Header.Get("Cf-Ray")) != "" {
+	return ExtractClientIPWithTrust(r, false)
+}
+
+// ExtractClientIPWithTrust lấy địa chỉ IP thực của client an toàn trước giả mạo Proxy Header.
+// Chỉ tin Cf-Connecting-Ip khi bật TRUST_CLOUDFLARE_HEADERS=1 VÀ có kèm Cf-Ray hợp lệ.
+// Mặc định duyệt X-Forwarded-For từ phải sang trái để chọn IP public sát proxy nhất.
+func ExtractClientIPWithTrust(r *http.Request, trustCloudflare bool) string {
+	if trustCloudflare && strings.TrimSpace(r.Header.Get("Cf-Ray")) != "" {
 		if cfIP := strings.TrimSpace(r.Header.Get("Cf-Connecting-Ip")); cfIP != "" {
 			if parsed := net.ParseIP(strings.Trim(cfIP, "[]")); parsed != nil {
 				return parsed.String()
@@ -120,6 +132,36 @@ func setNoStoreHeaders(w http.ResponseWriter) {
 	h.Set("X-Robots-Tag", "noindex, nofollow")
 }
 
+func cacheAdminSession(state *AppState, token string, expiresAt int64) {
+	nowTS := time.Now().Unix()
+	state.SessionsMu.Lock()
+	defer state.SessionsMu.Unlock()
+
+	if len(state.Sessions) >= 100 {
+		for k, exp := range state.Sessions {
+			if exp <= nowTS {
+				delete(state.Sessions, k)
+			}
+		}
+	}
+	if len(state.Sessions) >= 100 {
+		var oldestKey string
+		var oldestExp int64
+		first := true
+		for k, exp := range state.Sessions {
+			if first || exp < oldestExp {
+				oldestKey = k
+				oldestExp = exp
+				first = false
+			}
+		}
+		if oldestKey != "" {
+			delete(state.Sessions, oldestKey)
+		}
+	}
+	state.Sessions[token] = expiresAt
+}
+
 // IsAuthenticated kiểm tra quyền Admin từ session hợp lệ hoặc truy cập localhost PC trusted.
 func IsAuthenticated(state *AppState, r *http.Request) bool {
 	if IsTrustedLocalAdminHeader(state, r) {
@@ -130,21 +172,22 @@ func IsAuthenticated(state *AppState, r *http.Request) bool {
 		return false
 	}
 
+	nowTS := time.Now().Unix()
 	state.SessionsMu.RLock()
-	_, inRAM := state.Sessions[token]
+	exp, inRAM := state.Sessions[token]
 	state.SessionsMu.RUnlock()
 	if inRAM {
-		return true
+		if exp > nowTS {
+			return true
+		}
+		state.SessionsMu.Lock()
+		delete(state.Sessions, token)
+		state.SessionsMu.Unlock()
 	}
 
 	if state.DB != nil && state.DB.DB != nil {
 		if ok, err := db.VerifyAdminSession(state.DB.DB, token); err == nil && ok {
-			state.SessionsMu.Lock()
-			if len(state.Sessions) >= 100 {
-				state.Sessions = make(map[string]struct{})
-			}
-			state.Sessions[token] = struct{}{}
-			state.SessionsMu.Unlock()
+			cacheAdminSession(state, token, nowTS+3600)
 			return true
 		}
 	}
@@ -167,15 +210,7 @@ func HandleLoginPage(state *AppState) http.HandlerFunc {
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <script>
-        (function () {
-            try {
-                if (localStorage.getItem('dealx-theme') === 'dark') {
-                    document.documentElement.setAttribute('data-theme', 'dark');
-                }
-            } catch (e) {}
-        })();
-    </script>
+    <script src="/assets/theme.js"></script>
     <style>
         :root {
             --bg-base: #F4F6F9;
@@ -322,29 +357,6 @@ func HandleLoginPage(state *AppState) http.HandlerFunc {
             🛡️ Bảo mật 1 tài khoản Admin duy nhất · Đăng ký bị vô hiệu hoá
         </div>
     </main>
-    <script>
-        (function () {
-            const btn = document.getElementById('login-theme-btn');
-            function syncLabel() {
-                const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-                if (btn) btn.textContent = isDark ? '☀️ Sáng' : '🌙 Tối';
-            }
-            syncLabel();
-            if (btn) {
-                btn.addEventListener('click', function () {
-                    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-                    const next = isDark ? 'light' : 'dark';
-                    if (next === 'dark') {
-                        document.documentElement.setAttribute('data-theme', 'dark');
-                    } else {
-                        document.documentElement.removeAttribute('data-theme');
-                    }
-                    try { localStorage.setItem('dealx-theme', next); } catch (e) {}
-                    syncLabel();
-                });
-            }
-        })();
-    </script>
 </body>
 </html>`
 		setNoStoreHeaders(w)
@@ -374,9 +386,7 @@ func renderAuthNoticePage(title, heading, messageHTML, btnLabel string, isLock b
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>%s</title>
-    <script>
-        (function () { try { if (localStorage.getItem('dealx-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (e) {} })();
-    </script>
+    <script src="/assets/theme.js"></script>
     <style>
         :root {
             --bg-base: #F4F6F9; --bg-card: #FFFFFF; --border: #E2E8F0; --text: #0F172A; --muted: #475569;
@@ -448,13 +458,25 @@ func HandleLoginSubmit(state *AppState) http.HandlerFunc {
 		username := r.PostFormValue("username")
 		password := r.PostFormValue("password")
 
-		clientIP := ExtractClientIP(r)
+		clientIP := ExtractClientIPWithTrust(r, state.Config.TrustCloudflareHeaders)
 		nowTS := time.Now().Unix()
 
 		state.LoginLimiterMu.RLock()
 		entry, exists := state.LoginLimiter[clientIP]
 		state.LoginLimiterMu.RUnlock()
-		if exists && entry.Count >= 5 && (nowTS-entry.LastTS) < 900 {
+		isLocked := exists && entry.Count >= 5 && (nowTS-entry.LastTS) < 900
+
+		// Kiểm tra bổ sung từ DB để trạng thái khóa Brute-force sống sót qua restart & đồng bộ đa instance
+		if !isLocked && state.DB != nil && state.DB.DB != nil {
+			if dbCount, dbLast, err := db.GetLoginRateLimit(state.DB.DB, clientIP); err == nil && dbCount >= 5 && (nowTS-dbLast) < 900 {
+				isLocked = true
+				state.LoginLimiterMu.Lock()
+				state.LoginLimiter[clientIP] = RateEntry{Count: dbCount, LastTS: dbLast}
+				state.LoginLimiterMu.Unlock()
+			}
+		}
+
+		if isLocked {
 			lockedHTML := renderAuthNoticePage(
 				"Tạm Khóa Đăng Nhập",
 				"Tạm Khóa Do Nhập Sai Nhiều Lần",
@@ -469,21 +491,19 @@ func HandleLoginSubmit(state *AppState) http.HandlerFunc {
 			return
 		}
 
-		userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(state.Config.AdminUsername)) == 1
-		passMatch := subtle.ConstantTimeCompare([]byte(password), []byte(state.Config.AdminPassword)) == 1
+		userMatch := utils.ConstantTimeEqualHash(username, state.Config.AdminUsername)
+		passMatch := utils.ConstantTimeEqualHash(password, state.Config.AdminPassword)
 
 		if userMatch && passMatch {
 			state.LoginLimiterMu.Lock()
 			delete(state.LoginLimiter, clientIP)
 			state.LoginLimiterMu.Unlock()
-
-			token := uuid.NewString()
-			state.SessionsMu.Lock()
-			if len(state.Sessions) >= 100 {
-				state.Sessions = make(map[string]struct{})
+			if state.DB != nil && state.DB.DB != nil {
+				_ = db.ClearLoginRateLimit(state.DB.DB, clientIP)
 			}
-			state.Sessions[token] = struct{}{}
-			state.SessionsMu.Unlock()
+
+			token := generateSecureHexToken(32) // 256-bit cryptographically secure token
+			cacheAdminSession(state, token, nowTS+86400)
 
 			if state.DB != nil && state.DB.DB != nil {
 				if err := db.CreateAdminSession(state.DB.DB, token, 86400); err != nil {
@@ -503,6 +523,13 @@ func HandleLoginSubmit(state *AppState) http.HandlerFunc {
 			return
 		}
 
+		var dbAttempts uint32
+		if state.DB != nil && state.DB.DB != nil {
+			if n, err := db.RecordLoginFailure(state.DB.DB, clientIP, nowTS, 900); err == nil {
+				dbAttempts = n
+			}
+		}
+
 		state.LoginLimiterMu.Lock()
 		PruneRateLimiterMap(state.LoginLimiter, nowTS, 900, 2000)
 		cur := state.LoginLimiter[clientIP]
@@ -511,6 +538,9 @@ func HandleLoginSubmit(state *AppState) http.HandlerFunc {
 		} else {
 			cur.Count++
 			cur.LastTS = nowTS
+		}
+		if dbAttempts > cur.Count {
+			cur.Count = dbAttempts
 		}
 		state.LoginLimiter[clientIP] = cur
 		state.LoginLimiterMu.Unlock()
@@ -524,7 +554,11 @@ func HandleLoginSubmit(state *AppState) http.HandlerFunc {
 			"ip", utils.SanitizeCRLF(clientIP),
 			"attempts", cur.Count,
 		)
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case <-time.After(500 * time.Millisecond):
+		case <-r.Context().Done():
+			return
+		}
 
 		errHTML := renderAuthNoticePage(
 			"Đăng Nhập Thất Bại",

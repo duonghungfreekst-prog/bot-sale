@@ -2,38 +2,45 @@ package config
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
-	"math/bits"
 	"os"
 	"strconv"
 	"strings"
 )
 
-const DefaultShortlinkBaseURL = "https://thegioisieusale.click"
+const (
+	DefaultShortlinkBaseURL = "https://thegioisieusale.click"
+	DefaultAdminPassword    = "DealX@Admin2026"
+	MinCloudAdminPassLength = 12
+)
 
 // Config giữ toàn bộ cấu hình ứng dụng nạp từ biến môi trường.
 type Config struct {
-	TelegramToken              string
-	BotUsername                string
-	DatabasePath               string
-	TursoURL                   string
-	TursoAuthToken             string
-	DefaultCashbackRate        float64
-	DefaultReferralBonusRate   float64
-	MinWithdrawalVND           float64
+	TelegramToken               string
+	BotUsername                 string
+	DatabasePath                string
+	TursoURL                    string
+	TursoAuthToken              string
+	DefaultCashbackRate         float64
+	DefaultReferralBonusRate    float64
+	MinWithdrawalVND            float64
 	AccessTradeDeeplinkTemplate string
-	AccessTradeAPIToken        string
-	ShopeeAffiliateID          string
-	ShopeeAppID                string
-	ShopeeAppSecret            string
-	ShopeeSocialParams         string
-	AdminUsername              string
-	AdminPassword              string
-	AdminTelegramID            int64
-	Port                       uint16
-	PublicBaseURL              string
-	ShortlinkBaseURL           string
-	TelegramWebhookSecret      string
+	AccessTradeAPIToken         string
+	ShopeeAffiliateID           string
+	ShopeeAppID                 string
+	ShopeeAppSecret             string
+	ShopeeSocialParams          string
+	AdminUsername               string
+	AdminPassword               string
+	AdminTelegramID             int64
+	Port                        uint16
+	PublicBaseURL               string
+	ShortlinkBaseURL            string
+	TelegramWebhookSecret       string
+	TrustCloudflareHeaders      bool
 }
 
 func loadDotEnvIfExists() {
@@ -181,21 +188,40 @@ func isValidTelegramSecret(secret string) bool {
 	return true
 }
 
-// DeriveDeterministicSecret tạo chuỗi hex 32 ký tự cố định để xác thực Webhook.
-func DeriveDeterministicSecret(partA, partB string) string {
-	h1 := uint64(0xcbf29ce484222325)
-	h2 := uint64(0x84222325cbf29ce4)
-	sep := ":dealx_wh_v1:"
-	feed := make([]byte, 0, len(partA)+len(sep)+len(partB))
-	feed = append(feed, partA...)
-	feed = append(feed, sep...)
-	feed = append(feed, partB...)
-	for _, b := range feed {
-		h1 ^= uint64(b)
-		h1 *= 0x100000001b3
-		h2 = (h2 * 0x100000001b3) ^ bits.RotateLeft64(uint64(b), 13)
+// ValidateCloudSecurity áp dụng chính sách Fail-Closed cho môi trường Cloud/Hosting:
+// từ chối khởi động nếu quên đặt ADMIN_PASSWORD, vẫn dùng mật khẩu mặc định hoặc mật khẩu ngắn hơn 12 ký tự.
+func (c *Config) ValidateCloudSecurity() error {
+	if !c.IsCloudRuntime() {
+		return nil
 	}
-	return fmt.Sprintf("%016x%016x", h1, h2)
+	pass := strings.TrimSpace(c.AdminPassword)
+	if pass == "" || pass == DefaultAdminPassword {
+		return errors.New("chế độ Cloud/Hosting từ chối khởi động với ADMIN_PASSWORD mặc định — hãy cấu hình biến môi trường ADMIN_PASSWORD mạnh (>= 12 ký tự)")
+	}
+	if len(pass) < MinCloudAdminPassLength {
+		return fmt.Errorf("chế độ Cloud/Hosting yêu cầu ADMIN_PASSWORD dài tối thiểu %d ký tự (hiện tại %d ký tự)", MinCloudAdminPassLength, len(pass))
+	}
+	return nil
+}
+
+func readEnvTruthy(key string) bool {
+	switch strings.ToLower(readEnvNonEmpty(key)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// DeriveDeterministicSecret tạo chuỗi hex 32 ký tự chuẩn mật mã SHA-256 cố định để xác thực Webhook.
+func DeriveDeterministicSecret(partA, partB string) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte("dealx_wh_v2:"))
+	_, _ = h.Write([]byte(partA))
+	_, _ = h.Write([]byte{0x00})
+	_, _ = h.Write([]byte(partB))
+	sum := h.Sum(nil)
+	return hex.EncodeToString(sum[:16])
 }
 
 func resolveWebhookSecret(telegramToken, adminPassword string) string {
@@ -240,7 +266,7 @@ func FromEnv() Config {
 	}
 	adminPassword := readEnvNonEmpty("ADMIN_PASSWORD")
 	if adminPassword == "" {
-		adminPassword = "DealX@Admin2026"
+		adminPassword = DefaultAdminPassword
 	}
 
 	var adminTelegramID int64
@@ -281,5 +307,6 @@ func FromEnv() Config {
 		PublicBaseURL:               publicBase,
 		ShortlinkBaseURL:            shortlinkBase,
 		TelegramWebhookSecret:       webhookSecret,
+		TrustCloudflareHeaders:      readEnvTruthy("TRUST_CLOUDFLARE_HEADERS"),
 	}
 }

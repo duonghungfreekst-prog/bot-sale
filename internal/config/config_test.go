@@ -42,3 +42,29 @@ func TestResolveShortlinkBaseURLDefaults(t *testing.T) {
 		t.Fatalf("expected default shortlink when named tunnel enabled, got %q", got)
 	}
 }
+
+func TestValidateCloudSecurityFailClosed(t *testing.T) {
+	// PC Local (PublicBaseURL trống và không có env Cloud) cho phép mật khẩu mặc định
+	localCfg := Config{AdminPassword: DefaultAdminPassword}
+	if err := localCfg.ValidateCloudSecurity(); err != nil {
+		t.Fatalf("local mode should allow default password, got: %v", err)
+	}
+
+	// Cloud + mật khẩu mặc định -> PHẢI từ chối khởi động
+	cloudDefault := Config{PublicBaseURL: "https://bot.onrender.com", AdminPassword: DefaultAdminPassword}
+	if err := cloudDefault.ValidateCloudSecurity(); err == nil {
+		t.Fatal("expected Cloud mode to reject default AdminPassword")
+	}
+
+	// Cloud + mật khẩu quá ngắn (<12 ký tự) -> PHẢI từ chối khởi động
+	cloudShort := Config{PublicBaseURL: "https://bot.onrender.com", AdminPassword: "short123"}
+	if err := cloudShort.ValidateCloudSecurity(); err == nil {
+		t.Fatal("expected Cloud mode to reject short AdminPassword (<12 chars)")
+	}
+
+	// Cloud + mật khẩu mạnh >= 12 ký tự -> Hợp lệ
+	cloudStrong := Config{PublicBaseURL: "https://bot.onrender.com", AdminPassword: "VeryStrongAdminPass!2026"}
+	if err := cloudStrong.ValidateCloudSecurity(); err != nil {
+		t.Fatalf("expected strong Cloud password to pass, got: %v", err)
+	}
+}

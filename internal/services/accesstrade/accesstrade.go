@@ -260,18 +260,15 @@ func NewClient() *AccessTradeClient {
 		httpClient: &http.Client{
 			Timeout: 12 * time.Second,
 		},
-		redirectProbe: &http.Client{
-			Timeout: 4 * time.Second,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 4 {
-					return http.ErrUseLastResponse
-				}
-				if isTrackingGatewayHost(req.URL.Hostname()) {
-					return nil
-				}
+		redirectProbe: utils.NewSafePublicHTTPClient(4*time.Second, func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 4 {
 				return http.ErrUseLastResponse
-			},
-		},
+			}
+			if isTrackingGatewayHost(req.URL.Hostname()) {
+				return nil
+			}
+			return http.ErrUseLastResponse
+		}),
 	}
 }
 

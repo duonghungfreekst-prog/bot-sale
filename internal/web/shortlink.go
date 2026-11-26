@@ -232,9 +232,7 @@ func HandleShortlinkRedirect(state *AppState, code string) http.HandlerFunc {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex, nofollow">
     <title>Chỉ hỗ trợ mở trên Điện Thoại</title>
-    <script>
-    (function(){try{var t=localStorage.getItem('dealx-theme')||'light';if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(_){}})();
-    </script>
+    <script src="/assets/theme.js"></script>
     <style>
         :root { --bg:#F4F6F9; --card:#FFFFFF; --border:#E2E8F0; --text:#0F172A; --muted:#475569; --accent:#C2410C; --accent-soft:rgba(194,65,12,0.1); }
         html[data-theme="dark"] { --bg:#0B1120; --card:#131C31; --border:#1E293B; --text:#F1F5F9; --muted:#94A3B8; --accent:#F97316; --accent-soft:rgba(249,115,22,0.14); }
@@ -295,9 +293,7 @@ func HandleShortlinkRedirect(state *AppState, code string) http.HandlerFunc {
     <meta name="robots" content="noindex, nofollow">
     <meta name="referrer" content="unsafe-url">
     <title>Đang chuyển sang %s...</title>
-    <script>
-    (function(){try{var t=localStorage.getItem('dealx-theme')||'light';if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(_){}})();
-    </script>
+    <script src="/assets/theme.js"></script>
     <style>
         :root {
             --bg: #F4F6F9; --card: #FFFFFF; --inset: #F8FAFC; --border: #E2E8F0;

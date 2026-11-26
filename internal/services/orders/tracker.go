@@ -2,6 +2,7 @@ package orders
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -63,7 +64,7 @@ func FormatOrderAlertHTML(order db.TrackedOrder) string {
 	)
 }
 
-func sendTelegramHTML(client *http.Client, token string, chatID int64, htmlText string) error {
+func sendTelegramHTML(ctx context.Context, client *http.Client, token string, chatID int64, htmlText string) error {
 	payload, err := json.Marshal(map[string]any{
 		"chat_id":    chatID,
 		"text":       htmlText,
@@ -73,7 +74,7 @@ func sendTelegramHTML(client *http.Client, token string, chatID int64, htmlText 
 		return err
 	}
 	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -91,7 +92,15 @@ func sendTelegramHTML(client *http.Client, token string, chatID int64, htmlText 
 
 // SyncOrdersOnce quét đơn hàng từ ACCESSTRADE & Shopee Open API, lưu DB chống trùng và báo Admin.
 func SyncOrdersOnce(appDB *db.AppDb, cfg config.Config, at *accesstrade.AccessTradeClient) OrderSyncSummary {
+	return SyncOrdersOnceWithContext(context.Background(), appDB, cfg, at)
+}
+
+// SyncOrdersOnceWithContext quét đơn hàng có hỗ trợ hủy tức thì qua context khi Graceful Shutdown.
+func SyncOrdersOnceWithContext(ctx context.Context, appDB *db.AppDb, cfg config.Config, at *accesstrade.AccessTradeClient) OrderSyncSummary {
 	var summary OrderSyncSummary
+	if ctx.Err() != nil {
+		return summary
+	}
 	if appDB == nil || appDB.DB == nil {
 		summary.Errors = append(summary.Errors, "Không thể mở kết nối DB để đối soát đơn")
 		return summary
@@ -162,7 +171,10 @@ func SyncOrdersOnce(appDB *db.AppDb, cfg config.Config, at *accesstrade.AccessTr
 				limit = 5
 			}
 			for _, ord := range newlyAdded[:limit] {
-				if err := sendTelegramHTML(getOrderHTTPClient(), cfg.TelegramToken, adminTelegramID, FormatOrderAlertHTML(ord)); err != nil {
+				if ctx.Err() != nil {
+					break
+				}
+				if err := sendTelegramHTML(ctx, getOrderHTTPClient(), cfg.TelegramToken, adminTelegramID, FormatOrderAlertHTML(ord)); err != nil {
 					slog.Warn("Không thể gửi thông báo đơn mới cho Admin", "admin_id", adminTelegramID, "err", err)
 				}
 			}
@@ -172,15 +184,15 @@ func SyncOrdersOnce(appDB *db.AppDb, cfg config.Config, at *accesstrade.AccessTr
 	return summary
 }
 
-// SpawnOrderTrackerTask chạy nền đối soát đơn hàng mỗi 10 phút và hỗ trợ WaitGroup khi Graceful Shutdown.
+// SpawnOrderTrackerTask chạy nền đối soát đơn hàng mỗi 10 phút, tự recover panic và hủy sạch qua stopCh.
 func SpawnOrderTrackerTask(stopCh <-chan struct{}, wg *sync.WaitGroup, appDB *db.AppDb, cfg config.Config, at *accesstrade.AccessTradeClient) {
-	if wg != nil {
-		wg.Add(1)
-	}
-	go func() {
-		if wg != nil {
-			defer wg.Done()
-		}
+	taskCtx, cancel := context.WithCancel(context.Background())
+	utils.SafeGo(nil, "orders.stop_watcher", func() {
+		<-stopCh
+		cancel()
+	})
+	utils.SafeGo(wg, "orders.tracker_loop", func() {
+		defer cancel()
 		select {
 		case <-stopCh:
 			return
@@ -191,7 +203,8 @@ func SpawnOrderTrackerTask(stopCh <-chan struct{}, wg *sync.WaitGroup, appDB *db
 		defer ticker.Stop()
 
 		runOnce := func() {
-			summary := SyncOrdersOnce(appDB, cfg, at)
+			defer utils.RecoverPanic("orders.SyncOrdersOnce")
+			summary := SyncOrdersOnceWithContext(taskCtx, appDB, cfg, at)
 			if summary.NewlyInserted > 0 || len(summary.Errors) > 0 {
 				slog.Info("[ORDER_TRACKER] Đã quét đơn hàng",
 					"fetched", summary.Fetched,
@@ -210,5 +223,5 @@ func SpawnOrderTrackerTask(stopCh <-chan struct{}, wg *sync.WaitGroup, appDB *db
 				runOnce()
 			}
 		}
-	}()
+	})
 }

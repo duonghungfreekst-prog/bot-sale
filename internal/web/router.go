@@ -1,13 +1,13 @@
 package web
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 
 	"salehunter-go/internal/bot"
+	"salehunter-go/internal/utils"
 )
 
 // BuildRouter xây dựng HTTP router đầy đủ cho Web Public, Web Admin, Shortlink & Telegram Webhook.
@@ -24,6 +24,8 @@ func BuildRouter(state *AppState) http.Handler {
 	// Static JS / WebP Assets
 	mux.HandleFunc("GET /assets/bridge.js", HandleBridgeJS)
 	mux.HandleFunc("GET /assets/home.js", HandleHomeJS)
+	mux.HandleFunc("GET /assets/theme.js", HandleThemeJS)
+	mux.HandleFunc("GET /assets/admin.js", HandleAdminJS)
 	mux.HandleFunc("GET /assets/bot-logo.webp", HandleBotLogoWebp)
 	mux.HandleFunc("GET /assets/bot-cart-3d.webp", HandleBotCart3DWebp)
 	mux.HandleFunc("GET /assets/landing.js", HandleLandingJS)
@@ -32,10 +34,10 @@ func BuildRouter(state *AppState) http.Handler {
 	mux.HandleFunc("GET /health", HandleHealth)
 	mux.HandleFunc("POST /telegram/webhook", HandleTelegramWebhook(state))
 
-	// Xác thực & Quản trị Web Admin
+	// Xác thực & Quản trị Web Admin (POST /admin/logout bắt buộc Double-Submit CSRF chống Logout CSRF)
 	mux.HandleFunc("GET /admin/login", HandleLoginPage(state))
 	mux.HandleFunc("POST /admin/login", HandleLoginSubmit(state))
-	mux.HandleFunc("GET /admin/logout", HandleLogout(state))
+	mux.HandleFunc("POST /admin/logout", HandleLogout(state))
 
 	mux.HandleFunc("GET /admin", HandleDashboard(state))
 	mux.HandleFunc("POST /admin/settings/accesstrade", HandleUpdateAccessTrade(state))
@@ -58,10 +60,11 @@ func BuildRouter(state *AppState) http.Handler {
 		HandleShortlinkRedirect(state, r.PathValue("code"))(w, r)
 	})
 
-	// Chuỗi middleware chuẩn: SecurityHeaders -> ShortlinkCloak -> AdminCSRF -> Mux
+	// Chuỗi middleware chuẩn: Recovery -> SecurityHeaders -> ShortlinkCloak -> AdminCSRF -> Mux
 	var handler http.Handler = AdminCSRFMiddleware(mux)
 	handler = ShortlinkCloakMiddleware(state)(handler)
 	handler = SecurityHeadersMiddleware(handler)
+	handler = RecoveryMiddleware(handler)
 	return handler
 }
 
@@ -84,7 +87,7 @@ func HandleTelegramWebhook(state *AppState) http.HandlerFunc {
 		expectedSecret := state.Config.TelegramWebhookSecret
 
 		if len(providedSecret) == 0 ||
-			subtle.ConstantTimeCompare([]byte(providedSecret), []byte(expectedSecret)) != 1 {
+			!utils.ConstantTimeEqualHash(providedSecret, expectedSecret) {
 			slog.Warn("[WEB] Từ chối yêu cầu Telegram Webhook do sai secret token.")
 			w.WriteHeader(http.StatusUnauthorized)
 			return

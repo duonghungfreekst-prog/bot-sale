@@ -63,14 +63,25 @@ func TestSecurityHeadersAndCSPClean(t *testing.T) {
 	if res.Header().Get("X-Frame-Options") != "DENY" {
 		t.Fatalf("missing DENY frame header")
 	}
-	if !strings.Contains(res.Header().Get("Content-Security-Policy"), "default-src 'self'") {
-		t.Fatalf("missing clean CSP")
+	csp := res.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "default-src 'self'") ||
+		!strings.Contains(csp, "script-src 'self';") ||
+		strings.Contains(csp, "script-src 'self' 'unsafe-inline'") ||
+		!strings.Contains(csp, "object-src 'none'") ||
+		!strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Fatalf("expected strict CSP without unsafe-inline script-src, got: %q", csp)
 	}
 	if !strings.Contains(res.Header().Get("Permissions-Policy"), "camera=()") {
 		t.Fatalf("missing Permissions-Policy header")
 	}
 	if res.Header().Get("Cross-Origin-Opener-Policy") != "same-origin" {
 		t.Fatalf("missing Cross-Origin-Opener-Policy header")
+	}
+	if res.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" {
+		t.Fatalf("missing Cross-Origin-Resource-Policy header")
+	}
+	if res.Header().Get("Referrer-Policy") != "strict-origin-when-cross-origin" {
+		t.Fatalf("missing Referrer-Policy header")
 	}
 }
 
@@ -79,7 +90,7 @@ func TestAdminCSRFAndSameOriginProtection(t *testing.T) {
 	handler := BuildRouter(state)
 
 	const sid = "sess_csrf_test"
-	state.Sessions[sid] = struct{}{}
+	state.Sessions[sid] = time.Now().Unix() + 3600
 
 	// 1. GET /admin với session -> cấp cookie dealx_csrf và _csrf trong form
 	reqGet := httptest.NewRequest(http.MethodGet, "/admin", nil)
@@ -206,7 +217,7 @@ func TestCloudDefaultPasswordWarningAndBruteForceLimit(t *testing.T) {
 	handler := BuildRouter(state)
 
 	const sid = "cloud_warn_sess"
-	state.Sessions[sid] = struct{}{}
+	state.Sessions[sid] = time.Now().Unix() + 3600
 
 	reqDash := httptest.NewRequest(http.MethodGet, "/admin", nil)
 	reqDash.Host = "bot.onrender.com"
@@ -216,9 +227,25 @@ func TestCloudDefaultPasswordWarningAndBruteForceLimit(t *testing.T) {
 		t.Fatal("expected Cloud default password warning banner")
 	}
 
-	// Brute-force login protection: cài sẵn 5 lần sai gần đây để không phải đợi 5*500ms sleep trong test
-	state.LoginLimiter["1.2.3.4"] = RateEntry{Count: 5, LastTS: time.Now().Unix()}
 	form := url.Values{"username": {"admin"}, "password": {"wrong"}}
+
+	// 1. Mặc định TrustCloudflareHeaders=false (Render/Fly trực tiếp):
+	// attacker gửi CẢ Cf-Ray + Cf-Connecting-Ip giả cũng bị bỏ qua, khóa theo XFF phải-sang-trái (5.6.7.8)
+	state.LoginLimiter["5.6.7.8"] = RateEntry{Count: 5, LastTS: time.Now().Unix()}
+	reqSpoof := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(form.Encode()))
+	reqSpoof.Host = "bot.onrender.com"
+	reqSpoof.Header.Set("Origin", "https://bot.onrender.com")
+	reqSpoof.Header.Set("Cf-Ray", "fake-ray-attacker")
+	reqSpoof.Header.Set("Cf-Connecting-Ip", "9.9.9.9")
+	reqSpoof.Header.Set("X-Forwarded-For", "8.8.4.4, 5.6.7.8")
+	reqSpoof.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if resSpoof := doReq(handler, reqSpoof); resSpoof.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 via right-most XFF 5.6.7.8 (ignoring forged Cf-Ray when TrustCloudflareHeaders=false), got %d", resSpoof.Code)
+	}
+
+	// 2. Khi bật TrustCloudflareHeaders=true + có Cf-Ray hợp lệ: tin Cf-Connecting-Ip (1.2.3.4)
+	state.Config.TrustCloudflareHeaders = true
+	state.LoginLimiter["1.2.3.4"] = RateEntry{Count: 5, LastTS: time.Now().Unix()}
 	reqLocked := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(form.Encode()))
 	reqLocked.Host = "bot.onrender.com"
 	reqLocked.Header.Set("Origin", "https://bot.onrender.com")
@@ -226,19 +253,7 @@ func TestCloudDefaultPasswordWarningAndBruteForceLimit(t *testing.T) {
 	reqLocked.Header.Set("Cf-Connecting-Ip", "1.2.3.4")
 	reqLocked.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if resLocked := doReq(handler, reqLocked); resLocked.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected 429 after 5 failed attempts with Cf-Ray, got %d", resLocked.Code)
-	}
-
-	// Chống bypass Rate Limit: attacker gửi Cf-Connecting-Ip giả không có Cf-Ray và nhét IP giả ở đầu X-Forwarded-For
-	state.LoginLimiter["5.6.7.8"] = RateEntry{Count: 5, LastTS: time.Now().Unix()}
-	reqSpoof := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(form.Encode()))
-	reqSpoof.Host = "bot.onrender.com"
-	reqSpoof.Header.Set("Origin", "https://bot.onrender.com")
-	reqSpoof.Header.Set("Cf-Connecting-Ip", "9.9.9.9")
-	reqSpoof.Header.Set("X-Forwarded-For", "8.8.4.4, 5.6.7.8")
-	reqSpoof.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if resSpoof := doReq(handler, reqSpoof); resSpoof.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected 429 via right-most XFF 5.6.7.8 (resisting Cf-Connecting-Ip & left XFF spoof), got %d", resSpoof.Code)
+		t.Fatalf("expected 429 after 5 failed attempts with TrustCloudflareHeaders=true + Cf-Ray, got %d", resLocked.Code)
 	}
 }
 
@@ -308,7 +323,7 @@ func TestPruneRateLimiterMapAndAssets(t *testing.T) {
 
 	state := makeTestState(t, "", nil)
 	handler := BuildRouter(state)
-	for _, asset := range []string{"/assets/bot-logo.webp", "/assets/bot-cart-3d.webp", "/assets/bridge.js", "/assets/home.js", "/assets/landing.js"} {
+	for _, asset := range []string{"/assets/bot-logo.webp", "/assets/bot-cart-3d.webp", "/assets/bridge.js", "/assets/home.js", "/assets/landing.js", "/assets/theme.js", "/assets/admin.js"} {
 		res := doReq(handler, httptest.NewRequest(http.MethodGet, asset, nil))
 		if res.Code != http.StatusOK {
 			t.Fatalf("asset %s failed: %d", asset, res.Code)
@@ -467,5 +482,80 @@ func TestDeepSecurityHardening(t *testing.T) {
 	reqLocalWithCSRF.AddCookie(&http.Cookie{Name: "dealx_csrf", Value: localCSRF})
 	if res := doReq(handlerLocal, reqLocalWithCSRF); res.Code != http.StatusSeeOther {
 		t.Fatalf("expected 303 on PC local POST with valid CSRF, got %d", res.Code)
+	}
+
+	// 5. Strict CSP: đảm bảo 0 inline <script> và 0 onclick= trên Public, Login và Admin Dashboard
+	reqHome := httptest.NewRequest(http.MethodGet, "/", nil)
+	resHome := doReq(handlerCloud, reqHome)
+	for label, body := range map[string]string{
+		"home":  resHome.Body.String(),
+		"login": resLoginPage.Body.String(),
+		"admin": resDash.Body.String(),
+	} {
+		if strings.Contains(body, "<script>") || strings.Contains(body, "onclick=") {
+			t.Fatalf("page %s still contains inline <script> or onclick= violating strict CSP", label)
+		}
+	}
+
+	// 6. Chống Logout CSRF: GET /admin/logout bị từ chối (405), POST thiếu CSRF -> 403, POST đủ CSRF -> 303 & xóa session
+	reqGetLogout := httptest.NewRequest(http.MethodGet, "/admin/logout", nil)
+	reqGetLogout.Host = "proxy-backend.internal"
+	reqGetLogout.AddCookie(sessCookie)
+	if res := doReq(handlerCloud, reqGetLogout); res.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 on GET /admin/logout, got %d", res.Code)
+	}
+
+	reqPostLogoutNoCSRF := httptest.NewRequest(http.MethodPost, "/admin/logout", nil)
+	reqPostLogoutNoCSRF.Host = "proxy-backend.internal"
+	reqPostLogoutNoCSRF.Header.Set("Origin", "http://proxy-backend.internal")
+	reqPostLogoutNoCSRF.AddCookie(sessCookie)
+	reqPostLogoutNoCSRF.AddCookie(csrfCookie)
+	if res := doReq(handlerCloud, reqPostLogoutNoCSRF); res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 on POST /admin/logout without CSRF token, got %d", res.Code)
+	}
+
+	reqPostLogoutOK := httptest.NewRequest(http.MethodPost, "/admin/logout",
+		strings.NewReader(url.Values{"_csrf": {csrfCookie.Value}}.Encode()))
+	reqPostLogoutOK.Host = "proxy-backend.internal"
+	reqPostLogoutOK.Header.Set("Origin", "http://proxy-backend.internal")
+	reqPostLogoutOK.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	reqPostLogoutOK.AddCookie(sessCookie)
+	reqPostLogoutOK.AddCookie(csrfCookie)
+	if res := doReq(handlerCloud, reqPostLogoutOK); res.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 on valid POST /admin/logout, got %d", res.Code)
+	}
+	// Session sau khi logout phải hết hiệu lực ngay
+	reqAfterLogout := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	reqAfterLogout.Host = "proxy-backend.internal"
+	reqAfterLogout.AddCookie(sessCookie)
+	if res := doReq(handlerCloud, reqAfterLogout); res.Code != http.StatusSeeOther {
+		t.Fatalf("expected logged-out session to redirect /admin/login, got %d", res.Code)
+	}
+
+	// 7. DB-backed Brute-force Rate Limit sống sót qua container restart (AppState mới RAM rỗng)
+	nowTS := time.Now().Unix()
+	for i := 0; i < 5; i++ {
+		if _, rErr := db.RecordLoginFailure(stateCloud.DB.DB, "4.3.2.1", nowTS, 900); rErr != nil {
+			t.Fatalf("RecordLoginFailure: %v", rErr)
+		}
+	}
+	restartedState := NewAppState(stateCloud.Config, stateCloud.DB, stateCloud.AccessTrade, nil)
+	restartedHandler := BuildRouter(restartedState)
+	reqAfterRestart := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(loginForm.Encode()))
+	reqAfterRestart.Host = "proxy-backend.internal"
+	reqAfterRestart.Header.Set("Origin", "http://proxy-backend.internal")
+	reqAfterRestart.Header.Set("X-Forwarded-For", "4.3.2.1")
+	reqAfterRestart.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if res := doReq(restartedHandler, reqAfterRestart); res.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 persisting across restart via DB login_rate_limits, got %d", res.Code)
+	}
+
+	// 8. HTTP RecoveryMiddleware chặn panic mà không lộ thông tin nội bộ
+	panicHandler := RecoveryMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("secret_internal_db_dsn_leak")
+	}))
+	resPanic := doReq(panicHandler, httptest.NewRequest(http.MethodGet, "/boom", nil))
+	if resPanic.Code != http.StatusInternalServerError || strings.Contains(resPanic.Body.String(), "secret_internal") {
+		t.Fatalf("RecoveryMiddleware failed: code=%d body=%q", resPanic.Code, resPanic.Body.String())
 	}
 }

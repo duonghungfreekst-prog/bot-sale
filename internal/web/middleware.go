@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"crypto/subtle"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"salehunter-go/internal/bot"
 	"salehunter-go/internal/config"
@@ -35,13 +38,15 @@ type AppState struct {
 	WebhookCh   chan<- bot.Update // nil khi chạy Long Polling
 
 	SessionsMu sync.RWMutex
-	Sessions   map[string]struct{}
+	Sessions   map[string]int64 // token -> unix expiry timestamp
 
 	LoginLimiterMu sync.RWMutex
 	LoginLimiter   map[string]RateEntry
 
 	ConvertLimiterMu sync.RWMutex
 	ConvertLimiter   map[string]RateEntry
+
+	CampFetching atomic.Bool
 }
 
 // NewAppState khởi tạo AppState dùng chung giữa router và background tasks.
@@ -57,7 +62,7 @@ func NewAppState(
 		AccessTrade:    atClient,
 		Parser:         parser.WithAccessTrade(atClient),
 		WebhookCh:      webhookCh,
-		Sessions:       make(map[string]struct{}),
+		Sessions:       make(map[string]int64),
 		LoginLimiter:   make(map[string]RateEntry),
 		ConvertLimiter: make(map[string]RateEntry),
 	}
@@ -95,19 +100,42 @@ func PruneRateLimiterMap(m map[string]RateEntry, nowTS, windowSecs int64, maxEnt
 	}
 }
 
-// SecurityHeadersMiddleware bổ sung HTTP Security Headers bắt buộc cho mọi phản hồi.
+// RecoveryMiddleware chặn mọi panic trong HTTP pipeline, ghi log stack trace và trả HTTP 500 an toàn (không lộ chi tiết nội bộ).
+func RecoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("🔥 [HTTP RECOVER] Đã chặn panic trên HTTP handler",
+					"method", r.Method,
+					"path", r.URL.Path,
+					"panic", rec,
+					"stack", string(debug.Stack()),
+				)
+				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte("Internal Server Error"))
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// SecurityHeadersMiddleware bổ sung HTTP Security Headers chuẩn Strict CSP (không còn 'unsafe-inline' cho script).
 func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
-		h.Set("Strict-Transport-Security", "max-age=31536000")
+		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		h.Set("X-XSS-Protection", "1; mode=block")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		h.Set("Cross-Origin-Resource-Policy", "same-origin")
 		h.Set(
 			"Content-Security-Policy",
-			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https:;",
+			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';",
 		)
 		next.ServeHTTP(w, r)
 	})
@@ -235,7 +263,7 @@ func IsAllowedShortlinkCloakPath(method, path string) bool {
 		return false
 	}
 	switch path {
-	case "/assets/bridge.js", "/assets/bot-logo.webp", "/assets/bot-cart-3d.webp", "/assets/landing.js":
+	case "/assets/bridge.js", "/assets/bot-logo.webp", "/assets/bot-cart-3d.webp", "/assets/landing.js", "/assets/theme.js":
 		return true
 	}
 	switch strings.ToLower(path) {

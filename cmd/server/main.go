@@ -21,6 +21,7 @@ import (
 	"salehunter-go/internal/services/accesstrade"
 	"salehunter-go/internal/services/orders"
 	"salehunter-go/internal/services/social"
+	"salehunter-go/internal/utils"
 	"salehunter-go/internal/web"
 )
 
@@ -33,8 +34,9 @@ func main() {
 	slog.Info("🚀 Khởi chạy hệ thống Bot Thế Giới Siêu Sale (Go Web Hosting Edition)...")
 
 	cfg := config.FromEnv()
-	if cfg.PublicBaseURL != "" && cfg.AdminPassword == "DealX@Admin2026" {
-		slog.Warn("⚠️ CẢNH BÁO BẢO MẬT: Đang chạy chế độ Cloud nhưng dùng ADMIN_PASSWORD mặc định — hãy đặt biến môi trường ADMIN_PASSWORD mạnh ngay!")
+	if secErr := cfg.ValidateCloudSecurity(); secErr != nil {
+		slog.Error("🚫 TỪ CHỐI KHỞI ĐỘNG DO VI PHẠM CHÍNH SÁCH BẢO MẬT CLOUD", "err", secErr)
+		os.Exit(1)
 	}
 
 	appDB, err := db.Init(cfg)
@@ -55,19 +57,11 @@ func main() {
 	}
 
 	atClient := accesstrade.NewClient()
-	seedVoucherCacheFromDB(appDB, cfg, atClient)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	var bgWG sync.WaitGroup
-
-	// Warmup định kỳ mỗi 60s cho ACCESSTRADE campaigns + market vouchers + cleanup sessions mỗi 6h
-	bgWG.Add(1)
-	go func() {
-		defer bgWG.Done()
-		runWarmupLoop(ctx, appDB, cfg, atClient)
-	}()
 
 	var webhookCh chan bot.Update
 	if cfg.PublicBaseURL != "" {
@@ -91,31 +85,34 @@ func main() {
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    64 << 10, // 64 KB chống Header Flood DoS
 	}
 
 	webReadyCh := make(chan struct{})
 	close(webReadyCh)
 
 	webErrCh := make(chan error, 1)
-	bgWG.Add(1)
-	go func() {
-		defer bgWG.Done()
+	utils.SafeGo(&bgWG, "main.http_server", func() {
 		if sErr := httpServer.Serve(ln); sErr != nil && !errors.Is(sErr, http.ErrServerClosed) {
 			slog.Error("Lỗi khi chạy Web Admin Server", "err", sErr)
 			webErrCh <- sErr
 		}
 		close(webErrCh)
-	}()
+	})
+
+	// Warmup định kỳ mỗi 60s (nạp cache voucher từ DB ngay lập tức trên nền, không làm trễ mở cổng /health)
+	utils.SafeGo(&bgWG, "main.warmup_loop", func() {
+		seedVoucherCacheFromDB(appDB, cfg, atClient)
+		runWarmupLoop(ctx, appDB, cfg, atClient)
+	})
 
 	slog.Info("🌐 Web Public, Admin Dashboard & Health Check đang lắng nghe", "url", fmt.Sprintf("http://127.0.0.1:%d/admin", cfg.Port))
 
 	disableKeepalive := isTruthyEnv(os.Getenv("DISABLE_KEEPALIVE"))
 	if !disableKeepalive && cfg.PublicBaseURL != "" {
-		bgWG.Add(1)
-		go func() {
-			defer bgWG.Done()
+		utils.SafeGo(&bgWG, "main.keepalive_loop", func() {
 			runKeepaliveLoop(ctx, cfg.PublicBaseURL)
-		}()
+		})
 	}
 
 	// Chạy ngầm đối soát đơn hàng (mỗi 10 phút) & Social Harvester FB/IG Reels (mỗi 5 phút)
@@ -129,15 +126,13 @@ func main() {
 		slog.Info("   Web Admin Dashboard vẫn đang chạy phục vụ", "port", cfg.Port)
 		slog.Info("-------------------------------------------------------")
 	} else {
-		bgWG.Add(1)
-		go func() {
-			defer bgWG.Done()
+		utils.SafeGo(&bgWG, "main.telegram_bot", func() {
 			if bErr := bot.RunBot(ctx, cfg, appDB, atClient, webhookCh, webReadyCh); bErr != nil {
 				slog.Error("Lỗi khi chạy Telegram Bot", "err", bErr)
 				botErrCh <- bErr
 			}
 			close(botErrCh)
-		}()
+		})
 	}
 
 	select {
@@ -160,7 +155,19 @@ func main() {
 	if err := httpServer.Shutdown(shutCtx); err != nil {
 		slog.Warn("Cưỡng chế đóng HTTP connections còn sót sau 5s", "err", err)
 	}
-	bgWG.Wait()
+
+	// Chờ các goroutine nền kết thúc với trần tối đa 7s để luôn kịp flush clicks trước khi Docker/Render gửi SIGKILL
+	waitDone := make(chan struct{})
+	go func() {
+		bgWG.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(7 * time.Second):
+		slog.Warn("⚠️ Một số tác vụ nền vượt quá thời gian chờ thoát 7s, tiến hành flush dữ liệu và dừng khẩn cấp.")
+	}
+
 	if flushed := appDB.FlushShortLinkClicks(); flushed > 0 {
 		slog.Info("💾 Đã lưu lượt click shortlink còn lại trước khi thoát", "clicks", flushed)
 	}
@@ -231,6 +238,9 @@ func runWarmupLoop(ctx context.Context, appDB *db.AppDb, cfg config.Config, atCl
 				slog.Info("🧹 Đã dọn admin sessions hết hạn", "removed", cleaned)
 			}
 		}
+		if cycle%30 == 0 {
+			_, _ = appDB.CleanupExpiredLoginRateLimits()
+		}
 		cycle++
 	}
 
@@ -250,7 +260,7 @@ func runWarmupLoop(ctx context.Context, appDB *db.AppDb, cfg config.Config, atCl
 
 func runKeepaliveLoop(ctx context.Context, baseURL string) {
 	healthURL := strings.TrimRight(baseURL, "/") + "/health"
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := utils.NewSafePublicHTTPClient(10*time.Second, nil)
 
 	select {
 	case <-time.After(45 * time.Second):

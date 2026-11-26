@@ -107,7 +107,7 @@ func HandleDashboard(state *AppState) http.HandlerFunc {
 			csrfToken = uuid.NewString()
 		}
 
-		authActionHTML := `<a href="/admin/logout" class="btn btn--danger btn--sm">Đăng Xuất</a>`
+		authActionHTML := `<form method="POST" action="/admin/logout" style="display:inline;margin:0;"><button type="submit" class="btn btn--danger btn--sm">Đăng Xuất</button></form>`
 		if IsTrustedLocalAdminHeader(state, r) {
 			authActionHTML = `<span class="badge badge--ok">🖥️ PC Local (Miễn đăng nhập)</span>`
 		}
@@ -246,16 +246,17 @@ func HandleDashboard(state *AppState) http.HandlerFunc {
 
 			if cached := state.AccessTrade.PeekApprovedCampaigns(); cached != nil {
 				approvedRes = cached
-			} else {
+			} else if state.CampFetching.CompareAndSwap(false, true) {
 				type fetchRes struct {
 					app *accesstrade.ApprovedCampaigns
 					err error
 				}
 				ch := make(chan fetchRes, 1)
-				go func(tok string) {
-					a, e := state.AccessTrade.GetApprovedCampaigns(tok, false)
+				utils.SafeGo(nil, "admin.fetch_campaigns", func() {
+					defer state.CampFetching.Store(false)
+					a, e := state.AccessTrade.GetApprovedCampaigns(dbATToken, false)
 					ch <- fetchRes{app: a, err: e}
-				}(dbATToken)
+				})
 				select {
 				case r := <-ch:
 					approvedRes = r.app
@@ -263,6 +264,8 @@ func HandleDashboard(state *AppState) http.HandlerFunc {
 				case <-time.After(1200 * time.Millisecond):
 					approvedErr = fmt.Errorf("Đang tải danh sách chiến dịch ACCESSTRADE ở nền...")
 				}
+			} else {
+				approvedErr = fmt.Errorf("Đang tải danh sách chiến dịch ACCESSTRADE ở nền...")
 			}
 
 			if approvedErr == nil && approvedRes != nil {

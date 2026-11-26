@@ -254,3 +254,52 @@ func TestBufferedShortLinkClickFlush(t *testing.T) {
 		t.Fatalf("expected clicks_count=3 after flush, got %d", afterFlush)
 	}
 }
+
+func TestLoginRateLimitPersistenceAndClickRestore(t *testing.T) {
+	appDB, err := InitLocalForTest(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = appDB.Close() }()
+
+	// 1. Kiểm tra DB-backed login rate limit
+	now := int64(20000)
+	for i := uint32(1); i <= 5; i++ {
+		n, err := RecordLoginFailure(appDB.DB, "9.8.7.6", now, 900)
+		if err != nil || n != i {
+			t.Fatalf("expected attempts=%d, got %d (err=%v)", i, n, err)
+		}
+	}
+	gotN, gotTS, err := GetLoginRateLimit(appDB.DB, "9.8.7.6")
+	if err != nil || gotN != 5 || gotTS != now {
+		t.Fatalf("unexpected GetLoginRateLimit: n=%d ts=%d err=%v", gotN, gotTS, err)
+	}
+	// Quá cửa sổ 900s tự reset về 1
+	resetN, err := RecordLoginFailure(appDB.DB, "9.8.7.6", now+1000, 900)
+	if err != nil || resetN != 1 {
+		t.Fatalf("expected reset to 1 after window expiry, got %d (err=%v)", resetN, err)
+	}
+	if err := ClearLoginRateLimit(appDB.DB, "9.8.7.6"); err != nil {
+		t.Fatal(err)
+	}
+	clearedN, _, err := GetLoginRateLimit(appDB.DB, "9.8.7.6")
+	if err != nil || clearedN != 0 {
+		t.Fatalf("expected clearedN=0, got %d (err=%v)", clearedN, err)
+	}
+
+	// 2. Kiểm tra hoàn trả pending clicks khi flush lỗi DB
+	appDB.SetCacheEnabledForTest(true)
+	appDB.RecordShortLinkClickBuffered("ab12CD34")
+	appDB.RecordShortLinkClickBuffered("ab12CD34")
+	// Đóng kết nối DB để mô phỏng lỗi mạng khi FlushShortLinkClicks
+	_ = appDB.Close()
+	if flushed := appDB.FlushShortLinkClicks(); flushed != 0 {
+		t.Fatalf("expected flushed=0 when DB closed, got %d", flushed)
+	}
+	appDB.cache.muClicks.Lock()
+	restored := appDB.cache.pendingShortClicks["ab12CD34"]
+	appDB.cache.muClicks.Unlock()
+	if restored != 2 {
+		t.Fatalf("expected 2 clicks restored into RAM buffer after DB flush error, got %d", restored)
+	}
+}

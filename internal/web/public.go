@@ -56,7 +56,7 @@ func HandlePublicConvert(state *AppState) http.HandlerFunc {
 			return
 		}
 		inputRaw := strings.TrimSpace(r.PostFormValue("url"))
-		clientIP := ExtractClientIP(r)
+		clientIP := ExtractClientIPWithTrust(r, state.Config.TrustCloudflareHeaders)
 		nowTS := time.Now().Unix()
 
 		// Rate limit 20 lượt / 60 giây theo IP
@@ -234,6 +234,41 @@ func HandlePublicConvert(state *AppState) http.HandlerFunc {
 
 		RenderPublicHome(w, state, PublicHomeQuery{}, inputRaw, resultHTML)
 	}
+}
+
+// HandleThemeJS phục vụ `/assets/theme.js` (tách khỏi inline script để bật Strict CSP không có 'unsafe-inline').
+func HandleThemeJS(w http.ResponseWriter, _ *http.Request) {
+	js := `(function () {
+    try {
+        if (localStorage.getItem('dealx-theme') === 'dark') {
+            document.documentElement.setAttribute('data-theme', 'dark');
+        }
+    } catch (e) {}
+    document.addEventListener('DOMContentLoaded', function () {
+        var btn = document.getElementById('login-theme-btn');
+        if (!btn) return;
+        function syncLabel() {
+            var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            btn.textContent = isDark ? '☀️ Sáng' : '🌙 Tối';
+        }
+        syncLabel();
+        btn.addEventListener('click', function () {
+            var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            var next = isDark ? 'light' : 'dark';
+            if (next === 'dark') {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            } else {
+                document.documentElement.removeAttribute('data-theme');
+            }
+            try { localStorage.setItem('dealx-theme', next); } catch (e) {}
+            syncLabel();
+        });
+    });
+})();`
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(js))
 }
 
 // HandleHomeJS phục vụ `/assets/home.js`.
@@ -680,15 +715,7 @@ func RenderPublicHome(
     <meta name="description" content="Cổng tổng hợp mã giảm giá công khai theo từng ngành hàng từ Shopee, Tiki, Lazada, TikTok Shop giúp người mua tiết kiệm mỗi ngày.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&amp;family=Lexend:wght@600;700;800&amp;family=JetBrains+Mono:wght@500;600&amp;display=swap">
-    <script>
-        (function () {
-            try {
-                if (localStorage.getItem("dealx-theme") === "dark") {
-                    document.documentElement.setAttribute("data-theme", "dark");
-                }
-            } catch (e) {}
-        })();
-    </script>
+    <script src="/assets/theme.js"></script>
     <style>
         :root {
             color-scheme: light;

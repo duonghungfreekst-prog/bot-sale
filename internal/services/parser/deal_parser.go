@@ -501,6 +501,7 @@ func (d *DealParser) resolveURLWithMeta(rawURL string) (string, *string, *string
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer utils.RecoverPanic("parser.fetch_url")
 		req, err := http.NewRequest(http.MethodGet, fetchURL, nil)
 		if err != nil {
 			return
@@ -539,6 +540,7 @@ func (d *DealParser) resolveURLWithMeta(rawURL string) (string, *string, *string
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer utils.RecoverPanic("parser.social_probe")
 			socialTitle, socialImg = d.fetchSocialPreviewMetadata(fetchURL)
 		}()
 	}

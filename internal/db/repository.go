@@ -1003,3 +1003,55 @@ func GetRecentTrackedOrders(db *sql.DB, limit int64) ([]TrackedOrder, error) {
 	}
 	return list, rows.Err()
 }
+
+// GetLoginRateLimit đọc trạng thái brute-force bền vững của 1 IP từ DB (đồng bộ qua restart & multi-instance).
+func GetLoginRateLimit(db *sql.DB, ip string) (uint32, int64, error) {
+	var attempts int64
+	var lastAttempt int64
+	err := db.QueryRow(
+		"SELECT attempts, last_attempt FROM login_rate_limits WHERE ip = ?1 LIMIT 1",
+		ip,
+	).Scan(&attempts, &lastAttempt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, nil
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	if attempts < 0 {
+		attempts = 0
+	}
+	return uint32(attempts), lastAttempt, nil
+}
+
+// RecordLoginFailure tăng bộ đếm đăng nhập sai cho IP theo cửa sổ windowSecs (atomic UPSERT).
+func RecordLoginFailure(db *sql.DB, ip string, nowTS, windowSecs int64) (uint32, error) {
+	_, err := db.Exec(
+		`INSERT INTO login_rate_limits (ip, attempts, last_attempt)
+		 VALUES (?1, 1, ?2)
+		 ON CONFLICT(ip) DO UPDATE SET
+		   attempts = CASE WHEN (?2 - login_rate_limits.last_attempt) >= ?3 THEN 1 ELSE login_rate_limits.attempts + 1 END,
+		   last_attempt = ?2`,
+		ip, nowTS, windowSecs,
+	)
+	if err != nil {
+		return 0, err
+	}
+	attempts, _, err := GetLoginRateLimit(db, ip)
+	return attempts, err
+}
+
+// ClearLoginRateLimit xóa trạng thái khóa của IP sau khi đăng nhập thành công.
+func ClearLoginRateLimit(db *sql.DB, ip string) error {
+	_, err := db.Exec("DELETE FROM login_rate_limits WHERE ip = ?1", ip)
+	return err
+}
+
+// CleanupExpiredLoginRateLimits dọn các bản ghi khóa đăng nhập đã hết cửa sổ theo dõi.
+func CleanupExpiredLoginRateLimits(db *sql.DB, cutoffTS int64) (int64, error) {
+	res, err := db.Exec("DELETE FROM login_rate_limits WHERE last_attempt <= ?1", cutoffTS)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
