@@ -93,6 +93,19 @@ func IsSafeHTTPURL(raw string) bool {
 	return strings.TrimSpace(u.Hostname()) != ""
 }
 
+// SafeHrefURL đảm bảo giá trị nhúng vào thuộc tính href="..." chỉ là http://, https:// hoặc đường dẫn nội bộ /...
+// Nếu là javascript:, data:, vbscript: hoặc chuỗi bất thường thì trả về "#" an toàn.
+func SafeHrefURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if IsSafeHTTPURL(trimmed) {
+		return EscapeHTML(trimmed)
+	}
+	if strings.HasPrefix(trimmed, "/") && !strings.HasPrefix(trimmed, "//") && !strings.ContainsAny(trimmed, "\r\n\x00") {
+		return EscapeHTML(trimmed)
+	}
+	return "#"
+}
+
 // ValidatePublicTargetURL xác thực scheme http/https và từ chối literal IP private/loopback/metadata.
 func ValidatePublicTargetURL(raw string) error {
 	if !IsSafeHTTPURL(raw) {
@@ -122,7 +135,7 @@ func NewSafePublicHTTPClient(
 	}
 
 	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
+		Proxy:                 nil, // Tắt hoàn toàn HTTP_PROXY môi trường để bắt buộc đi qua DialContext lọc SSRF
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          32,
 		IdleConnTimeout:       60 * time.Second,

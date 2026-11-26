@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
 	"salehunter-go/internal/config"
 	"salehunter-go/internal/db"
 	"salehunter-go/internal/services/accesstrade"
@@ -102,9 +100,9 @@ func HandleDashboard(state *AppState) http.HandlerFunc {
 		hasEnvToken := state.Config.AccessTradeAPIToken != ""
 		isCloudRuntime := state.Config.PublicBaseURL != ""
 
-		csrfToken := strings.TrimSpace(ExtractCookieValue(r, "dealx_csrf"))
+		csrfToken := strings.TrimSpace(ExtractCSRFToken(r))
 		if csrfToken == "" {
-			csrfToken = uuid.NewString()
+			csrfToken = generateSecureHexToken(16)
 		}
 
 		authActionHTML := `<form method="POST" action="/admin/logout" style="display:inline;margin:0;"><button type="submit" class="btn btn--danger btn--sm">Đăng Xuất</button></form>`
@@ -385,7 +383,7 @@ func HandleDashboard(state *AppState) http.HandlerFunc {
 				utils.EscapeHTML(v.ShopName),
 				utils.EscapeHTML(v.DiscountDesc),
 				utils.EscapeHTML(v.EndTime),
-				utils.EscapeHTML(targetURL),
+				utils.SafeHrefURL(targetURL),
 			))
 		}
 		voucherRows := voucherRowsBuilder.String()
@@ -493,7 +491,7 @@ func HandleDashboard(state *AppState) http.HandlerFunc {
 				platBadge,
 				utils.EscapeHTML(c.CleanURL),
 				utils.EscapeHTML(c.CleanURL),
-				utils.EscapeHTML(c.AffiliateURL),
+				utils.SafeHrefURL(c.AffiliateURL),
 				outLinkLabel,
 				utils.EscapeHTML(vnTime),
 			))
@@ -570,11 +568,13 @@ func HandleDashboard(state *AppState) http.HandlerFunc {
 			CSRFToken:            csrfToken,
 		})
 
+		isHTTPS := IsHTTPSRequest(state, r)
 		secureAttr := ""
-		if IsHTTPSRequest(state, r) {
+		if isHTTPS {
 			secureAttr = "; Secure"
 		}
-		w.Header().Add("Set-Cookie", fmt.Sprintf("dealx_csrf=%s; HttpOnly; Path=/; SameSite=Lax%s", csrfToken, secureAttr))
+		csrfCookieName := CSRFCookieName(isHTTPS)
+		w.Header().Add("Set-Cookie", fmt.Sprintf("%s=%s; HttpOnly; Path=/; SameSite=Lax%s", csrfCookieName, csrfToken, secureAttr))
 		setNoStoreHeaders(w)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -969,8 +969,17 @@ func HandleUpdateAffiliateSettings(state *AppState) http.HandlerFunc {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
-		if err := r.ParseForm(); err == nil && state.DB != nil && state.DB.DB != nil {
-			_ = db.SetSetting(state.DB.DB, "affiliate_template", strings.TrimSpace(r.PostFormValue("template")))
+		if err := r.ParseForm(); err != nil {
+			redirectWithNotice(w, r, "Dữ liệu form không hợp lệ.")
+			return
+		}
+		tmpl := strings.TrimSpace(r.PostFormValue("template"))
+		if tmpl != "" && !isValidHTTPURL(tmpl) {
+			redirectWithNotice(w, r, "Mẫu link Affiliate dự phòng phải bắt đầu bằng https:// hoặc http:// (hoặc để trống để tắt).")
+			return
+		}
+		if state.DB != nil && state.DB.DB != nil {
+			_ = db.SetSetting(state.DB.DB, "affiliate_template", tmpl)
 			state.DB.InvalidateSettingsCache()
 			slog.Info("✅ Đã cập nhật mẫu link Affiliate dự phòng trên Web Admin.")
 		}

@@ -759,17 +759,27 @@ func BuildAffiliateURL(cleanURL, template string, userID int64, referrerID *int6
 	}
 	subID := fmt.Sprintf("u%d_r%s_%s", userID, refStr, shortClick)
 
-	if strings.Contains(template, "630000000000") || strings.TrimSpace(template) == "" {
+	trimmedTpl := strings.TrimSpace(template)
+	if strings.Contains(trimmedTpl, "630000000000") || trimmedTpl == "" || !utils.IsSafeHTTPURL(trimmedTpl) {
 		return cleanURL, subID, false
 	}
 	encoded := utils.PercentEncodeRFC3986(cleanURL)
+	userStr := strconv.FormatInt(userID, 10)
 	r := strings.NewReplacer(
+		"{{CLEAN_URL}}", encoded,
 		"{CLEAN_URL}", encoded,
-		"{USER_ID}", strconv.FormatInt(userID, 10),
+		"{{USER_ID}}", userStr,
+		"{USER_ID}", userStr,
+		"{{REF_ID}}", refStr,
 		"{REF_ID}", refStr,
+		"{{CLICK_ID}}", shortClick,
 		"{CLICK_ID}", shortClick,
 	)
-	return r.Replace(template), subID, true
+	built := r.Replace(trimmedTpl)
+	if !utils.IsSafeHTTPURL(built) {
+		return cleanURL, subID, false
+	}
+	return built, subID, true
 }
 
 // PickBestVoucher tạo gợi ý voucher & mẹo áp mã phù hợp từng sàn.

@@ -89,6 +89,7 @@ func Init(cfg config.Config) (*AppDb, error) {
 }
 
 func initWithCacheFlag(cfg config.Config, cacheEnabled bool) (*AppDb, error) {
+	SetSettingsEncryptionSeed(cfg.SettingsEncryptionSeed())
 	tursoURL := strings.TrimSpace(cfg.TursoURL)
 	tursoToken := strings.TrimSpace(cfg.TursoAuthToken)
 
@@ -146,6 +147,7 @@ func initWithCacheFlag(cfg config.Config, cacheEnabled bool) (*AppDb, error) {
 
 // InitLocalForTest khởi tạo SQLite cục bộ thuần Go phục vụ kiểm thử (mặc định tắt L1 cache giống Rust cfg(test)).
 func InitLocalForTest(databasePath string) (*AppDb, error) {
+	SetSettingsEncryptionSeed("unit-test-default-seed")
 	sqlDB, err := openLocalSQLite(databasePath)
 	if err != nil {
 		return nil, fmt.Errorf("không thể khởi tạo SQLite test: %w", err)

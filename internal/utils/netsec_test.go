@@ -62,6 +62,15 @@ func TestIsSafeHTTPURL(t *testing.T) {
 			t.Errorf("expected IsSafeHTTPURL(%q) to return false", u)
 		}
 	}
+	if got := SafeHrefURL("javascript:alert(1)"); got != "#" {
+		t.Fatalf("expected SafeHrefURL to neutralize javascript: to '#', got %q", got)
+	}
+	if got := SafeHrefURL("//evil.example.com/phish"); got != "#" {
+		t.Fatalf("expected SafeHrefURL to block protocol-relative URL, got %q", got)
+	}
+	if got := SafeHrefURL("/?q=ao&plat=Shopee"); got != "/?q=ao&amp;plat=Shopee" {
+		t.Fatalf("unexpected SafeHrefURL for internal path: %q", got)
+	}
 }
 
 func TestSafePublicHTTPClientBlocksLoopbackAndMetadata(t *testing.T) {

@@ -188,7 +188,7 @@ func AdminCSRFMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		cookieCSRF := ExtractCookieValue(r, "dealx_csrf")
+		cookieCSRF := ExtractCSRFToken(r)
 		hasSessionCookie := ExtractSessionToken(r) != ""
 		isTrustedLocal := r.Header.Get(LocalPCTrustedHeader) == "1"
 		headerCSRF := strings.TrimSpace(r.Header.Get("X-CSRF-Token"))

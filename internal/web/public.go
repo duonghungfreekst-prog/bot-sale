@@ -166,7 +166,7 @@ func HandlePublicConvert(state *AppState) http.HandlerFunc {
 				}
 				matchedBtns.WriteString(fmt.Sprintf(
 					`<a class="btn btn--secondary" href="%s" target="_blank" rel="noopener noreferrer"><svg class="ico" aria-hidden="true"><use href="#ico-crown"/></svg><span>%s%s</span><svg class="ico" aria-hidden="true"><use href="#ico-external"/></svg></a>`,
-					utils.EscapeHTML(wrappedEx),
+					utils.SafeHrefURL(wrappedEx),
 					utils.EscapeHTML(shortLabel),
 					utils.EscapeHTML(codeLabel),
 				))
@@ -195,7 +195,7 @@ func HandlePublicConvert(state *AppState) http.HandlerFunc {
 			wrappedV := state.DB.WrapURLCached(ownedAff.ShortlinkBase, enrichedVURL, mv.ShopName, mv.Platform)
 			matchedBtns.WriteString(fmt.Sprintf(
 				`<a class="btn btn--secondary" href="%s" target="_blank" rel="noopener noreferrer"><svg class="ico" aria-hidden="true"><use href="#ico-ticket"/></svg><span>Mã %s (%s)</span><svg class="ico" aria-hidden="true"><use href="#ico-external"/></svg></a>`,
-				utils.EscapeHTML(wrappedV),
+				utils.SafeHrefURL(wrappedV),
 				utils.EscapeHTML(mv.CouponCode),
 				utils.EscapeHTML(mv.DiscountBadge()),
 			))
@@ -227,7 +227,7 @@ func HandlePublicConvert(state *AppState) http.HandlerFunc {
 			utils.EscapeHTML(parsed.ProductTitle),
 			metaLine,
 			utils.EscapeHTML(wrappedMain),
-			utils.EscapeHTML(wrappedMain),
+			utils.SafeHrefURL(wrappedMain),
 			utils.EscapeHTML(wrappedMain),
 			matchedBtns.String(),
 		)
@@ -479,7 +479,7 @@ func renderPublicDealCard(card publicDealCardData) string {
 		utils.EscapeHTML(card.Desc),
 		couponRowHTML,
 		utils.EscapeHTML(card.NoteTxt),
-		utils.EscapeHTML(card.WrappedURL),
+		utils.SafeHrefURL(card.WrappedURL),
 		utils.EscapeHTML(finalCTALabel),
 	)
 }

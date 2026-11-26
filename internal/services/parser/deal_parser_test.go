@@ -113,4 +113,14 @@ func TestIsShortLinkStrictAndSSRFBlocked(t *testing.T) {
 	if _, err := p.ProcessLink("http://127.0.0.1:18091/health?q=s.shopee.vn", 1, nil, AffiliateSettings{}); err == nil {
 		t.Fatal("expected ProcessLink to reject private/loopback target URL")
 	}
+
+	// Kiểm tra BuildAffiliateURL hỗ trợ {{CLEAN_URL}} và chặn template có scheme độc hại (javascript:)
+	doubleBrace, _, isAff := BuildAffiliateURL("https://shopee.vn/product/1/2", "https://go.isclix.com/deep_link/1/2?url={{CLEAN_URL}}", 7, nil, "abcdef123456")
+	if !isAff || strings.Contains(doubleBrace, "{{") || !strings.Contains(doubleBrace, "shopee.vn") {
+		t.Fatalf("unexpected double-brace BuildAffiliateURL output: %q (isAff=%v)", doubleBrace, isAff)
+	}
+	evilOut, _, evilAff := BuildAffiliateURL("https://shopee.vn/product/1/2", "javascript:alert('{{CLEAN_URL}}')", 7, nil, "abcdef123456")
+	if evilAff || evilOut != "https://shopee.vn/product/1/2" {
+		t.Fatalf("expected unsafe template scheme to fall back to cleanURL, got %q (isAff=%v)", evilOut, evilAff)
+	}
 }

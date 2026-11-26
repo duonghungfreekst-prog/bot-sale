@@ -41,6 +41,7 @@ type Config struct {
 	ShortlinkBaseURL            string
 	TelegramWebhookSecret       string
 	TrustCloudflareHeaders      bool
+	AppSecretKey                string
 }
 
 func loadDotEnvIfExists() {
@@ -204,6 +205,15 @@ func (c *Config) ValidateCloudSecurity() error {
 	return nil
 }
 
+// SettingsEncryptionSeed trả về nguồn khóa mã hóa AES-256-GCM cho secrets trong bảng settings:
+// ưu tiên APP_SECRET_KEY (để giữ khóa cố định kể cả khi đổi mật khẩu Admin), nếu trống dùng AdminPassword.
+func (c *Config) SettingsEncryptionSeed() string {
+	if s := strings.TrimSpace(c.AppSecretKey); s != "" {
+		return s
+	}
+	return c.AdminPassword
+}
+
 func readEnvTruthy(key string) bool {
 	switch strings.ToLower(readEnvNonEmpty(key)) {
 	case "1", "true", "yes", "on":
@@ -308,5 +318,6 @@ func FromEnv() Config {
 		ShortlinkBaseURL:            shortlinkBase,
 		TelegramWebhookSecret:       webhookSecret,
 		TrustCloudflareHeaders:      readEnvTruthy("TRUST_CLOUDFLARE_HEADERS"),
+		AppSecretKey:                readEnvNonEmpty("APP_SECRET_KEY"),
 	}
 }

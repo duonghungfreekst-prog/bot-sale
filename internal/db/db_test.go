@@ -303,3 +303,47 @@ func TestLoginRateLimitPersistenceAndClickRestore(t *testing.T) {
 		t.Fatalf("expected 2 clicks restored into RAM buffer after DB flush error, got %d", restored)
 	}
 }
+
+func TestSensitiveSettingsEncryptedAtRestAES256GCM(t *testing.T) {
+	appDB, err := InitLocalForTest(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = appDB.Close() }()
+
+	SetSettingsEncryptionSeed("test-secret-master-key-2026")
+	defer SetSettingsEncryptionSeed("unit-test-default-seed")
+
+	const rawToken = "at_live_super_secret_key_999"
+	if err := SetSetting(appDB.DB, "accesstrade_api_token", rawToken); err != nil {
+		t.Fatalf("SetSetting encrypted failed: %v", err)
+	}
+	if err := SetSetting(appDB.DB, "campaign_shopee", "camp_public_123"); err != nil {
+		t.Fatalf("SetSetting public failed: %v", err)
+	}
+
+	// Kiểm tra trực tiếp giá trị thô trong cột value của bảng settings: phải là enc:v1:..., KHÔNG chứa plaintext
+	var rawStoredSecret, rawStoredPublic string
+	if err := appDB.DB.QueryRow("SELECT value FROM settings WHERE key = 'accesstrade_api_token'").Scan(&rawStoredSecret); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(rawStoredSecret, "enc:v1:") || strings.Contains(rawStoredSecret, "super_secret") {
+		t.Fatalf("expected AES-256-GCM ciphertext in DB at-rest, got: %q", rawStoredSecret)
+	}
+	if err := appDB.DB.QueryRow("SELECT value FROM settings WHERE key = 'campaign_shopee'").Scan(&rawStoredPublic); err != nil {
+		t.Fatal(err)
+	}
+	if rawStoredPublic != "camp_public_123" {
+		t.Fatalf("non-sensitive setting should stay plain, got: %q", rawStoredPublic)
+	}
+
+	// Đọc qua GetSetting & GetSettingsMap tự động giải mã chính xác
+	decPtr, err := GetSetting(appDB.DB, "accesstrade_api_token")
+	if err != nil || decPtr == nil || *decPtr != rawToken {
+		t.Fatalf("GetSetting decrypt mismatch: %v, err=%v", decPtr, err)
+	}
+	m, err := GetSettingsMap(appDB.DB)
+	if err != nil || m["accesstrade_api_token"] != rawToken {
+		t.Fatalf("GetSettingsMap decrypt mismatch: %q, err=%v", m["accesstrade_api_token"], err)
+	}
+}

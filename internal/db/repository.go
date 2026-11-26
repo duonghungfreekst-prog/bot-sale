@@ -11,14 +11,44 @@ import (
 	"math"
 	"math/big"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 
+	"salehunter-go/internal/config"
 	"salehunter-go/internal/utils"
 )
 
 const shortCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+
+var settingsEncKey atomic.Pointer[[32]byte]
+
+// SetSettingsEncryptionSeed thiết lập khóa AES-256-GCM dẫn xuất để tự động mã hóa/giải mã secrets trong bảng settings.
+func SetSettingsEncryptionSeed(seed string) {
+	if strings.TrimSpace(seed) == "" {
+		seed = config.DefaultAdminPassword
+	}
+	k := utils.DeriveAES256Key(seed)
+	settingsEncKey.Store(&k)
+}
+
+func getSettingsEncryptionKey() [32]byte {
+	if p := settingsEncKey.Load(); p != nil {
+		return *p
+	}
+	return utils.DeriveAES256Key(config.DefaultAdminPassword)
+}
+
+// IsSensitiveSettingKey xác định các khóa cấu hình bí mật bắt buộc mã hóa AES-256-GCM At-Rest trong DB.
+func IsSensitiveSettingKey(key string) bool {
+	switch strings.TrimSpace(key) {
+	case "accesstrade_api_token", "shopee_app_secret", "cloudflare_tunnel_token", "shopee_social_params":
+		return true
+	default:
+		return false
+	}
+}
 
 func sha256HexLower(b []byte) string {
 	sum := sha256.Sum256(b)
@@ -730,7 +760,7 @@ func GetRecentClicksForAdmin(db *sql.DB, limit int64) ([]ClickRecord, error) {
 	return list, rows.Err()
 }
 
-// GetSetting đọc giá trị 1 key từ bảng settings.
+// GetSetting đọc giá trị 1 key từ bảng settings (tự động giải mã AES-256-GCM nếu là khóa bí mật).
 func GetSetting(db *sql.DB, key string) (*string, error) {
 	var val string
 	err := db.QueryRow("SELECT value FROM settings WHERE key = ?1", key).Scan(&val)
@@ -740,10 +770,19 @@ func GetSetting(db *sql.DB, key string) (*string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if IsSensitiveSettingKey(key) && val != "" {
+		dec, decErr := utils.DecryptAESGCM(getSettingsEncryptionKey(), val)
+		if decErr != nil {
+			slog.Warn("Không thể giải mã cấu hình nhạy cảm trong DB (hãy kiểm tra APP_SECRET_KEY / ADMIN_PASSWORD)", "key", key)
+			empty := ""
+			return &empty, nil
+		}
+		val = dec
+	}
 	return &val, nil
 }
 
-// GetSettingsMap đọc toàn bộ cấu hình nhẹ trong 1 query (bỏ qua market_vouchers_cache_json).
+// GetSettingsMap đọc toàn bộ cấu hình nhẹ trong 1 query (tự động giải mã các khóa nhạy cảm).
 func GetSettingsMap(db *sql.DB) (map[string]string, error) {
 	rows, err := db.Query("SELECT key, value FROM settings WHERE key != 'market_vouchers_cache_json'")
 	if err != nil {
@@ -751,22 +790,39 @@ func GetSettingsMap(db *sql.DB) (map[string]string, error) {
 	}
 	defer rows.Close()
 
+	encKey := getSettingsEncryptionKey()
 	res := make(map[string]string)
 	for rows.Next() {
 		var k, v string
 		if err := rows.Scan(&k, &v); err != nil {
 			return nil, err
 		}
+		if IsSensitiveSettingKey(k) && v != "" {
+			if dec, decErr := utils.DecryptAESGCM(encKey, v); decErr == nil {
+				v = dec
+			} else {
+				slog.Warn("Không thể giải mã cấu hình nhạy cảm trong GetSettingsMap", "key", k)
+				v = ""
+			}
+		}
 		res[k] = v
 	}
 	return res, rows.Err()
 }
 
-// SetSetting lưu/ghi đè 1 key vào bảng settings.
+// SetSetting lưu/ghi đè 1 key vào bảng settings (tự động mã hóa AES-256-GCM cho khóa nhạy cảm).
 func SetSetting(db *sql.DB, key, value string) error {
+	toStore := value
+	if IsSensitiveSettingKey(key) && value != "" {
+		enc, err := utils.EncryptAESGCM(getSettingsEncryptionKey(), value)
+		if err != nil {
+			return err
+		}
+		toStore = enc
+	}
 	_, err := db.Exec(
 		"INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
-		key, value,
+		key, toStore,
 	)
 	return err
 }

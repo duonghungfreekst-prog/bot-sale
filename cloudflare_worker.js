@@ -838,13 +838,14 @@ async function serveEdgeAsset(request, path) {
   }
 
   const fileName = path === "/assets/bot-logo.webp" ? "bot-logo.webp" : "bot-cart-3d.webp";
-  let assetResp = await fetch(`${ASSET_FALLBACK_BASE}/${fileName}`, {
+  let assetResp = await fetch(ORIGIN_URL.replace(/\/+$/, "") + path, {
+    headers: { "x-dealx-cloak": "1" },
     cf: { cacheEverything: true, cacheTtl: 86400 },
   }).catch(() => null);
 
   if (!assetResp || !assetResp.ok) {
-    assetResp = await fetch(ORIGIN_URL.replace(/\/+$/, "") + path, {
-      headers: { "x-dealx-cloak": "1" },
+    assetResp = await fetch(`${ASSET_FALLBACK_BASE}/${fileName}`, {
+      cf: { cacheEverything: true, cacheTtl: 86400 },
     }).catch(() => null);
   }
 
@@ -877,9 +878,12 @@ export default {
           "cache-control": "public, max-age=300",
           "x-content-type-options": "nosniff",
           "x-frame-options": "DENY",
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "permissions-policy": "camera=(), microphone=(), geolocation=()",
+          "cross-origin-opener-policy": "same-origin",
           "referrer-policy": "no-referrer",
           "content-security-policy":
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:",
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
         },
       });
     }
@@ -894,10 +898,10 @@ export default {
       return serveEdgeAsset(request, path);
     }
 
-    // Chỉ cho phép GET/HEAD vào mã shortlink 6-12 ký tự (/{code}, /go/{code}) hoặc /assets/bridge.js
+    // Chỉ cho phép GET/HEAD vào mã shortlink 6-12 ký tự (/{code}, /go/{code}) hoặc /assets/bridge.js, /assets/theme.js
     const isReserved = ["/health", "/convert", "/status", "/metrics", "/robots"].includes(path.toLowerCase());
     const isShortCode = !isReserved && /^\/(?:go\/)?[A-Za-z0-9]{6,12}$/.test(path);
-    const isBridgeAsset = path === "/assets/bridge.js";
+    const isBridgeAsset = path === "/assets/bridge.js" || path === "/assets/theme.js";
 
     // Mọi đường dẫn khác (/admin, /admin/login, /convert, /health, /assets/home.js...) -> 404 Not Found
     if (!isAllowedMethod || (!isShortCode && !isBridgeAsset)) {

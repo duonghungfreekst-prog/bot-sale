@@ -176,3 +176,19 @@ func TestRedactTokenInErrorAndParseCommand(t *testing.T) {
 		t.Fatal("expected other_bot command to be ignored")
 	}
 }
+
+func TestCanViewAdminStatsFailClosed(t *testing.T) {
+	// Khi chưa cấu hình ADMIN_TELEGRAM_ID (adminID == 0), KHÔNG cho phép bất kỳ user nào xem thống kê nội bộ / Origin URL
+	if CanViewAdminStats(0, 123456789) {
+		t.Fatal("expected CanViewAdminStats(0, user) to be false (fail-closed)")
+	}
+	if CanViewAdminStats(0, 0) {
+		t.Fatal("expected CanViewAdminStats(0, 0) to be false")
+	}
+	if CanViewAdminStats(999888777, 123456789) {
+		t.Fatal("expected non-admin user to be denied")
+	}
+	if !CanViewAdminStats(999888777, 999888777) {
+		t.Fatal("expected matching adminID == userID to be allowed")
+	}
+}

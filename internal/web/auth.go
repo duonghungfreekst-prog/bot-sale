@@ -42,9 +42,43 @@ func ExtractCookieValue(r *http.Request, name string) string {
 	return ""
 }
 
-// ExtractSessionToken trích xuất session token từ cookie `dealx_session`.
+const (
+	CookieSessionHTTP  = "dealx_session"
+	CookieSessionHTTPS = "__Host-dealx_session"
+	CookieCSRFHTTP     = "dealx_csrf"
+	CookieCSRFHTTPS    = "__Host-dealx_csrf"
+)
+
+// SessionCookieName trả về tên cookie phiên chuẩn (__Host-dealx_session trên HTTPS để chống Subdomain Cookie Tossing).
+func SessionCookieName(isHTTPS bool) string {
+	if isHTTPS {
+		return CookieSessionHTTPS
+	}
+	return CookieSessionHTTP
+}
+
+// CSRFCookieName trả về tên cookie CSRF chuẩn (__Host-dealx_csrf trên HTTPS để chống Subdomain Cookie Tossing).
+func CSRFCookieName(isHTTPS bool) string {
+	if isHTTPS {
+		return CookieCSRFHTTPS
+	}
+	return CookieCSRFHTTP
+}
+
+// ExtractSessionToken ưu tiên đọc __Host-dealx_session trước dealx_session để chặn tấn công Cookie Tossing.
 func ExtractSessionToken(r *http.Request) string {
-	return ExtractCookieValue(r, "dealx_session")
+	if v := strings.TrimSpace(ExtractCookieValue(r, CookieSessionHTTPS)); v != "" {
+		return v
+	}
+	return strings.TrimSpace(ExtractCookieValue(r, CookieSessionHTTP))
+}
+
+// ExtractCSRFToken ưu tiên đọc __Host-dealx_csrf trước dealx_csrf để chặn tấn công Cookie Tossing.
+func ExtractCSRFToken(r *http.Request) string {
+	if v := strings.TrimSpace(ExtractCookieValue(r, CookieCSRFHTTPS)); v != "" {
+		return v
+	}
+	return strings.TrimSpace(ExtractCookieValue(r, CookieCSRFHTTP))
 }
 
 // ExtractClientIP lấy địa chỉ IP thực của client mặc định không tin header Cloudflare (an toàn cho Render/Fly/VPS).
@@ -512,12 +546,22 @@ func HandleLoginSubmit(state *AppState) http.HandlerFunc {
 			}
 
 			slog.Info("✅ Quản trị viên đăng nhập thành công vào Web Dashboard!")
+			isHTTPS := IsHTTPSRequest(state, r)
 			secureFlag := ""
-			if IsHTTPSRequest(state, r) {
+			if isHTTPS {
 				secureFlag = "; Secure"
 			}
-			cookieHeader := fmt.Sprintf("dealx_session=%s; HttpOnly; Path=/; SameSite=Lax; Max-Age=86400%s", token, secureFlag)
-			w.Header().Add("Set-Cookie", cookieHeader)
+			sessCookieName := SessionCookieName(isHTTPS)
+			csrfCookieName := CSRFCookieName(isHTTPS)
+			rotatedCSRF := generateSecureHexToken(16) // Xoay vòng mã CSRF ngay sau khi đăng nhập thành công
+
+			w.Header().Add("Set-Cookie", fmt.Sprintf("%s=%s; HttpOnly; Path=/; SameSite=Lax; Max-Age=86400%s", sessCookieName, token, secureFlag))
+			w.Header().Add("Set-Cookie", fmt.Sprintf("%s=%s; HttpOnly; Path=/; SameSite=Lax%s", csrfCookieName, rotatedCSRF, secureFlag))
+			if isHTTPS {
+				// Dọn sạch cookie không tiền tố cũ nếu trình duyệt còn lưu
+				w.Header().Add("Set-Cookie", CookieSessionHTTP+"=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0; Secure")
+				w.Header().Add("Set-Cookie", CookieCSRFHTTP+"=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0; Secure")
+			}
 			setNoStoreHeaders(w)
 			http.Redirect(w, r, "/admin", http.StatusSeeOther)
 			return
@@ -585,12 +629,18 @@ func HandleLogout(state *AppState) http.HandlerFunc {
 				_ = db.DeleteAdminSession(state.DB.DB, token)
 			}
 		}
+		isHTTPS := IsHTTPSRequest(state, r)
 		secureFlag := ""
-		if IsHTTPSRequest(state, r) {
+		if isHTTPS {
 			secureFlag = "; Secure"
 		}
 		setNoStoreHeaders(w)
-		w.Header().Add("Set-Cookie", "dealx_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"+secureFlag)
+		w.Header().Add("Set-Cookie", CookieSessionHTTP+"=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"+secureFlag)
+		w.Header().Add("Set-Cookie", CookieCSRFHTTP+"=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"+secureFlag)
+		if isHTTPS {
+			w.Header().Add("Set-Cookie", CookieSessionHTTPS+"=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0; Secure")
+			w.Header().Add("Set-Cookie", CookieCSRFHTTPS+"=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0; Secure")
+		}
 		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 	}
 }

@@ -108,7 +108,7 @@ func FormatTelegramLinkDisplay(rawURL, platform string, isWrapped bool) string {
 	}
 	return fmt.Sprintf(
 		`<a href="%s">🔗 Bấm mở %s kèm ưu đãi ↗</a>`,
-		utils.EscapeHTML(trimmed),
+		utils.SafeHrefURL(trimmed),
 		utils.EscapeHTML(platform),
 	)
 }
@@ -1035,7 +1035,7 @@ func HandleCommand(
 
 	case CmdStats:
 		adminID := resolveAdminIDFromCache(appDB, cfg)
-		canViewAdminStats := adminID == 0 || adminID == userID
+		canViewAdminStats := CanViewAdminStats(adminID, userID)
 
 		var statsHTML string
 		if canViewAdminStats {
@@ -1055,6 +1055,12 @@ func HandleCommand(
 					"100%% doanh thu chiết khấu từ các lượt click trên sẽ được sàn TMĐT đối soát về tài khoản Affiliate của bạn!",
 				userID, utils.EscapeHTML(adminURL), stats.TotalUsers, stats.TotalClicks, len(trackedOrders),
 			)
+		} else if adminID == 0 {
+			statsHTML = fmt.Sprintf(
+				"🆔 <b>Telegram ID của bạn:</b> <code>%d</code>\n\n"+
+					"🔒 <i>Nếu bạn là Quản trị viên: hãy sao chép mã số trên vào mục <b>Báo Đơn &amp; Doanh Thu</b> trên Trang Quản Trị để kích hoạt quyền xem thống kê nội bộ &amp; nhận báo đơn tự động.</i>",
+				userID,
+			)
 		} else {
 			statsHTML = fmt.Sprintf(
 				"🆔 <b>Telegram ID của bạn:</b> <code>%d</code>\n\n"+
@@ -1064,6 +1070,11 @@ func HandleCommand(
 		}
 		_, _ = client.SendMessage(ctx, msg.Chat.ID, statsHTML, SendMessageOpts{ParseMode: "HTML"})
 	}
+}
+
+// CanViewAdminStats kiểm tra quyền xem thống kê nội bộ theo chính sách Fail-Closed (bắt buộc khớp ADMIN_TELEGRAM_ID khác 0).
+func CanViewAdminStats(adminID, userID int64) bool {
+	return adminID != 0 && userID != 0 && adminID == userID
 }
 
 // HandleCallback xử lý các sự kiện bấm nút Inline Keyboard.

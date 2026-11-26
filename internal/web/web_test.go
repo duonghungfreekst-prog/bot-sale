@@ -102,13 +102,13 @@ func TestAdminCSRFAndSameOriginProtection(t *testing.T) {
 	}
 	var csrfVal string
 	for _, c := range resGet.Result().Cookies() {
-		if c.Name == "dealx_csrf" {
+		if c.Name == CookieCSRFHTTPS {
 			csrfVal = c.Value
 			break
 		}
 	}
 	if csrfVal == "" {
-		t.Fatal("expected dealx_csrf cookie on GET /admin")
+		t.Fatal("expected __Host-dealx_csrf cookie on HTTPS GET /admin")
 	}
 	if !strings.Contains(resGet.Body.String(), fmt.Sprintf(`name="_csrf" value="%s"`, csrfVal)) {
 		t.Fatal("expected _csrf hidden input injected into POST forms")
@@ -401,33 +401,71 @@ func TestDeepSecurityHardening(t *testing.T) {
 		t.Fatalf("expected 303 on valid login, got %d", resLoginOK.Code)
 	}
 	var sessCookie *http.Cookie
+	var loginRotatedCSRF *http.Cookie
 	for _, c := range resLoginOK.Result().Cookies() {
-		if c.Name == "dealx_session" {
+		if c.Name == CookieSessionHTTPS {
 			sessCookie = c
-			break
+		}
+		if c.Name == CookieCSRFHTTPS {
+			loginRotatedCSRF = c
 		}
 	}
-	if sessCookie == nil || !sessCookie.Secure {
-		t.Fatalf("expected dealx_session cookie with Secure flag under X-Forwarded-Proto: https, got %#v", sessCookie)
+	if sessCookie == nil || !sessCookie.Secure || sessCookie.Path != "/" || sessCookie.Domain != "" {
+		t.Fatalf("expected __Host-dealx_session cookie with Secure+Path=/ and empty Domain under HTTPS, got %#v", sessCookie)
+	}
+	if loginRotatedCSRF == nil || !loginRotatedCSRF.Secure || loginRotatedCSRF.Value == "" {
+		t.Fatalf("expected rotated __Host-dealx_csrf cookie issued on login, got %#v", loginRotatedCSRF)
 	}
 
 	reqDash := httptest.NewRequest(http.MethodGet, "/admin", nil)
 	reqDash.Host = "proxy-backend.internal"
 	reqDash.Header.Set("X-Forwarded-Proto", "https")
 	reqDash.AddCookie(sessCookie)
+	reqDash.AddCookie(loginRotatedCSRF)
 	resDash := doReq(handlerCloud, reqDash)
 	if resDash.Code != http.StatusOK || !strings.Contains(resDash.Header().Get("Cache-Control"), "no-store") {
 		t.Fatalf("expected 200 and no-store on /admin, got code=%d cc=%q", resDash.Code, resDash.Header().Get("Cache-Control"))
 	}
 	var csrfCookie *http.Cookie
 	for _, c := range resDash.Result().Cookies() {
-		if c.Name == "dealx_csrf" {
+		if c.Name == CookieCSRFHTTPS {
 			csrfCookie = c
 			break
 		}
 	}
 	if csrfCookie == nil || !csrfCookie.Secure {
-		t.Fatalf("expected dealx_csrf cookie with Secure flag under X-Forwarded-Proto: https, got %#v", csrfCookie)
+		t.Fatalf("expected __Host-dealx_csrf cookie with Secure flag under X-Forwarded-Proto: https, got %#v", csrfCookie)
+	}
+
+	// Chống Subdomain Cookie Tossing: dù có dealx_csrf=EVIL_TOSSED đi kèm, server chỉ tin __Host-dealx_csrf
+	reqTossed := httptest.NewRequest(http.MethodPost, "/admin/settings/affiliate",
+		strings.NewReader(url.Values{"template": {"https://go.isclix.com/?url={{CLEAN_URL}}"}, "_csrf": {"EVIL_TOSSED"}}.Encode()))
+	reqTossed.Host = "proxy-backend.internal"
+	reqTossed.Header.Set("Origin", "http://proxy-backend.internal")
+	reqTossed.Header.Set("X-Forwarded-Proto", "https")
+	reqTossed.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	reqTossed.AddCookie(&http.Cookie{Name: CookieCSRFHTTP, Value: "EVIL_TOSSED"})
+	reqTossed.AddCookie(csrfCookie)
+	reqTossed.AddCookie(sessCookie)
+	if resToss := doReq(handlerCloud, reqTossed); resToss.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 blocking Subdomain Cookie Tossing attack, got %d", resToss.Code)
+	}
+
+	// Chặn lưu affiliate_template chứa scheme độc hại (javascript:)
+	reqBadTpl := httptest.NewRequest(http.MethodPost, "/admin/settings/affiliate",
+		strings.NewReader(url.Values{"template": {"javascript:alert(1)"}, "_csrf": {csrfCookie.Value}}.Encode()))
+	reqBadTpl.Host = "proxy-backend.internal"
+	reqBadTpl.Header.Set("Origin", "http://proxy-backend.internal")
+	reqBadTpl.Header.Set("X-Forwarded-Proto", "https")
+	reqBadTpl.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	reqBadTpl.AddCookie(csrfCookie)
+	reqBadTpl.AddCookie(sessCookie)
+	resBadTpl := doReq(handlerCloud, reqBadTpl)
+	if resBadTpl.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect with notice on invalid affiliate_template, got %d", resBadTpl.Code)
+	}
+	if savedTpl, _ := db.GetSetting(stateCloud.DB.DB, "affiliate_template"); savedTpl != nil && strings.Contains(*savedTpl, "javascript:") {
+		t.Fatalf("unsafe javascript: affiliate_template must never be saved to DB: %q", *savedTpl)
 	}
 
 	// 3. Chặn redirect nguy hiểm (javascript:) trong bảng short_links
