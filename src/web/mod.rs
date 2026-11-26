@@ -481,7 +481,7 @@ async fn handle_public_convert(
         if now_ts - entry.1 >= 60 {
             *entry = (1, now_ts);
         } else if entry.0 >= 20 {
-            let err_html = r#"<div class="convert-alert convert-alert--error" role="alert">⏳ Bạn đang gửi quá nhanh. Vui lòng chờ khoảng 1 phút rồi thử đổi link tiếp nhé!</div>"#;
+            let err_html = r##"<div class="convert-alert convert-alert--error" role="alert"><svg class="ico" aria-hidden="true"><use href="#ico-clock"/></svg><span>Bạn đang gửi quá nhanh. Vui lòng chờ khoảng 1 phút rồi thử đổi link tiếp nhé!</span></div>"##;
             return render_public_home(&state, PublicHomeQuery::default(), &input_raw, err_html)
                 .await;
         } else {
@@ -490,12 +490,12 @@ async fn handle_public_convert(
     }
 
     if state.parser.extract_first_url(&input_raw).is_none() {
-        let err_html = r#"<div class="convert-alert convert-alert--error" role="alert">⚠️ Vui lòng dán đúng đường link sản phẩm bắt đầu bằng <code>https://</code> từ Shopee, Tiki, Lazada, TikTok Shop hoặc Alibaba.</div>"#;
+        let err_html = r##"<div class="convert-alert convert-alert--error" role="alert"><svg class="ico" aria-hidden="true"><use href="#ico-warn"/></svg><span>Vui lòng dán đúng đường link sản phẩm bắt đầu bằng <code>https://</code> từ Shopee, Tiki, Lazada, TikTok Shop hoặc Alibaba.</span></div>"##;
         return render_public_home(&state, PublicHomeQuery::default(), &input_raw, err_html).await;
     }
 
     let Ok(conn) = state.db.conn() else {
-        let err_html = r#"<div class="convert-alert convert-alert--error" role="alert">❌ Hệ thống cơ sở dữ liệu tạm bận, vui lòng thử lại sau ít giây.</div>"#;
+        let err_html = r##"<div class="convert-alert convert-alert--error" role="alert"><svg class="ico" aria-hidden="true"><use href="#ico-warn"/></svg><span>Hệ thống cơ sở dữ liệu tạm bận, vui lòng thử lại sau ít giây.</span></div>"##;
         return render_public_home(&state, PublicHomeQuery::default(), &input_raw, err_html).await;
     };
 
@@ -582,7 +582,7 @@ async fn handle_public_convert(
                         .map(|c| format!(" · {}", c))
                         .unwrap_or_default();
                     matched_btns.push_str(&format!(
-                        r#"<a class="btn btn--secondary" href="{}" target="_blank" rel="noopener noreferrer">👑 {}{} ↗</a>"#,
+                        r##"<a class="btn btn--secondary" href="{}" target="_blank" rel="noopener noreferrer"><svg class="ico" aria-hidden="true"><use href="#ico-crown"/></svg><span>{}{}</span><svg class="ico" aria-hidden="true"><use href="#ico-external"/></svg></a>"##,
                         escape_html(&wrapped_ex),
                         escape_html(&short_label),
                         escape_html(&code_label)
@@ -624,7 +624,7 @@ async fn handle_public_convert(
                 )
                 .await;
                 matched_btns.push_str(&format!(
-                    r#"<a class="btn btn--secondary" href="{}" target="_blank" rel="noopener noreferrer">🎟️ Mã {} ({}) ↗</a>"#,
+                    r##"<a class="btn btn--secondary" href="{}" target="_blank" rel="noopener noreferrer"><svg class="ico" aria-hidden="true"><use href="#ico-ticket"/></svg><span>Mã {} ({})</span><svg class="ico" aria-hidden="true"><use href="#ico-external"/></svg></a>"##,
                     escape_html(&wrapped_v),
                     escape_html(&mv.coupon_code),
                     escape_html(&mv.discount_badge())
@@ -636,22 +636,24 @@ async fn handle_public_convert(
             } else {
                 "Đã gắn link ưu đãi trực tiếp"
             };
+            let plat_dot_color = platform_brand_color(parsed.platform.as_str());
 
             let result_html = format!(
-                r#"<div class="convert-result" aria-live="polite">
+                r##"<div class="convert-result" aria-live="polite">
                     <div class="convert-result__head">
-                        <span class="badge badge--platform">{}</span>
+                        <span class="badge badge--platform"><span class="plat-dot" style="background:{};" aria-hidden="true"></span><span>{}</span></span>
                         <span class="badge badge--accent">{}</span>
                     </div>
                     <h2 class="convert-result__title">{}</h2>
                     {}
                     <div class="convert-result__url"><code>{}</code></div>
                     <div class="convert-actions">
-                        <a class="btn btn--primary" href="{}" target="_blank" rel="noopener noreferrer">🚀 Mở Ứng Dụng &amp; Áp Mã Ngay ↗</a>
-                        <button type="button" class="btn btn--secondary js-copy-link" data-copy-url="{}">📋 Sao chép link ưu đãi</button>
+                        <a class="btn btn--primary" href="{}" target="_blank" rel="noopener noreferrer"><svg class="ico" aria-hidden="true"><use href="#ico-rocket"/></svg><span>Mở Ứng Dụng &amp; Áp Mã Ngay</span><svg class="ico" aria-hidden="true"><use href="#ico-external"/></svg></a>
+                        <button type="button" class="btn btn--secondary js-copy-link" data-copy-url="{}"><svg class="ico" aria-hidden="true"><use href="#ico-copy"/></svg><span class="copy-lbl">Sao chép link ưu đãi</span></button>
                         {}
                     </div>
-                </div>"#,
+                </div>"##,
+                plat_dot_color,
                 escape_html(parsed.platform.as_str()),
                 aff_badge_text,
                 escape_html(&parsed.product_title),
@@ -666,7 +668,7 @@ async fn handle_public_convert(
         }
         Err(err) => {
             let err_html = format!(
-                r#"<div class="convert-alert convert-alert--error" role="alert">⚠️ Không thể phân tích link này: {}</div>"#,
+                r##"<div class="convert-alert convert-alert--error" role="alert"><svg class="ico" aria-hidden="true"><use href="#ico-warn"/></svg><span>Không thể phân tích link này: {}</span></div>"##,
                 escape_html(&err.to_string())
             );
             render_public_home(&state, PublicHomeQuery::default(), &input_raw, &err_html).await
@@ -680,7 +682,14 @@ async fn handle_home_js() -> Response {
     var themeBtn = document.getElementById("public-theme-btn");
     if (!themeBtn) return;
     var isDark = document.documentElement.getAttribute("data-theme") === "dark";
-    themeBtn.textContent = isDark ? "☀️ Giao diện Sáng" : "🌙 Giao diện Tối";
+    var icoUse = document.getElementById("public-theme-ico-use");
+    var lbl = document.getElementById("public-theme-text");
+    if (icoUse && lbl) {
+        icoUse.setAttribute("href", isDark ? "#ico-sun" : "#ico-moon");
+        lbl.textContent = isDark ? "Giao diện Sáng" : "Giao diện Tối";
+    } else {
+        themeBtn.textContent = isDark ? "Giao diện Sáng" : "Giao diện Tối";
+    }
     themeBtn.setAttribute("aria-pressed", isDark ? "true" : "false");
 }
 document.addEventListener("DOMContentLoaded", syncPublicThemeBtn);
@@ -715,9 +724,20 @@ document.addEventListener("click", function (e) {
     if (!url) return;
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(url).then(function () {
-            var old = btn.textContent;
-            btn.textContent = fromTarget ? "✅ Đã sao chép code" : "✅ Đã sao chép link";
-            setTimeout(function () { btn.textContent = old; }, 2000);
+            var lbl = btn.querySelector(".copy-lbl");
+            if (lbl) {
+                var old = lbl.textContent;
+                lbl.textContent = btn.classList.contains("copy-code-btn") ? "Đã chép" : (fromTarget ? "Đã sao chép code" : "Đã sao chép link");
+                btn.classList.add("is-copied");
+                setTimeout(function () {
+                    lbl.textContent = old;
+                    btn.classList.remove("is-copied");
+                }, 2000);
+            } else {
+                var oldText = btn.textContent;
+                btn.textContent = fromTarget ? "✅ Đã sao chép code" : "✅ Đã sao chép link";
+                setTimeout(function () { btn.textContent = oldText; }, 2000);
+            }
         });
     }
 });"##;
@@ -783,6 +803,96 @@ async fn handle_landing_js() -> Response {
     });
 })();"#;
     serve_static_asset(js.as_bytes(), "application/javascript; charset=utf-8", 3600)
+}
+
+fn platform_brand_color(platform: &str) -> &'static str {
+    let p = platform.trim().to_ascii_lowercase();
+    if p.contains("shopee") {
+        "#EA580C"
+    } else if p.contains("lazada") {
+        "#DB2777"
+    } else if p.contains("tiki") {
+        "#0284C7"
+    } else if p.contains("tiktok") {
+        "#E11D48"
+    } else if p.contains("alibaba") {
+        "#D97706"
+    } else {
+        "#64748B"
+    }
+}
+
+const PUBLIC_SVG_SPRITE: &str = r#"<svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">
+    <defs>
+        <symbol id="ico-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></symbol>
+        <symbol id="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+        <symbol id="ico-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></symbol>
+        <symbol id="ico-ticket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></symbol>
+        <symbol id="ico-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></symbol>
+        <symbol id="ico-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></symbol>
+        <symbol id="ico-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></symbol>
+        <symbol id="ico-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+        <symbol id="ico-external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></symbol>
+        <symbol id="ico-crown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"/></symbol>
+        <symbol id="ico-rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></symbol>
+        <symbol id="ico-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></symbol>
+    </defs>
+</svg>"#;
+
+#[allow(clippy::too_many_arguments)]
+fn render_public_deal_card(
+    platform: &str,
+    badge: &str,
+    title: &str,
+    desc: &str,
+    code_txt: &str,
+    note_txt: &str,
+    wrapped_url: &str,
+    cta_label: &str,
+) -> String {
+    let dot_color = platform_brand_color(platform);
+    let can_copy = !code_txt.trim().is_empty() && code_txt != "Tự động áp dụng";
+    let copy_btn = if can_copy {
+        format!(
+            r##"<button type="button" class="copy-code-btn js-copy-link" data-copy-url="{}" aria-label="Sao chép mã {}"><svg class="ico" style="width:13px;height:13px;" aria-hidden="true"><use href="#ico-copy"/></svg><span class="copy-lbl">Chép mã</span></button>"##,
+            escape_html(code_txt),
+            escape_html(code_txt)
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        r##"<article class="deal-card" style="--plat-accent:{};">
+            <div class="deal-card__top">
+                <span class="badge badge--platform"><span class="plat-dot" style="background:{};" aria-hidden="true"></span><span>{}</span></span>
+                <span class="badge badge--accent">{}</span>
+            </div>
+            <h3 class="deal-card__title">{}</h3>
+            <p class="deal-card__desc">{}</p>
+            <div class="deal-card__meta">
+                <div class="coupon-row">
+                    <span class="coupon-pill">Mã: <code>{}</code></span>
+                    {}
+                </div>
+                <span class="deal-card__note">{}</span>
+            </div>
+            <a class="btn btn--primary deal-card__cta" href="{}" target="_blank" rel="noopener noreferrer">
+                <span>{}</span>
+                <svg class="ico" style="width:15px;height:15px;" aria-hidden="true"><use href="#ico-external"/></svg>
+            </a>
+        </article>"##,
+        dot_color,
+        dot_color,
+        escape_html(platform),
+        escape_html(badge),
+        escape_html(title),
+        escape_html(desc),
+        escape_html(code_txt),
+        copy_btn,
+        escape_html(note_txt),
+        escape_html(wrapped_url),
+        escape_html(cta_label)
+    )
 }
 
 async fn render_public_home(
@@ -892,27 +1002,15 @@ async fn render_public_home(
                     }
                     None => d.deal_url.clone(),
                 };
-                cards_html.push_str(&format!(
-                    r#"<article class="deal-card">
-                        <div class="deal-card__top">
-                            <span class="badge badge--platform">{}</span>
-                            <span class="badge badge--accent">{}</span>
-                        </div>
-                        <h3 class="deal-card__title">{}</h3>
-                        <p class="deal-card__desc">{}</p>
-                        <div class="deal-card__meta">
-                            <span class="coupon-pill">Mã: <code>{}</code></span>
-                            <span class="deal-card__note">{}</span>
-                        </div>
-                        <a class="btn btn--primary deal-card__cta" href="{}" target="_blank" rel="noopener noreferrer">Lấy mã &amp; Xem ưu đãi ↗</a>
-                    </article>"#,
-                    escape_html(&d.platform),
+                cards_html.push_str(&render_public_deal_card(
+                    &d.platform,
                     badge,
-                    escape_html(&d.title),
-                    escape_html(&d.discount_desc),
-                    escape_html(code_txt),
-                    escape_html(&min_txt),
-                    escape_html(&wrapped_url)
+                    &d.title,
+                    &d.discount_desc,
+                    code_txt,
+                    &min_txt,
+                    &wrapped_url,
+                    "Lấy mã & Xem ưu đãi",
                 ));
             }
             PublicDealCard::Api(v) => {
@@ -936,27 +1034,15 @@ async fn render_public_home(
                 } else {
                     format!("HSD: {}", v.end_time.trim())
                 };
-                cards_html.push_str(&format!(
-                    r#"<article class="deal-card">
-                        <div class="deal-card__top">
-                            <span class="badge badge--platform">{}</span>
-                            <span class="badge badge--accent">{}</span>
-                        </div>
-                        <h3 class="deal-card__title">{}</h3>
-                        <p class="deal-card__desc">{}</p>
-                        <div class="deal-card__meta">
-                            <span class="coupon-pill">Mã: <code>{}</code></span>
-                            <span class="deal-card__note">{}</span>
-                        </div>
-                        <a class="btn btn--primary deal-card__cta" href="{}" target="_blank" rel="noopener noreferrer">Lấy mã &amp; Mở gian hàng ↗</a>
-                    </article>"#,
-                    escape_html(&v.platform),
-                    escape_html(&badge),
-                    escape_html(&v.shop_name),
-                    escape_html(&v.discount_desc),
-                    escape_html(&v.coupon_code),
-                    escape_html(&expiry),
-                    escape_html(&wrapped_url)
+                cards_html.push_str(&render_public_deal_card(
+                    &v.platform,
+                    &badge,
+                    &v.shop_name,
+                    &v.discount_desc,
+                    &v.coupon_code,
+                    &expiry,
+                    &wrapped_url,
+                    "Lấy mã & Mở gian hàng",
                 ));
             }
         }
@@ -1001,7 +1087,15 @@ async fn render_public_home(
                 urlencoding_simple(val)
             )
         };
-        format!(r#"<a class="{}" href="{}">{}</a>"#, active_cls, href, label)
+        let dot_html = if val == "all" {
+            String::new()
+        } else {
+            format!(
+                r#"<span class="plat-dot" style="background:{};" aria-hidden="true"></span>"#,
+                platform_brand_color(val)
+            )
+        };
+        format!(r#"<a class="{}" href="{}">{}{}</a>"#, active_cls, href, dot_html, label)
     })
     .collect::<Vec<_>>()
     .join("");
@@ -1143,17 +1237,29 @@ async fn render_public_home(
         .nav__link:hover {{ color: var(--color-text); background: var(--color-inset); }}
         .theme-toggle {{
             min-height: 42px; padding: 8px 14px; border-radius: 9999px;
+            display: inline-flex; align-items: center; gap: 6px;
             background: var(--color-surface); border: 1px solid var(--color-border-strong);
             color: var(--color-text); font-size: 0.84rem; font-weight: 700; cursor: pointer;
             transition: border-color 160ms ease;
         }}
         .theme-toggle:hover {{ border-color: var(--color-primary); }}
+        .plat-dot {{ width: 8px; height: 8px; border-radius: 9999px; flex-shrink: 0; display: inline-block; }}
+        .platforms-strip {{ display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }}
+        .plat-chip {{
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 5px 11px; border-radius: 999px; font-size: 0.8rem; font-weight: 700;
+            background: var(--color-surface); border: 1px solid var(--color-border);
+            color: var(--color-text-secondary); box-shadow: var(--shadow-sm);
+        }}
         .btn {{
             display: inline-flex; align-items: center; justify-content: center; gap: 8px;
             min-height: 44px; padding: 10px 18px; border-radius: var(--radius-md);
             border: 1px solid transparent; font-weight: 700; font-size: 0.92rem;
             text-decoration: none; cursor: pointer;
             transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+        }}
+        .btn.is-copied {{
+            border-color: var(--color-success); color: var(--color-success); background: var(--color-success-bg);
         }}
         .btn--primary {{
             background: var(--color-primary); color: var(--color-primary-contrast);
@@ -1266,7 +1372,7 @@ async fn render_public_home(
             min-height: 40px; padding: 6px 14px; border-radius: 999px;
             border: 1px solid var(--color-border); background: var(--color-surface-elevated);
             color: var(--color-text-muted); text-decoration: none; font-size: 0.88rem; font-weight: 600;
-            display: inline-flex; align-items: center;
+            display: inline-flex; align-items: center; gap: 7px;
             transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
         }}
         .filter-pill:hover {{ border-color: var(--color-primary); color: var(--color-text); }}
@@ -1290,6 +1396,7 @@ async fn render_public_home(
         .convert-actions {{ display: flex; flex-wrap: wrap; gap: 10px; }}
         .convert-alert {{
             margin-top: 12px; padding: 12px 14px; border-radius: var(--radius-md); font-size: 0.92rem;
+            display: flex; align-items: flex-start; gap: 10px;
         }}
         .convert-alert--error {{
             background: var(--color-err-bg); border: 1px solid var(--color-err-border); color: var(--color-err); font-weight: 600;
@@ -1310,6 +1417,7 @@ async fn render_public_home(
         .deal-card {{
             display: flex; flex-direction: column; justify-content: space-between; gap: 12px;
             background: var(--color-surface); border: 1px solid var(--color-border);
+            border-top: 3px solid var(--plat-accent, var(--color-primary-bright));
             border-radius: var(--radius-lg); padding: 18px; box-shadow: var(--shadow-sm);
             transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
         }}
@@ -1318,11 +1426,26 @@ async fn render_public_home(
         .badge {{
             font-size: 0.78rem; font-weight: 700; padding: 4px 10px; border-radius: 999px;
         }}
-        .badge--platform {{ background: var(--color-inset); color: var(--color-text-secondary); border: 1px solid var(--color-border); }}
+        .badge--platform {{
+            display: inline-flex; align-items: center; gap: 6px;
+            background: var(--color-inset); color: var(--color-text-secondary); border: 1px solid var(--color-border);
+        }}
         .badge--accent {{ background: var(--color-primary-soft); color: var(--color-primary); border: 1px solid var(--color-primary-soft-border); }}
         .deal-card__title {{ font-family: var(--font-display); font-size: 1.04rem; margin: 0; color: var(--color-text); }}
         .deal-card__desc {{ margin: 0; color: var(--color-text-muted); font-size: 0.92rem; }}
-        .deal-card__meta {{ display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; }}
+        .deal-card__meta {{ display: flex; flex-direction: column; gap: 6px; font-size: 0.85rem; }}
+        .coupon-row {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }}
+        .copy-code-btn {{
+            min-height: 32px; padding: 4px 10px; border-radius: 8px;
+            border: 1px solid var(--color-border-strong); background: var(--color-surface-elevated);
+            color: var(--color-text); font-size: 0.78rem; font-weight: 700; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 5px;
+            transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+        }}
+        .copy-code-btn:hover {{ border-color: var(--color-primary); color: var(--color-primary); }}
+        .copy-code-btn.is-copied {{
+            border-color: var(--color-success); color: var(--color-success); background: var(--color-success-bg);
+        }}
         .coupon-pill code {{
             background: var(--color-inset); border: 1px dashed var(--color-primary);
             padding: 2px 8px; border-radius: 6px; color: var(--color-primary);
@@ -1373,6 +1496,7 @@ async fn render_public_home(
     </style>
 </head>
 <body>
+    {}
     <header class="site-header">
         <div class="container site-header__inner">
             <a class="brand" href="/">
@@ -1383,7 +1507,10 @@ async fn render_public_home(
                 <a class="nav__link" href="#uu-dai">Ưu đãi nổi bật</a>
                 <a class="nav__link" href="#huong-dan">Cách nhận mã</a>
                 <a class="nav__link" href="#chinh-sach">Minh bạch đối tác</a>
-                <button type="button" id="public-theme-btn" class="theme-toggle" aria-label="Chuyển đổi giao diện Sáng/Tối">🌙 Giao diện Tối</button>
+                <button type="button" id="public-theme-btn" class="theme-toggle" aria-label="Chuyển đổi giao diện Sáng/Tối">
+                    <svg class="ico" style="width:15px;height:15px;" aria-hidden="true"><use id="public-theme-ico-use" href="#ico-moon"/></svg>
+                    <span id="public-theme-text">Giao diện Tối</span>
+                </button>
                 <a class="btn btn--primary" href="https://t.me/{}" target="_blank" rel="noopener noreferrer">Mở Trợ Lý @{}</a>
             </nav>
         </div>
@@ -1394,7 +1521,7 @@ async fn render_public_home(
             <div class="hero-grid">
                 <div>
                     <span class="hero__eyebrow">
-                        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+                        <svg class="ico" aria-hidden="true"><use href="#ico-shield"/></svg>
                         <span>Cập nhật tự động từ đối tác chính hãng</span>
                     </span>
                     <h1 class="hero__title">Tổng hợp mã giảm giá &amp; gợi ý sản phẩm tiết kiệm mỗi ngày</h1>
@@ -1403,13 +1530,20 @@ async fn render_public_home(
                     </p>
                     <div class="stats-bar">
                         <span class="stat-chip">
-                            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg>
+                            <svg class="ico" aria-hidden="true"><use href="#ico-ticket"/></svg>
                             <span>Đang hiển thị: <strong>{}</strong> / <strong>{}</strong> ưu đãi</span>
                         </span>
                         <span class="stat-chip">
-                            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>
+                            <svg class="ico" aria-hidden="true"><use href="#ico-clock"/></svg>
                             <span>Đồng bộ gần nhất: <strong>{}</strong></span>
                         </span>
+                    </div>
+                    <div class="platforms-strip" aria-label="Các sàn TMĐT hỗ trợ">
+                        <span class="plat-chip"><span class="plat-dot" style="background:#EA580C;" aria-hidden="true"></span>Shopee</span>
+                        <span class="plat-chip"><span class="plat-dot" style="background:#0284C7;" aria-hidden="true"></span>Tiki</span>
+                        <span class="plat-chip"><span class="plat-dot" style="background:#DB2777;" aria-hidden="true"></span>Lazada</span>
+                        <span class="plat-chip"><span class="plat-dot" style="background:#E11D48;" aria-hidden="true"></span>TikTok Shop</span>
+                        <span class="plat-chip"><span class="plat-dot" style="background:#D97706;" aria-hidden="true"></span>Alibaba</span>
                     </div>
                 </div>
 
@@ -1417,11 +1551,11 @@ async fn render_public_home(
                     <div id="stage3d" class="stage3d">
                         <img src="/assets/bot-cart-3d.webp" alt="Trợ lý 3D Thế Giới Siêu Sale săn mã giảm giá" class="stage3d__img">
                         <div class="float-tag float-tag--top" aria-hidden="true">
-                            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                            <svg class="ico" aria-hidden="true"><use href="#ico-zap"/></svg>
                             <span>Săn mã giảm đến 50%</span>
                         </div>
                         <div class="float-tag float-tag--bot" aria-hidden="true">
-                            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                            <svg class="ico" aria-hidden="true"><use href="#ico-check"/></svg>
                             <span>Kiểm tra link sống 100%</span>
                         </div>
                     </div>
@@ -1507,6 +1641,7 @@ async fn render_public_home(
     <script src="/assets/landing.js" defer></script>
 </body>
 </html>"##,
+        PUBLIC_SVG_SPRITE,
         escape_html(&state.config.bot_username),
         escape_html(&state.config.bot_username),
         matched_count,
@@ -2258,6 +2393,87 @@ async fn handle_login_page(headers: HeaderMap, State(state): State<AppState>) ->
     Html(html).into_response()
 }
 
+fn render_auth_notice_page(
+    title: &str,
+    heading: &str,
+    message_html: &str,
+    btn_label: &str,
+    is_lock: bool,
+) -> String {
+    let accent_light = if is_lock { "#B45309" } else { "#B91C1C" };
+    let accent_dark = if is_lock { "#FBBF24" } else { "#F87171" };
+    let soft_bg_light = if is_lock { "#FEF3C7" } else { "#FEE2E2" };
+    let soft_bg_dark = if is_lock { "rgba(251, 191, 36, 0.14)" } else { "rgba(248, 113, 113, 0.14)" };
+    let icon_svg = if is_lock {
+        r#"<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>"#
+    } else {
+        r#"<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>"#
+    };
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{}</title>
+    <script>
+        (function () {{ try {{ if (localStorage.getItem('dealx-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); }} catch (e) {{}} }})();
+    </script>
+    <style>
+        :root {{
+            --bg-base: #F4F6F9; --bg-card: #FFFFFF; --border: #E2E8F0; --text: #0F172A; --muted: #475569;
+            --accent: {}; --accent-soft: {}; --btn-bg: #C2410C; --btn-hover: #9A3412; --btn-fg: #FFFFFF;
+        }}
+        html[data-theme="dark"] {{
+            --bg-base: #0B1120; --bg-card: #131C31; --border: rgba(148,163,184,0.22); --text: #F8FAFC; --muted: #94A3B8;
+            --accent: {}; --accent-soft: {}; --btn-bg: #F97316; --btn-hover: #FB923C; --btn-fg: #090D16;
+        }}
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px;
+            background: var(--bg-base); color: var(--text); font-family: system-ui, -apple-system, sans-serif;
+        }}
+        .card {{
+            width: 100%; max-width: 420px; background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 20px; padding: 30px 24px; text-align: center;
+            box-shadow: 0 14px 36px -10px rgba(15, 23, 42, 0.12);
+        }}
+        .badge-ico {{
+            width: 56px; height: 56px; border-radius: 16px; margin: 0 auto 14px;
+            display: flex; align-items: center; justify-content: center;
+            background: var(--accent-soft); color: var(--accent);
+        }}
+        h2 {{ font-size: 19px; font-weight: 800; color: var(--accent); margin-bottom: 10px; }}
+        p {{ font-size: 14px; color: var(--muted); line-height: 1.6; margin-bottom: 22px; }}
+        .btn {{
+            display: inline-flex; align-items: center; justify-content: center; min-height: 44px;
+            padding: 10px 22px; border-radius: 10px; background: var(--btn-bg); color: var(--btn-fg);
+            font-weight: 700; font-size: 14px; text-decoration: none;
+        }}
+        .btn:hover {{ background: var(--btn-hover); }}
+    </style>
+</head>
+<body>
+    <main class="card">
+        <div class="badge-ico" aria-hidden="true">{}</div>
+        <h2>{}</h2>
+        <p>{}</p>
+        <a href="/admin/login" class="btn">{}</a>
+    </main>
+</body>
+</html>"#,
+        escape_html(title),
+        accent_light,
+        soft_bg_light,
+        accent_dark,
+        soft_bg_dark,
+        icon_svg,
+        escape_html(heading),
+        message_html,
+        escape_html(btn_label)
+    )
+}
+
 /// Xử lý xác thực đăng nhập (Chống Brute-force 5 lần / 15 phút & chống Timing Attack)
 async fn handle_login_submit(
     headers: HeaderMap,
@@ -2271,22 +2487,13 @@ async fn handle_login_submit(
         let limiter = state.login_limiter.read().await;
         if let Some(&(attempts, last_ts)) = limiter.get(&client_ip) {
             if attempts >= 5 && (now_ts - last_ts) < 900 {
-                let locked_html = r#"<!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <title>Tạm Khóa Đăng Nhập</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-</head>
-<body class="flex items-center justify-center min-h-screen bg-gray-950 text-white p-4">
-    <div class="max-w-md w-full bg-gray-900 border border-yellow-500/50 p-6 rounded-2xl text-center shadow-2xl">
-        <div class="text-5xl mb-4">🛡️</div>
-        <h2 class="text-xl font-bold text-yellow-400 mb-2">Tạm Khóa Do Nhập Sai Nhiều Lần</h2>
-        <p class="text-sm text-gray-400 mb-6">Bạn đã nhập sai quá 5 lần. Hệ thống tạm khóa đăng nhập trong 15 phút để bảo vệ tài khoản Quản Trị.</p>
-        <a href="/admin/login" class="inline-block px-6 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-xl font-semibold text-white transition">Quay Lại</a>
-    </div>
-</body>
-</html>"#;
+                let locked_html = render_auth_notice_page(
+                    "Tạm Khóa Đăng Nhập",
+                    "Tạm Khóa Do Nhập Sai Nhiều Lần",
+                    "Bạn đã nhập sai quá 5 lần. Hệ thống tạm khóa đăng nhập trong 15 phút để bảo vệ tài khoản Quản Trị.",
+                    "Quay Lại",
+                    true,
+                );
                 return (StatusCode::TOO_MANY_REQUESTS, Html(locked_html)).into_response();
             }
         }
@@ -2360,24 +2567,15 @@ async fn handle_login_submit(
             attempts_now
         );
         tokio::time::sleep(Duration::from_millis(500)).await;
-        let error_html = format!(
-            r#"<!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <title>Đăng Nhập Thất Bại</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-</head>
-<body class="flex items-center justify-center min-h-screen bg-gray-950 text-white p-4">
-    <div class="max-w-md w-full bg-gray-900 border border-red-500/50 p-6 rounded-2xl text-center shadow-2xl">
-        <div class="text-5xl mb-4">⛔</div>
-        <h2 class="text-xl font-bold text-red-400 mb-2">Đăng Nhập Thất Bại</h2>
-        <p class="text-sm text-gray-400 mb-6">Tài khoản hoặc mật khẩu quản trị viên không chính xác (còn <b>{}</b> lần thử trước khi tạm khóa 15 phút).</p>
-        <a href="/admin/login" class="inline-block px-6 py-2.5 bg-red-600 hover:bg-red-700 rounded-xl font-semibold text-white transition">Thử Lại</a>
-    </div>
-</body>
-</html>"#,
-            remaining
+        let error_html = render_auth_notice_page(
+            "Đăng Nhập Thất Bại",
+            "Đăng Nhập Thất Bại",
+            &format!(
+                "Tài khoản hoặc mật khẩu quản trị viên không chính xác (còn <b>{}</b> lần thử trước khi tạm khóa 15 phút).",
+                remaining
+            ),
+            "Thử Lại",
+            false,
         );
         (StatusCode::UNAUTHORIZED, Html(error_html)).into_response()
     }
@@ -5925,6 +6123,10 @@ DongLoiThieuCot | 123
         assert!(html.contains("/assets/bot-cart-3d.webp"));
         assert!(html.contains("/assets/landing.js"));
         assert!(html.contains(r#"id="public-theme-btn""#));
+        assert!(html.contains("public-theme-ico-use"));
+        assert!(html.contains("platforms-strip"));
+        assert!(html.contains("plat-dot"));
+        assert!(html.contains(r##"<use href="#ico-shield"/>"##));
         assert!(html.contains("<svg"));
         assert!(!html.contains("#0c0f17"));
 
@@ -6113,6 +6315,16 @@ DongLoiThieuCot | 123
         )
         .await;
         assert_eq!(resp_locked.status(), StatusCode::TOO_MANY_REQUESTS);
+        let locked_body = String::from_utf8(
+            axum::body::to_bytes(resp_locked.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(locked_body.contains("--bg-base: #F4F6F9;"));
+        assert!(locked_body.contains("<svg"));
+        assert!(!locked_body.contains("cdn.jsdelivr.net"));
 
         let _ = std::fs::remove_file(&test_db_path);
     }
@@ -6455,6 +6667,11 @@ DongLoiThieuCot | 123
         assert!(landing_html.contains("preserve-3d"));
         assert!(landing_html.contains("@keyframes"));
         assert!(landing_html.contains("prefers-reduced-motion"));
+        assert!(landing_html.contains("--color-bg: #F4F6F9;"));
+        assert!(landing_html.contains(r#"html[data-theme="dark"]"#));
+        assert!(landing_html.contains(r#"id="cf-theme-btn""#));
+        assert!(landing_html.contains("<svg"));
+        assert!(!landing_html.contains("#060d18"));
     }
 
     #[tokio::test]
