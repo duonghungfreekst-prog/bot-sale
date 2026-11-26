@@ -2,8 +2,10 @@ package web
 
 import (
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -38,21 +40,84 @@ func ExtractSessionToken(r *http.Request) string {
 	return ExtractCookieValue(r, "dealx_session")
 }
 
-// ExtractClientIP lấy địa chỉ IP gốc của client qua Cloudflare/Render proxy headers.
+// ExtractClientIP lấy địa chỉ IP thực của client an toàn trước giả mạo Proxy Header.
+// Chỉ tin Cf-Connecting-Ip khi đi kèm Cf-Ray; duyệt X-Forwarded-For từ phải sang trái để
+// chọn IP public gần proxy tin cậy nhất thay vì phần tử đầu do attacker tự chèn.
 func ExtractClientIP(r *http.Request) string {
-	if ip := strings.TrimSpace(r.Header.Get("Cf-Connecting-Ip")); ip != "" {
-		return ip
-	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		first := strings.TrimSpace(strings.Split(xff, ",")[0])
-		if first != "" {
-			return first
+	if strings.TrimSpace(r.Header.Get("Cf-Ray")) != "" {
+		if cfIP := strings.TrimSpace(r.Header.Get("Cf-Connecting-Ip")); cfIP != "" {
+			if parsed := net.ParseIP(strings.Trim(cfIP, "[]")); parsed != nil {
+				return parsed.String()
+			}
 		}
 	}
-	if realIP := strings.TrimSpace(r.Header.Get("X-Real-Ip")); realIP != "" {
-		return realIP
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		fallbackValid := ""
+		for i := len(parts) - 1; i >= 0; i-- {
+			cand := strings.Trim(strings.TrimSpace(parts[i]), "[]")
+			if cand == "" {
+				continue
+			}
+			parsed := net.ParseIP(cand)
+			if parsed == nil {
+				continue
+			}
+			if fallbackValid == "" {
+				fallbackValid = parsed.String()
+			}
+			if utils.IsPublicIP(parsed) {
+				return parsed.String()
+			}
+		}
+		if fallbackValid != "" {
+			return fallbackValid
+		}
+	}
+	if realIP := strings.Trim(strings.TrimSpace(r.Header.Get("X-Real-Ip")), "[]"); realIP != "" {
+		if parsed := net.ParseIP(realIP); parsed != nil {
+			return parsed.String()
+		}
+	}
+	if remote := strings.TrimSpace(r.RemoteAddr); remote != "" {
+		host := remote
+		if h, _, err := net.SplitHostPort(remote); err == nil {
+			host = h
+		}
+		if parsed := net.ParseIP(strings.Trim(host, "[]")); parsed != nil {
+			return parsed.String()
+		}
+		return host
 	}
 	return "local"
+}
+
+// IsHTTPSRequest kiểm tra kết nối hiện tại có đang đi qua HTTPS (trực tiếp hoặc Reverse Proxy) hay không.
+func IsHTTPSRequest(state *AppState, r *http.Request) bool {
+	if r != nil {
+		if r.TLS != nil {
+			return true
+		}
+		if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https") {
+			return true
+		}
+		if strings.Contains(strings.ToLower(r.Header.Get("Cf-Visitor")), `"https"`) {
+			return true
+		}
+	}
+	if state != nil {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(state.Config.PublicBaseURL)), "https://") {
+			return true
+		}
+	}
+	return false
+}
+
+func setNoStoreHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
+	h.Set("Pragma", "no-cache")
+	h.Set("X-Robots-Tag", "noindex, nofollow")
 }
 
 // IsAuthenticated kiểm tra quyền Admin từ session hợp lệ hoặc truy cập localhost PC trusted.
@@ -282,6 +347,7 @@ func HandleLoginPage(state *AppState) http.HandlerFunc {
     </script>
 </body>
 </html>`
+		setNoStoreHeaders(w)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(html))
@@ -369,7 +435,13 @@ func renderAuthNoticePage(title, heading, messageHTML, btnLabel string, isLock b
 // HandleLoginSubmit xử lý xác thực đăng nhập Admin (Chống Brute-force 5 lần / 15 phút & Constant-Time).
 func HandleLoginSubmit(state *AppState) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 32*1024)
 		if err := r.ParseForm(); err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				http.Error(w, "Payload too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "Invalid form data", http.StatusBadRequest)
 			return
 		}
@@ -390,6 +462,7 @@ func HandleLoginSubmit(state *AppState) http.HandlerFunc {
 				"Quay Lại",
 				true,
 			)
+			setNoStoreHeaders(w)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusTooManyRequests)
 			_, _ = w.Write([]byte(lockedHTML))
@@ -420,11 +493,12 @@ func HandleLoginSubmit(state *AppState) http.HandlerFunc {
 
 			slog.Info("✅ Quản trị viên đăng nhập thành công vào Web Dashboard!")
 			secureFlag := ""
-			if state.Config.PublicBaseURL != "" {
+			if IsHTTPSRequest(state, r) {
 				secureFlag = "; Secure"
 			}
 			cookieHeader := fmt.Sprintf("dealx_session=%s; HttpOnly; Path=/; SameSite=Lax; Max-Age=86400%s", token, secureFlag)
 			w.Header().Add("Set-Cookie", cookieHeader)
+			setNoStoreHeaders(w)
 			http.Redirect(w, r, "/admin", http.StatusSeeOther)
 			return
 		}
@@ -459,6 +533,7 @@ func HandleLoginSubmit(state *AppState) http.HandlerFunc {
 			"Thử Lại",
 			false,
 		)
+		setNoStoreHeaders(w)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(errHTML))
@@ -477,9 +552,10 @@ func HandleLogout(state *AppState) http.HandlerFunc {
 			}
 		}
 		secureFlag := ""
-		if state.Config.PublicBaseURL != "" {
+		if IsHTTPSRequest(state, r) {
 			secureFlag = "; Secure"
 		}
+		setNoStoreHeaders(w)
 		w.Header().Add("Set-Cookie", "dealx_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"+secureFlag)
 		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 	}

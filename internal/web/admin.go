@@ -52,8 +52,7 @@ func formatTimestampVN(raw string) string {
 }
 
 func isValidHTTPURL(u string) bool {
-	trimmed := strings.TrimSpace(u)
-	return strings.HasPrefix(trimmed, "https://") || strings.HasPrefix(trimmed, "http://")
+	return utils.IsSafeHTTPURL(u)
 }
 
 func extractTunnelToken(raw string) string {
@@ -569,10 +568,11 @@ func HandleDashboard(state *AppState) http.HandlerFunc {
 		})
 
 		secureAttr := ""
-		if isCloudRuntime {
+		if IsHTTPSRequest(state, r) {
 			secureAttr = "; Secure"
 		}
 		w.Header().Add("Set-Cookie", fmt.Sprintf("dealx_csrf=%s; HttpOnly; Path=/; SameSite=Lax%s", csrfToken, secureAttr))
+		setNoStoreHeaders(w)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(doc))
@@ -653,7 +653,7 @@ func HandleUpdateShopeeSettings(state *AppState) http.HandlerFunc {
 			empty := ""
 			validatedSocial = &empty
 		} else if socialTrimmed != "" {
-			httpProbe := &http.Client{Timeout: 8 * time.Second}
+			httpProbe := utils.NewSafePublicHTTPClient(8*time.Second, nil)
 			clean := social.ResolveSocialParamsFromInput(httpProbe, socialTrimmed)
 			if clean == nil {
 				redirectWithNotice(w, r, "Mẫu phiên IG/FB Reels chưa hợp lệ (phải chứa sm_sig_id, encrypted_payload hoặc link có chữ ký FB/IG).")

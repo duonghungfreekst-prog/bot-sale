@@ -150,15 +150,9 @@ func New() *DealParser {
 // WithAccessTrade tạo DealParser dùng chung AccessTradeClient.
 func WithAccessTrade(at *accesstrade.AccessTradeClient) *DealParser {
 	return &DealParser{
-		httpClient: &http.Client{
-			Timeout:       6 * time.Second,
-			CheckRedirect: parserRedirectCheck,
-		},
-		socialProbeClient: &http.Client{
-			Timeout:       5 * time.Second,
-			CheckRedirect: parserRedirectCheck,
-		},
-		at: at,
+		httpClient:        utils.NewSafePublicHTTPClient(6*time.Second, parserRedirectCheck),
+		socialProbeClient: utils.NewSafePublicHTTPClient(5*time.Second, parserRedirectCheck),
+		at:                at,
 	}
 }
 
@@ -233,19 +227,39 @@ func (d *DealParser) ExtractTitleFromText(text, rawURL string) (string, bool) {
 	return "", false
 }
 
-// DetectPlatform nhận diện 5 sàn cốt lõi từ URL.
+func matchHostOrSubdomain(host string, domains ...string) bool {
+	for _, d := range domains {
+		if host == d || strings.HasSuffix(host, "."+d) {
+			return true
+		}
+	}
+	return false
+}
+
+// DetectPlatform nhận diện 5 sàn cốt lõi theo hostname chuẩn từ URL (chống giả mạo qua query/path).
 func DetectPlatform(urlStr string) Platform {
-	low := strings.ToLower(urlStr)
+	u, err := url.Parse(strings.TrimSpace(urlStr))
+	if err != nil || u == nil {
+		return Platform{Kind: PlatformUnknown}
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return Platform{Kind: PlatformUnknown}
+	}
+	host := strings.ToLower(strings.TrimPrefix(u.Hostname(), "www."))
+	if host == "" {
+		return Platform{Kind: PlatformUnknown}
+	}
 	switch {
-	case strings.Contains(low, "shopee.vn") || strings.Contains(low, "shope.ee") || strings.Contains(low, "shp.ee"):
+	case matchHostOrSubdomain(host, "shopee.vn", "shope.ee", "shp.ee"):
 		return Platform{Kind: PlatformShopee}
-	case strings.Contains(low, "lazada.vn") || strings.Contains(low, "s.lazada.vn") || strings.Contains(low, "lzd.co"):
+	case matchHostOrSubdomain(host, "lazada.vn", "lzd.co"):
 		return Platform{Kind: PlatformLazada}
-	case strings.Contains(low, "tiki.vn") || strings.Contains(low, "ti.ki"):
+	case matchHostOrSubdomain(host, "tiki.vn", "ti.ki"):
 		return Platform{Kind: PlatformTiki}
-	case strings.Contains(low, "tiktok.com"):
+	case matchHostOrSubdomain(host, "tiktok.com"):
 		return Platform{Kind: PlatformTikTokShop}
-	case strings.Contains(low, "alibaba.com"):
+	case matchHostOrSubdomain(host, "alibaba.com"):
 		return Platform{Kind: PlatformAlibaba}
 	default:
 		return Platform{Kind: PlatformUnknown}
@@ -271,14 +285,26 @@ func DetectPlatformWithApproved(urlStr string, approved *accesstrade.ApprovedCam
 }
 
 func isShortLink(urlStr string) bool {
-	low := strings.ToLower(urlStr)
-	for _, h := range []string{
-		"shope.ee", "shp.ee", "s.shopee.vn", "s.lazada.vn", "c.lazada.vn",
-		"lazada.vn/s.", "lzd.co", "ti.ki", "vt.tiktok.com", "vm.tiktok.com", "tiktok.com/t/",
-	} {
-		if strings.Contains(low, h) {
-			return true
-		}
+	u, err := url.Parse(strings.TrimSpace(urlStr))
+	if err != nil || u == nil {
+		return false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(strings.TrimPrefix(u.Hostname(), "www."))
+	path := strings.ToLower(u.Path)
+	switch host {
+	case "shope.ee", "shp.ee", "s.shopee.vn", "s.lazada.vn", "c.lazada.vn",
+		"lzd.co", "ti.ki", "vt.tiktok.com", "vm.tiktok.com":
+		return true
+	}
+	if (host == "lazada.vn" || strings.HasSuffix(host, ".lazada.vn")) && strings.HasPrefix(path, "/s.") {
+		return true
+	}
+	if (host == "tiktok.com" || strings.HasSuffix(host, ".tiktok.com")) && strings.HasPrefix(path, "/t/") {
+		return true
 	}
 	return false
 }
@@ -916,6 +942,9 @@ func (d *DealParser) ProcessLink(inputText string, userID int64, referrerID *int
 	rawURL, found := d.ExtractFirstURL(inputText)
 	if !found {
 		return nil, errors.New("không tìm thấy đường link hợp lệ trong tin nhắn")
+	}
+	if err := utils.ValidatePublicTargetURL(rawURL); err != nil {
+		return nil, errors.New("đường link không hợp lệ hoặc thuộc địa chỉ mạng nội bộ bị chặn bảo mật")
 	}
 
 	approved := d.at.GetOrLoadApprovedCampaigns(settings.AccessTradeToken)

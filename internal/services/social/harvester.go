@@ -738,15 +738,12 @@ func SpawnSocialHarvesterTask(stopCh <-chan struct{}, wg *sync.WaitGroup, appDB 
 	socialStatus.IntervalSecs = SocialSyncIntervalSecs
 	statusMu.Unlock()
 
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return http.ErrUseLastResponse
-			}
-			return nil
-		},
-	}
+	client := utils.NewSafePublicHTTPClient(10*time.Second, func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return http.ErrUseLastResponse
+		}
+		return nil
+	})
 
 	if wg != nil {
 		wg.Add(1)

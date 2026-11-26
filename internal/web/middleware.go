@@ -103,6 +103,8 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Strict-Transport-Security", "max-age=31536000")
 		h.Set("X-XSS-Protection", "1; mode=block")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		h.Set(
 			"Content-Security-Policy",
 			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https:;",
@@ -160,9 +162,12 @@ func AdminCSRFMiddleware(next http.Handler) http.Handler {
 
 		cookieCSRF := ExtractCookieValue(r, "dealx_csrf")
 		hasSessionCookie := ExtractSessionToken(r) != ""
+		isTrustedLocal := r.Header.Get(LocalPCTrustedHeader) == "1"
 		headerCSRF := strings.TrimSpace(r.Header.Get("X-CSRF-Token"))
 
-		if cookieCSRF == "" && !hasSessionCookie && headerCSRF == "" {
+		// Chỉ để lọt các request chưa đăng nhập từ môi trường Cloud/Remote (handler sẽ redirect /admin/login).
+		// Nếu đã có session HOẶC đang dùng luồng PC Local miễn đăng nhập thì bắt buộc phải hợp lệ Double-Submit CSRF.
+		if !hasSessionCookie && !isTrustedLocal {
 			next.ServeHTTP(w, r)
 			return
 		}

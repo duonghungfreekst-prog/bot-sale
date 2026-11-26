@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"sort"
 	"strconv"
@@ -452,7 +451,7 @@ func HandleMessage(
 		adminID := resolveAdminIDFromCache(appDB, cfg)
 		isAdmin := adminID != 0 && adminID == userID
 		if isAdmin && ShouldProbeAdminSocialInput(text) {
-			httpProbe := &http.Client{Timeout: 8 * time.Second}
+			httpProbe := utils.NewSafePublicHTTPClient(8*time.Second, nil)
 			if socialParams := social.ResolveSocialParamsFromInput(httpProbe, text); socialParams != nil && shopee.SocialParamStrength(*socialParams) >= 3 {
 				if err := db.SetSetting(appDB.DB, "shopee_social_params", *socialParams); err != nil {
 					slog.Warn("Không thể lưu shopee_social_params", "err", err)

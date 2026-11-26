@@ -66,6 +66,12 @@ func TestSecurityHeadersAndCSPClean(t *testing.T) {
 	if !strings.Contains(res.Header().Get("Content-Security-Policy"), "default-src 'self'") {
 		t.Fatalf("missing clean CSP")
 	}
+	if !strings.Contains(res.Header().Get("Permissions-Policy"), "camera=()") {
+		t.Fatalf("missing Permissions-Policy header")
+	}
+	if res.Header().Get("Cross-Origin-Opener-Policy") != "same-origin" {
+		t.Fatalf("missing Cross-Origin-Opener-Policy header")
+	}
 }
 
 func TestAdminCSRFAndSameOriginProtection(t *testing.T) {
@@ -216,10 +222,23 @@ func TestCloudDefaultPasswordWarningAndBruteForceLimit(t *testing.T) {
 	reqLocked := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(form.Encode()))
 	reqLocked.Host = "bot.onrender.com"
 	reqLocked.Header.Set("Origin", "https://bot.onrender.com")
+	reqLocked.Header.Set("Cf-Ray", "8abc1234-SIN")
 	reqLocked.Header.Set("Cf-Connecting-Ip", "1.2.3.4")
 	reqLocked.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if resLocked := doReq(handler, reqLocked); resLocked.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected 429 after 5 failed attempts, got %d", resLocked.Code)
+		t.Fatalf("expected 429 after 5 failed attempts with Cf-Ray, got %d", resLocked.Code)
+	}
+
+	// Chống bypass Rate Limit: attacker gửi Cf-Connecting-Ip giả không có Cf-Ray và nhét IP giả ở đầu X-Forwarded-For
+	state.LoginLimiter["5.6.7.8"] = RateEntry{Count: 5, LastTS: time.Now().Unix()}
+	reqSpoof := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(form.Encode()))
+	reqSpoof.Host = "bot.onrender.com"
+	reqSpoof.Header.Set("Origin", "https://bot.onrender.com")
+	reqSpoof.Header.Set("Cf-Connecting-Ip", "9.9.9.9")
+	reqSpoof.Header.Set("X-Forwarded-For", "8.8.4.4, 5.6.7.8")
+	reqSpoof.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if resSpoof := doReq(handler, reqSpoof); resSpoof.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 via right-most XFF 5.6.7.8 (resisting Cf-Connecting-Ip & left XFF spoof), got %d", resSpoof.Code)
 	}
 }
 
@@ -322,5 +341,131 @@ func TestLoopbackShortlinkDoesNotSelfCloak(t *testing.T) {
 	reqCloak.Header.Set("X-Dealx-Cloak", "1")
 	if res := doReq(handler, reqCloak); res.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 when X-Dealx-Cloak: 1 is set, got %d", res.Code)
+	}
+}
+
+func TestDeepSecurityHardening(t *testing.T) {
+	// 1. Chặn POST body quá lớn trên /convert (>64KB) và /admin/login (>32KB)
+	stateCloud := makeTestState(t, "http://proxy-backend.internal", nil)
+	handlerCloud := BuildRouter(stateCloud)
+
+	bigConvertBody := "url=https%3A%2F%2Fshopee.vn%2Fa&pad=" + strings.Repeat("A", 70*1024)
+	reqBigConvert := httptest.NewRequest(http.MethodPost, "/convert", strings.NewReader(bigConvertBody))
+	reqBigConvert.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if res := doReq(handlerCloud, reqBigConvert); res.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 on oversized /convert body, got %d", res.Code)
+	}
+
+	bigLoginBody := "username=admin&password=" + strings.Repeat("B", 36*1024)
+	reqBigLogin := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(bigLoginBody))
+	reqBigLogin.Host = "proxy-backend.internal"
+	reqBigLogin.Header.Set("Origin", "http://proxy-backend.internal")
+	reqBigLogin.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if res := doReq(handlerCloud, reqBigLogin); res.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 on oversized /admin/login body, got %d", res.Code)
+	}
+
+	// 2. X-Forwarded-Proto: https -> ép Secure cookie & Cache-Control: no-store
+	reqLoginPage := httptest.NewRequest(http.MethodGet, "/admin/login", nil)
+	reqLoginPage.Host = "proxy-backend.internal"
+	resLoginPage := doReq(handlerCloud, reqLoginPage)
+	if !strings.Contains(resLoginPage.Header().Get("Cache-Control"), "no-store") ||
+		resLoginPage.Header().Get("X-Robots-Tag") != "noindex, nofollow" {
+		t.Fatalf("expected no-store + noindex on /admin/login, got Cache-Control=%q X-Robots-Tag=%q",
+			resLoginPage.Header().Get("Cache-Control"), resLoginPage.Header().Get("X-Robots-Tag"))
+	}
+
+	loginForm := url.Values{"username": {stateCloud.Config.AdminUsername}, "password": {stateCloud.Config.AdminPassword}}
+	reqLoginOK := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(loginForm.Encode()))
+	reqLoginOK.Host = "proxy-backend.internal"
+	reqLoginOK.Header.Set("Origin", "http://proxy-backend.internal")
+	reqLoginOK.Header.Set("X-Forwarded-Proto", "https")
+	reqLoginOK.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resLoginOK := doReq(handlerCloud, reqLoginOK)
+	if resLoginOK.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 on valid login, got %d", resLoginOK.Code)
+	}
+	var sessCookie *http.Cookie
+	for _, c := range resLoginOK.Result().Cookies() {
+		if c.Name == "dealx_session" {
+			sessCookie = c
+			break
+		}
+	}
+	if sessCookie == nil || !sessCookie.Secure {
+		t.Fatalf("expected dealx_session cookie with Secure flag under X-Forwarded-Proto: https, got %#v", sessCookie)
+	}
+
+	reqDash := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	reqDash.Host = "proxy-backend.internal"
+	reqDash.Header.Set("X-Forwarded-Proto", "https")
+	reqDash.AddCookie(sessCookie)
+	resDash := doReq(handlerCloud, reqDash)
+	if resDash.Code != http.StatusOK || !strings.Contains(resDash.Header().Get("Cache-Control"), "no-store") {
+		t.Fatalf("expected 200 and no-store on /admin, got code=%d cc=%q", resDash.Code, resDash.Header().Get("Cache-Control"))
+	}
+	var csrfCookie *http.Cookie
+	for _, c := range resDash.Result().Cookies() {
+		if c.Name == "dealx_csrf" {
+			csrfCookie = c
+			break
+		}
+	}
+	if csrfCookie == nil || !csrfCookie.Secure {
+		t.Fatalf("expected dealx_csrf cookie with Secure flag under X-Forwarded-Proto: https, got %#v", csrfCookie)
+	}
+
+	// 3. Chặn redirect nguy hiểm (javascript:) trong bảng short_links
+	_, err := stateCloud.DB.DB.Exec(
+		`INSERT INTO short_links (code, target_url, title, platform, clicks_count, created_at) VALUES (?, ?, ?, ?, 0, ?)`,
+		"badxss1", "javascript:alert(1)", "Evil", "Shopee", "2026-11-26T00:00:00Z",
+	)
+	if err != nil {
+		t.Fatalf("insert unsafe shortlink: %v", err)
+	}
+	reqBadShort := httptest.NewRequest(http.MethodGet, "/badxss1", nil)
+	reqBadShort.Host = "proxy-backend.internal"
+	if resBadShort := doReq(handlerCloud, reqBadShort); resBadShort.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 blocking javascript: redirect, got %d", resBadShort.Code)
+	}
+
+	// 4. PC Local POST vẫn bắt buộc Double-Submit CSRF
+	stateLocal := makeTestState(t, "", nil)
+	handlerLocal := BuildRouter(stateLocal)
+
+	reqLocalDash := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	reqLocalDash.Host = "127.0.0.1:10000"
+	reqLocalDash.RemoteAddr = "127.0.0.1:50001"
+	resLocalDash := doReq(handlerLocal, reqLocalDash)
+	var localCSRF string
+	for _, c := range resLocalDash.Result().Cookies() {
+		if c.Name == "dealx_csrf" {
+			localCSRF = c.Value
+			break
+		}
+	}
+	if localCSRF == "" {
+		t.Fatal("expected dealx_csrf cookie in PC local mode")
+	}
+
+	reqLocalNoCSRF := httptest.NewRequest(http.MethodPost, "/admin/settings/affiliate",
+		strings.NewReader(url.Values{"template": {"https://go.isclix.com/?url={{CLEAN_URL}}"}}.Encode()))
+	reqLocalNoCSRF.Host = "127.0.0.1:10000"
+	reqLocalNoCSRF.RemoteAddr = "127.0.0.1:50001"
+	reqLocalNoCSRF.Header.Set("Origin", "http://127.0.0.1:10000")
+	reqLocalNoCSRF.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if res := doReq(handlerLocal, reqLocalNoCSRF); res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 on PC local POST without CSRF token, got %d", res.Code)
+	}
+
+	reqLocalWithCSRF := httptest.NewRequest(http.MethodPost, "/admin/settings/affiliate",
+		strings.NewReader(url.Values{"template": {"https://go.isclix.com/?url={{CLEAN_URL}}"}, "_csrf": {localCSRF}}.Encode()))
+	reqLocalWithCSRF.Host = "127.0.0.1:10000"
+	reqLocalWithCSRF.RemoteAddr = "127.0.0.1:50001"
+	reqLocalWithCSRF.Header.Set("Origin", "http://127.0.0.1:10000")
+	reqLocalWithCSRF.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	reqLocalWithCSRF.AddCookie(&http.Cookie{Name: "dealx_csrf", Value: localCSRF})
+	if res := doReq(handlerLocal, reqLocalWithCSRF); res.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 on PC local POST with valid CSRF, got %d", res.Code)
 	}
 }

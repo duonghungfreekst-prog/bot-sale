@@ -1,8 +1,12 @@
 package parser
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"salehunter-go/internal/services/accesstrade"
 )
 
 func TestExtractURLAndCleanURL(t *testing.T) {
@@ -64,5 +68,49 @@ func TestParseTikiProductJSON(t *testing.T) {
 	title, price, shop, brand, ok := ParseTikiProductJSON(raw)
 	if !ok || title != "Nồi Cơm Điện" || price == nil || *price != 890000 || shop == nil || *shop != "Tiki Trading" || brand == nil || *brand != "Sharp" {
 		t.Fatalf("unexpected tiki parse: ok=%v title=%q", ok, title)
+	}
+}
+
+func TestIsShortLinkStrictAndSSRFBlocked(t *testing.T) {
+	if !isShortLink("https://s.shopee.vn/abcXYZ") || !isShortLink("https://www.lazada.vn/s.12345") {
+		t.Fatal("expected legitimate shortlinks to be detected")
+	}
+	spoofs := []string{
+		"http://127.0.0.1/?q=s.shopee.vn",
+		"https://evil.example/shp.ee",
+		"javascript:alert('shope.ee')",
+		"https://shopee.vn/product/1/2?ref=vt.tiktok.com",
+	}
+	for _, s := range spoofs {
+		if isShortLink(s) {
+			t.Errorf("isShortLink(%q) should return false for non-shortlink host", s)
+		}
+	}
+	if p := DetectPlatform("http://127.0.0.1:18091/health?q=s.shopee.vn"); p.Kind != PlatformUnknown {
+		t.Fatalf("expected PlatformUnknown for spoofed query url, got %v", p.Kind)
+	}
+	if p := DetectPlatform("https://vn.shp.ee/abc"); p.Kind != PlatformShopee {
+		t.Fatalf("expected PlatformShopee for vn.shp.ee, got %v", p.Kind)
+	}
+
+	calledLocal := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledLocal = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	p := WithAccessTrade(accesstrade.NewClient())
+	if _, err := p.httpClient.Get(srv.URL); err == nil {
+		t.Fatal("expected parser httpClient to reject loopback SSRF request")
+	}
+	if _, err := p.socialProbeClient.Get(srv.URL); err == nil {
+		t.Fatal("expected parser socialProbeClient to reject loopback SSRF request")
+	}
+	if calledLocal {
+		t.Fatal("local SSRF server should never receive HTTP traffic from DealParser clients")
+	}
+	if _, err := p.ProcessLink("http://127.0.0.1:18091/health?q=s.shopee.vn", 1, nil, AffiliateSettings{}); err == nil {
+		t.Fatal("expected ProcessLink to reject private/loopback target URL")
 	}
 }

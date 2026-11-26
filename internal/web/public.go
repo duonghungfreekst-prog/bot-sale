@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -44,7 +45,13 @@ func HandlePublicConvert(state *AppState) http.HandlerFunc {
 			notFoundCloakResponse(w)
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 		if err := r.ParseForm(); err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				http.Error(w, "Payload too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}

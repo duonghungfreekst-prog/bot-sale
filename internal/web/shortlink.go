@@ -186,7 +186,7 @@ func HandleShortlinkRedirect(state *AppState, code string) http.HandlerFunc {
 		}
 
 		record, err := state.DB.ResolveShortLinkCached(c)
-		if err != nil || record == nil {
+		if err != nil || record == nil || !utils.IsSafeHTTPURL(record.TargetURL) {
 			http.NotFound(w, r)
 			return
 		}
